@@ -1,0 +1,27 @@
+name: Release 
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: 
+      - completed
+
+jobs:
+  publish:
+    name: Publish Crate to Crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+      - uses: baptiste0928/cargo-install@v2
+        with:
+          crate: cargo-release
+      - run: CARGO_REGISTRY_TOKEN=${CRATES_TOKEN} cargo release --execute --no-confirm --no-push --no-tag
+        env:
+          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}

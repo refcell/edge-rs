@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  cargo-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - run: cargo test --all
+      - run: cargo test --all --all-features
+
+  cargo-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          components: rustfmt, clippy
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - run: cargo +nightly fmt --all -- --check
+      - run: cargo +nightly clippy --all --all-features -- -D warnings
+
+  cargo-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - continue-on-error: true
+        run: cargo build --all
+        id: build
+
+  cargo-doc:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          profile: minimal
+          override: true
+      - uses: Swatinem/rust-cache@v1
+      - name: doclints
+        continue-on-error: true
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --all --no-deps --all-features --document-private-items
+        id: build
+      - run: cargo test --doc --all --all-features

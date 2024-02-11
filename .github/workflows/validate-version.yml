@@ -1,0 +1,43 @@
+name: Validate Release Version
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  extract-github-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag 
+      - name: Extract the git tag version
+        run: echo "VERSION=$(echo ${{ steps.get-latest-tag.outputs.tag }} | sed 's/^.*[^0-9]\([0-9]*\.[0-9]*\.[0-9]*\).*$/\1/')" >> $GITHUB_OUTPUT
+        id: export-git-tag
+    outputs:
+      VERSION: ${{ steps.export-git-tag.outputs.VERSION }}
+
+  extract-crate-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export Crate Package Version
+        run: echo "VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')" >> $GITHUB_OUTPUT
+        id: export_crate_version
+    outputs:
+      VERSION: ${{ steps.export_crate_version.outputs.VERSION }}
+
+  validate-crate-version:
+    runs-on: ubuntu-latest
+    needs: [extract-github-tag, extract-crate-version]
+    env:
+      GIT_TAG: ${{ needs.extract-github-tag.outputs.VERSION }}
+      CRATE_VERSION: ${{ needs.extract-crate-version.outputs.VERSION }}
+    steps:
+      - uses: baptiste0928/cargo-install@v2
+        with:
+          crate: semver-util
+      - name: Validate Semvers
+        run: semver cmp ${{ env.CRATE_VERSION }} gt ${{ env.GIT_TAG }} || exit 1

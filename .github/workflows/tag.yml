@@ -1,0 +1,35 @@
+name: Tag 
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: 
+      - completed
+
+jobs:
+  extract-crate-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Export Crate Package Version
+        run: echo "VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')" >> $GITHUB_OUTPUT
+        id: export_crate_version
+    outputs:
+      VERSION: ${{ steps.export_crate_version.outputs.VERSION }}
+
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    needs: [extract-crate-version]
+    env:
+      VERSION: ${{ needs.extract-crate-version.outputs.VERSION }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Bump version and push tag
+      uses: anothrNick/github-tag-action@master
+      env:
+        CUSTOM_TAG: v${{ env.VERSION }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

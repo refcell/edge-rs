@@ -1,0 +1,17 @@
+[package]
+name = "example"
+description = "example cli binary"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+common = { path = "../../crates/common" }
+clap = { workspace = true }
+anyhow = { workspace = true }
+inquire = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
