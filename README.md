@@ -1,8 +1,8 @@
-# example
+# edge-rs
 
-[![CI Build Status]][actions]
-[![Release]][actions]
-[![Tag Build Status]][actions]
+<!-- [![CI Build Status]][actions] -->
+<!-- [![Release]][actions] -->
+<!-- [![Tag Build Status]][actions] -->
 [![License]][mit-license]
 [![Docs]][Docs-rs]
 [![Latest Version]][crates.io]
@@ -12,36 +12,37 @@
 [Tag Build Status]: https://img.shields.io/github/actions/workflow/status/refcell/example/tag.yml?branch=main&label=tag
 [Release]: https://img.shields.io/github/actions/workflow/status/refcell/example/release.yml?branch=main&label=release
 [actions]: https://github.com/refcell/example/actions?query=branch%3Amain
-[Latest Version]: https://img.shields.io/crates/v/example.svg
-[crates.io]: https://crates.io/crates/example
+
+[Latest Version]: https://img.shields.io/crates/v/edge-rs.svg
+[crates.io]: https://crates.io/crates/edge-rs
 [rustc 1.31+]: https://img.shields.io/badge/rustc_1.31+-lightgray.svg
 [Rust 1.31]: https://blog.rust-lang.org/2018/12/06/Rust-1.31-and-rust-2018.html
 [License]: https://img.shields.io/badge/license-MIT-7795AF.svg
-[mit-license]: https://github.com/refcell/example/blob/main/LICENSE.md
-[Docs-rs]: https://docs.rs/example/
-[Docs]: https://img.shields.io/docsrs/example.svg?color=319e8c&label=docs.rs
+[mit-license]: https://github.com/refcell/edge-rs/blob/main/LICENSE.md
+[Docs-rs]: https://docs.rs/edge-rs/
+[Docs]: https://img.shields.io/docsrs/edge-rs.svg?color=319e8c&label=docs.rs
 
-**example workspace** example is https://github.com/refcell/example/labels/stable
+**edge-rs** is https://github.com/refcell/edge-rs/labels/alpha
 
 ![](./etc/banner.png)
 
 **[Install](#usage)**
-| [User Docs](#what-is-example)
+| [User Docs](#what-is-edge-rs)
 | [Crate Docs][crates.io]
 | [Reference][Docs-rs]
 | [Contributing](#contributing)
 | [License](#license)
 
-## What is example?
+## What is edge-rs?
 
-example workspace
+todo
 
 ## Usage
 
-Install `example` using cargo.
+Install `edge-rs` using cargo.
 
 ```text
-cargo install example
+cargo install edge-rs
 ```
 
 ## Contributing

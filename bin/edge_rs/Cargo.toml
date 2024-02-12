@@ -1,6 +1,6 @@
 [package]
-name = "example"
-description = "example cli binary"
+name = "edge_rs"
+description = "Edge Compiler CLI"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -9,7 +9,6 @@ repository = { workspace = true }
 homepage = { workspace = true }
 
 [dependencies]
-common = { path = "../../crates/common" }
 clap = { workspace = true }
 anyhow = { workspace = true }
 inquire = { workspace = true }

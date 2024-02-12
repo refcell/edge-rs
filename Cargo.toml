@@ -3,14 +3,14 @@ members = ["bin/*", "crates/*"]
 resolver = "2"
 
 [workspace.package]
-name = "example"
-description = "example workspace"
+name = "edge-rs"
+description = "Edge Language Compiler Workspace"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 authors = ["refcell"]
-repository = "https://github.com/refcell/example"
-homepage = "https://github.com/refcell/example"
+repository = "https://github.com/refcell/edge-rs"
+homepage = "https://github.com/refcell/edge-rs"
 exclude = ["**/target", "benches/", "tests"]
 
 [workspace.dependencies]

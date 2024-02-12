@@ -1,0 +1,90 @@
+type PrimitiveStruct = {
+    a: u8,
+    b: u8,
+    c: u8,
+};
+
+type PackedStruct = packed {
+    a: u8,
+    b: u8,
+};
+
+type GenericStruct<T> = {
+    a: T,
+    b: T,
+};
+
+type PrimitiveTuple = (u8, u8, u8);
+
+type PackedTuple = packed (u8, u8, u8);
+
+type GenericTuple<T> = (T, T, T);
+
+type Enum =
+    | Option1
+    | Option2;
+
+type PrimitiveUnion =
+    | Type1(u8)
+    | Type2(MyPrimitiveStruct);
+
+type GenericUnion<T> =
+    | Some(T)
+    | None;
+
+type PrimitiveFn = u8 -> u8;
+
+type PrimitiveMultiArgFn = (u8, u8) -> (u8, u8);
+
+type GenericFn<T> = T -> T;
+
+trait Add {
+    fn add(lhs: Self, rhs: Self) -> Self;
+}
+
+impl PrimitiveStruct {
+    fn default() -> Self {
+        return Self { 0, 0, 0 };
+    }
+}
+
+impl PrimitiveStruct: Add {
+    fn add(lhs: Self, rhs: Self) -> Self {
+        return Self {
+            a: lhs.a + rhs.a,
+            b: lhs.b + rhs.b,
+            c: lhs.c + rhs.c,
+        };
+    }
+}
+
+mod module {
+    mod nestedModule {
+        type A = u256;
+    }
+    pub use nestedModule::A;
+}
+use module::A;
+
+abi ERC165 {
+    fn supportsInterface(interfaceId: b4) -> bool;
+}
+
+contract MyContract;
+
+impl MyContract: ERC165 {
+    fn supportsInterface(interfaceId: b4) -> bool {
+        return true;
+    }
+}
+
+// `MyContract` de-sugars roughly to:
+fn main<Cd: ERC165>(calldata: Cd) {
+    if callvalue() > 0 { revert(); }
+    match calldata {
+        ERC165::supportsInterface(interfaceId) => {
+            return true;
+        },
+        _ => revert(),
+    };
+}

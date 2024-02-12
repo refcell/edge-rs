@@ -1,0 +1,20 @@
+[package]
+name = "edge-lexer"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["refcell"]
+readme = "README.md"
+repository = "https://github.com/refcell/edge-rs/"
+homepage = "https://github.com/refcell/edge-rs"
+exclude = ["**/target", "benches/", "tests"]
+description = "Lexical Analysis Crate for the Edge Language"
+keywords = ["edge", "rust", "evm", "bytecode", "compiler"]
+
+[dependencies]
+edge-types = { path = "../types" }
+anyhow = "1.0.79"
+tracing = "0.1.40"
+serde = "1.0.196"
+serde_json = "1.0.113"
+regex = "1"
