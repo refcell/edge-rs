@@ -8,6 +8,9 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
+/// Byte utilities and helpers.
+pub mod bytes;
+
 /// Span contains the logic for handling source code spans.
 pub mod span;
 
@@ -22,6 +25,7 @@ pub mod time;
 
 /// The prelude re-exports commonly used types across various modules in this crate.
 pub mod prelude {
+    pub use crate::bytes::*;
     pub use crate::source::*;
     pub use crate::span::*;
     pub use crate::time::*;

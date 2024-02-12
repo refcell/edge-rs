@@ -1,6 +1,5 @@
 use crate::errors::*;
 use edge_types::prelude::*;
-use regex::Regex;
 use std::{
     iter::{Peekable, Zip},
     ops::RangeFrom,
@@ -14,20 +13,8 @@ use std::{
 pub enum Context {
     /// global context
     Global,
-    /// Macro definition context
-    MacroDefinition,
-    /// Macro's body context
-    MacroBody,
-    /// Macro's argument context (definition or being called)
-    MacroArgs,
-    /// ABI context
-    Abi,
-    /// Lexing args of functions inputs/outputs and events
-    AbiArgs,
-    /// constant context
-    Constant,
-    /// Code table context
-    CodeTableBody,
+    /// Contract context
+    Contract,
 }
 
 /// ## Lexer
@@ -46,6 +33,18 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    /// Create a new lexer from a source string.
+    pub fn new(source: &'a str) -> Self {
+        Lexer {
+            // We zip with the character index here to ensure the first char has index 0
+            chars: source.chars().zip(0..).peekable(),
+            position: 0,
+            lookback: None,
+            eof: false,
+            context: Context::Global,
+        }
+    }
+
     /// Consumes and returns the next character.
     pub fn consume(&mut self) -> Option<char> {
         let (c, index) = self.chars.next()?;
@@ -66,38 +65,8 @@ impl<'a> Lexer<'a> {
             .is_some()
     }
 
-    /// Check if a given keyword follows the keyword rules in the `source`.
-    /// If not, it is a `TokenKind::Ident`.
-    ///
-    /// Rules:
-    /// - ...
-    pub fn check_keyword_rules(&mut self, found_kind: &Option<TokenKind>) -> bool {
-        match found_kind {
-            // TODO: Add keyword rules here
-            _ => true,
-        }
-    }
-}
-
-pub type TokenResult = Result<Token, LexicalError>;
-
-impl<'a> Iterator for Lexer<'a> {
-    type Item = TokenResult;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.eof {
-            None
-        } else {
-            Some(self.next_token())
-        }
-    }
-
-    fn single_char_token(&self, token_kind: TokenKind) -> TokenResult {
-        Ok(token_kind.into_single_span(self.position))
-    }
-
     /// Keeps consuming tokens as long as the predicate is satisfied.
-    fn eat_while<F: Fn(char) -> bool>(
+    pub fn eat_while<F: Fn(char) -> bool>(
         &mut self,
         initial_char: Option<char>,
         predicate: F,
@@ -130,40 +99,26 @@ impl<'a> Iterator for Lexer<'a> {
         (word, start, self.position)
     }
 
-    fn eat_digit(&mut self, initial_char: char) -> TokenResult {
-        let (integer_str, start, end) =
-            self.eat_while(Some(initial_char), |ch| ch.is_ascii_digit());
-        let integer = integer_str.parse().unwrap();
-        let integer_token = TokenKind::Num(integer);
-        let span = Span {
-            start: start as usize,
-            end: end as usize,
-            file: None,
-        };
-        Ok(Token {
-            kind: integer_token,
-            span,
-        })
-    }
-
-    fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
+    pub fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
         let (integer_str, mut start, end) = self.eat_while(Some(initial_char), |ch| {
             ch.is_ascii_hexdigit() | (ch == 'x')
         });
 
-        // TODO: check for sure that we have a correct hex string, eg. 0x56 and not 0x56x34
-        let kind = if self.context == Context::CodeTableBody {
-            // In codetables, the bytecode provided is of arbitrary length. We pass
-            // the code as an Ident, and it is appended to the end of the runtime
-            // bytecode in codegen.
-            if &integer_str[0..2] == "0x" {
-                TokenKind::Ident(integer_str[2..].to_owned())
-            } else {
-                TokenKind::Ident(integer_str)
-            }
-        } else {
-            TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()))
-        };
+        // // TODO: check for sure that we have a correct hex string, eg. 0x56 and not 0x56x34
+        // let kind = if self.context == Context::CodeTableBody {
+        //     // In codetables, the bytecode provided is of arbitrary length. We pass
+        //     // the code as an Ident, and it is appended to the end of the runtime
+        //     // bytecode in codegen.
+        //     if &integer_str[0..2] == "0x" {
+        //         TokenKind::Ident(integer_str[2..].to_owned())
+        //     } else {
+        //         TokenKind::Ident(integer_str)
+        //     }
+        // } else {
+        //     TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()))
+        // };
+
+        let kind = TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()));
 
         start += 2;
         let span = Span {
@@ -175,19 +130,51 @@ impl<'a> Iterator for Lexer<'a> {
     }
 
     /// Skips white space. They are not significant in the source language
-    fn eat_whitespace(&mut self) -> (String, u32, u32) {
+    pub fn eat_whitespace(&mut self) -> (String, u32, u32) {
         self.eat_while(None, |ch| ch.is_whitespace())
     }
 
-    fn eat_string_literal(&mut self) -> Token {
-        let (str_literal, start_span, end_span) =
-            self.eat_while(None, |ch| ch != '"' && ch != '\'');
-        let str_literal_token = TokenKind::Str(str_literal);
-        self.consume(); // Advance past the closing quote
-        str_literal_token.into_span(start_span, end_span + 1)
+    // pub fn eat_string_literal(&mut self) -> Token {
+    //     let (str_literal, start_span, end_span) =
+    //         self.eat_while(None, |ch| ch != '"' && ch != '\'');
+    //     let str_literal_token = TokenKind::Str(str_literal);
+    //     self.consume(); // Advance past the closing quote
+    //     str_literal_token.into_span(start_span, end_span + 1)
+    // }
+
+    pub fn single_char_token(&self, token_kind: TokenKind) -> TokenResult {
+        Ok(token_kind.into_single_span(self.position))
     }
 
-    fn next_token(&mut self) -> TokenResult {
+    // pub fn eat_digit(&mut self, initial_char: char) -> TokenResult {
+    //     let (integer_str, start, end) =
+    //         self.eat_while(Some(initial_char), |ch| ch.is_ascii_digit());
+    //     let integer = integer_str.parse().unwrap();
+    //     let integer_token = TokenKind::Num(integer);
+    //     let span = Span {
+    //         start: start as usize,
+    //         end: end as usize,
+    //         file: None,
+    //     };
+    //     Ok(Token {
+    //         kind: integer_token,
+    //         span,
+    //     })
+    // }
+
+    /// Check if a given keyword follows the keyword rules in the `source`.
+    /// If not, it is a `TokenKind::Ident`.
+    ///
+    /// Rules:
+    /// - ...
+    pub fn check_keyword_rules(&mut self, found_kind: &Option<TokenKind>) -> bool {
+        match found_kind {
+            // TODO: Add keyword rules here
+            _ => true,
+        }
+    }
+
+    pub fn next_token(&mut self) -> TokenResult {
         let ch = if let Some(ch) = self.consume() {
             ch
         } else {
@@ -195,8 +182,8 @@ impl<'a> Iterator for Lexer<'a> {
             return Ok(Token {
                 kind: TokenKind::Eof,
                 span: Span {
-                    start: self.position as usize,
-                    end: self.position as usize,
+                    start: (self.position + 1) as usize,
+                    end: (self.position + 1) as usize,
                     file: None,
                 },
             });
@@ -258,38 +245,38 @@ impl<'a> Iterator for Lexer<'a> {
             }
 
             // # keywords
-            '#' => {
-                let (word, start, end) = self.eat_while(Some(ch), |ch| ch.is_ascii_alphabetic());
-
-                let mut found_kind: Option<TokenKind> = None;
-
-                let keys = [TokenKind::Define, TokenKind::Include];
-                for kind in keys.into_iter() {
-                    let key = kind.to_string();
-                    let peeked = word.clone();
-                    if key == peeked {
-                        found_kind = Some(kind);
-                        break;
-                    }
-                }
-
-                if let Some(kind) = &found_kind {
-                    Ok(kind.clone().into_span(start, end))
-                } else if self.context == Context::Global && self.peek().unwrap() == '[' {
-                    Ok(TokenKind::Pound.into_single_span(self.position))
-                } else {
-                    // Otherwise we don't support # prefixed indentifiers
-                    tracing::error!(target: "lexer", "INVALID '#' CHARACTER USAGE");
-                    return Err(LexicalError::new(
-                        LexicalErrorKind::InvalidCharacter('#'),
-                        Span {
-                            start: self.position as usize,
-                            end: self.position as usize,
-                            file: None,
-                        },
-                    ));
-                }
-            }
+            // '#' => {
+            //     let (word, start, end) = self.eat_while(Some(ch), |ch| ch.is_ascii_alphabetic());
+            //
+            //     let mut found_kind: Option<TokenKind> = None;
+            //
+            //     let keys = [TokenKind::Define, TokenKind::Include];
+            //     for kind in keys.into_iter() {
+            //         let key = kind.to_string();
+            //         let peeked = word.clone();
+            //         if key == peeked {
+            //             found_kind = Some(kind);
+            //             break;
+            //         }
+            //     }
+            //
+            //     if let Some(kind) = &found_kind {
+            //         Ok(kind.clone().into_span(start, end))
+            //     } else if self.context == Context::Global && self.peek().unwrap() == '[' {
+            //         Ok(TokenKind::Pound.into_single_span(self.position))
+            //     } else {
+            //         // Otherwise we don't support # prefixed indentifiers
+            //         tracing::error!(target: "lexer", "INVALID '#' CHARACTER USAGE");
+            //         return Err(LexicalError::new(
+            //             LexicalErrorKind::InvalidCharacter('#'),
+            //             Span {
+            //                 start: self.position as usize,
+            //                 end: self.position as usize,
+            //                 file: None,
+            //             },
+            //         ));
+            //     }
+            // }
             // Alphabetical characters
             ch if ch.is_alphabetic() || ch.eq(&'_') => {
                 let (word, start, mut end) =
@@ -297,30 +284,28 @@ impl<'a> Iterator for Lexer<'a> {
 
                 let mut found_kind: Option<TokenKind> = None;
                 let keys = [
-                    TokenKind::Macro,
-                    TokenKind::Fn,
-                    TokenKind::Test,
-                    TokenKind::Function,
-                    TokenKind::Constant,
-                    TokenKind::Error,
-                    TokenKind::Takes,
-                    TokenKind::Returns,
-                    TokenKind::Event,
-                    TokenKind::NonPayable,
-                    TokenKind::Payable,
-                    TokenKind::Indexed,
-                    TokenKind::View,
-                    TokenKind::Pure,
-                    // First check for packed jump table
-                    TokenKind::JumpTablePacked,
-                    // Match with jump table if not
-                    TokenKind::JumpTable,
-                    TokenKind::CodeTable,
+                    TokenKind::Contract,
+                    // TokenKind::Macro,
+                    // TokenKind::Fn,
+                    // TokenKind::Test,
+                    // TokenKind::Function,
+                    // TokenKind::Constant,
+                    // TokenKind::Error,
+                    // TokenKind::Takes,
+                    // TokenKind::Returns,
+                    // TokenKind::Event,
+                    // TokenKind::NonPayable,
+                    // TokenKind::Payable,
+                    // TokenKind::Indexed,
+                    // TokenKind::View,
+                    // TokenKind::Pure,
+                    // // First check for packed jump table
+                    // TokenKind::JumpTablePacked,
+                    // // Match with jump table if not
+                    // TokenKind::JumpTable,
+                    // TokenKind::CodeTable,
                 ];
                 for kind in keys.into_iter() {
-                    if self.context == Context::MacroBody {
-                        break;
-                    }
                     let key = kind.to_string();
                     let peeked = word.clone();
 
@@ -339,37 +324,22 @@ impl<'a> Iterator for Lexer<'a> {
 
                 if let Some(kind) = &found_kind {
                     match kind {
-                        TokenKind::Macro | TokenKind::Fn | TokenKind::Test => {
-                            self.context = Context::MacroDefinition
-                        }
-                        TokenKind::Function | TokenKind::Event | TokenKind::Error => {
-                            self.context = Context::Abi
-                        }
-                        TokenKind::Constant => self.context = Context::Constant,
-                        TokenKind::CodeTable => self.context = Context::CodeTableBody,
+                        TokenKind::Contract => self.context = Context::Contract,
+                        // TokenKind::Macro | TokenKind::Fn | TokenKind::Test => {
+                        //     self.context = Context::MacroDefinition
+                        // }
+                        // TokenKind::Function | TokenKind::Event | TokenKind::Error => {
+                        //     self.context = Context::Abi
+                        // }
+                        // TokenKind::Constant => self.context = Context::Constant,
+                        // TokenKind::CodeTable => self.context = Context::CodeTableBody,
                         _ => (),
                     }
                 }
 
-                // Check for free storage pointer builtin
-                let fsp = "FREE_STORAGE_POINTER";
-                if fsp == word {
-                    // Consume the parenthesis following the FREE_STORAGE_POINTER
-                    // Note: This will consume `FREE_STORAGE_POINTER)` or
-                    // `FREE_STORAGE_POINTER(` as well
-                    if let Some('(') = self.peek() {
-                        self.consume();
-                    }
-                    if let Some(')') = self.peek() {
-                        self.consume();
-                    }
-                    end += 2;
-                    found_kind = Some(TokenKind::FreeStoragePointer);
-                }
-
-                if let Some(':') = self.peek() {
-                    found_kind = Some(TokenKind::Label(word.clone()));
-                }
+                // if let Some(':') = self.peek() {
+                //     found_kind = Some(TokenKind::Label(word.clone()));
+                // }
 
                 // Syntax sugar: true evaluates to 0x01, false evaluates to 0x00
                 if matches!(word.as_str(), "true" | "false") {
@@ -379,96 +349,14 @@ impl<'a> Iterator for Lexer<'a> {
                     self.eat_while(None, |c| c.is_alphanumeric());
                 }
 
-                if !(self.context != Context::MacroBody || found_kind.is_some()) {
-                    if let Some(o) = OPCODES_MAP.get(&word) {
-                        found_kind = Some(TokenKind::Opcode(o.to_owned()));
-                    }
-                }
-
-                if self.context == Context::AbiArgs {
-                    let curr_char = self.peek().unwrap();
-                    if !['(', ')'].contains(&curr_char) {
-                        let (partial_raw_type, _, abi_args_end) = self
-                            .eat_while(Some(ch), |c| c.is_alphanumeric() || c == '[' || c == ']');
-                        let raw_type = word.clone() + &partial_raw_type[1..];
-
-                        if raw_type == TokenKind::Calldata.to_string() {
-                            found_kind = Some(TokenKind::Calldata);
-                        } else if raw_type == TokenKind::Memory.to_string() {
-                            found_kind = Some(TokenKind::Memory);
-                        } else if raw_type == TokenKind::Storage.to_string() {
-                            found_kind = Some(TokenKind::Storage);
-                        } else if EVM_TYPE_ARRAY_REGEX.is_match(&raw_type) {
-                            // split to get array size and type
-                            // TODO: support multi-dimensional arrays
-                            let words: Vec<String> = Regex::new(r"\[")
-                                .unwrap()
-                                .split(&raw_type)
-                                .map(|x| x.replace(']', ""))
-                                .collect();
-                            let mut size_vec: Vec<usize> = Vec::new();
-                            // go over all array sizes
-                            let sizes = words.get(1..words.len()).unwrap();
-                            for size in sizes.iter() {
-                                match size.is_empty() {
-                                    true => size_vec.push(0),
-                                    false => {
-                                        let arr_size: usize = size
-                                            .parse::<usize>()
-                                            .map_err(|_| {
-                                                let err = LexicalError {
-                                                    kind: LexicalErrorKind::InvalidArraySize(
-                                                        words[1].clone(),
-                                                    ),
-                                                    span: Span { start: start as usize, end: end as usize, file: None },
-                                                };
-                                                tracing::error!(target: "lexer", "{}", format!("{err:?}"));
-                                                err
-                                            })
-                                            .unwrap();
-                                        size_vec.push(arr_size);
-                                    }
-                                }
-                            }
-                            let primitive = PrimitiveEVMType::try_from(words[0].clone());
-                            if let Ok(primitive) = primitive {
-                                found_kind = Some(TokenKind::ArrayType(primitive, size_vec));
-                            } else {
-                                let err = LexicalError {
-                                    kind: LexicalErrorKind::InvalidPrimitiveType(words[0].clone()),
-                                    span: Span {
-                                        start: start as usize,
-                                        end: end as usize,
-                                        file: None,
-                                    },
-                                };
-                                tracing::error!(target: "lexer", "{}", format!("{err:?}"));
-                            }
-                        } else {
-                            // We don't want to consider any argument names or the "indexed"
-                            // keyword here.
-                            let primitive = PrimitiveEVMType::try_from(word.clone());
-                            if let Ok(primitive) = primitive {
-                                found_kind = Some(TokenKind::PrimitiveType(primitive));
-                            }
-                        }
-                        end = abi_args_end;
-                    } else {
-                        // We don't want to consider any argument names or the "indexed"
-                        // keyword here.
-                        let primitive = PrimitiveEVMType::try_from(word.clone());
-                        if let Ok(primitive) = primitive {
-                            found_kind = Some(TokenKind::PrimitiveType(primitive));
-                        }
-                    }
-                }
+                // if !(self.context != Context::MacroBody || found_kind.is_some()) {
+                //     if let Some(o) = OPCODES_MAP.get(&word) {
+                //         found_kind = Some(TokenKind::Opcode(o.to_owned()));
+                //     }
+                // }
 
                 let kind = if let Some(kind) = &found_kind {
                     kind.clone()
-                } else if self.context == Context::MacroBody
-                    && BuiltinFunctionKind::try_from(&word).is_ok()
-                {
-                    TokenKind::BuiltinFunction(word)
                 } else {
                     TokenKind::Ident(word)
                 };
@@ -499,5 +387,19 @@ impl<'a> Iterator for Lexer<'a> {
         }
 
         Ok(token)
+    }
+}
+
+pub type TokenResult = Result<Token, LexicalError>;
+
+impl<'a> Iterator for Lexer<'a> {
+    type Item = TokenResult;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.eof {
+            None
+        } else {
+            Some(self.next_token())
+        }
     }
 }

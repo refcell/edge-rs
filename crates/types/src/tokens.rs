@@ -26,14 +26,20 @@ pub enum TokenKind {
     Eof,
     /// A Comment
     Comment(String),
+    /// Whitespace
+    Whitespace,
     /// A Contract Token,
     Contract,
+    /// A hex literal
+    Literal(Literal),
     /// An Identifier
     Ident(String),
     /// An open brace
     OpenBrace,
     /// A close brace
     CloseBrace,
+    /// A Division operator
+    Div,
 }
 
 impl TokenKind {
@@ -54,6 +60,15 @@ impl fmt::Display for TokenKind {
             TokenKind::Eof => "EOF",
             TokenKind::Comment(s) => return write!(f, "Comment({s})"),
             TokenKind::Contract => "contract",
+            TokenKind::Literal(l) => {
+                let mut s = String::new();
+                for b in l.iter() {
+                    let _ = write!(&mut s, "{b:02x}");
+                }
+                return write!(f, "{s}")
+            }
+            TokenKind::Whitespace => " ",
+            TokenKind::Div => "/",
             TokenKind::Ident(s) => return write!(f, "{s}"),
             TokenKind::OpenBrace => "{",
             TokenKind::CloseBrace => "}",
