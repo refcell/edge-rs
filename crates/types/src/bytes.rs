@@ -1,3 +1,5 @@
+//! Byte utilities and helpers.
+
 // use crate::{evm::Opcode, evm_version::EVMVersion};
 use std::num::ParseIntError;
 use tiny_keccak::{Hasher, Keccak};

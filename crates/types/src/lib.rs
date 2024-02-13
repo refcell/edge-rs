@@ -8,22 +8,11 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
-pub mod locations;
-
-/// Byte utilities and helpers.
 pub mod bytes;
-
-/// Span contains the logic for handling source code spans.
-pub mod span;
-
-/// Module containing all the tokens used to represent edge source code.
-pub mod tokens;
-
-/// File source objects and utilities.
 pub mod source;
-
-/// Time utilities.
+pub mod span;
 pub mod time;
+pub mod tokens;
 
 /// The prelude re-exports commonly used types across various modules in this crate.
 pub mod prelude {

@@ -1,6 +1,19 @@
-use crate::locations::Location;
+//! Token Module
+//!
+//! Handles the token kinds to represent edge source code.
+
 use crate::span::Span;
 use std::{fmt, fmt::Write};
+
+pub mod keywords;
+pub mod locations;
+pub mod operators;
+pub mod types;
+
+pub use keywords::*;
+pub use locations::*;
+pub use operators::*;
+pub use types::*;
 
 type Literal = [u8; 32];
 
@@ -25,14 +38,18 @@ impl Token {
 pub enum TokenKind {
     /// EOF Token
     Eof,
+    /// An Operator
+    Operator(Operator),
+    /// A Data Type
+    DataType(DataType),
+    /// Keyword Identifier
+    Keyword(Keyword),
     /// Pointer data location
     Pointer(Location),
     /// A Comment
     Comment(String),
     /// Whitespace
     Whitespace,
-    /// A Contract Token,
-    Contract,
     /// A hex literal
     Literal(Literal),
     /// An Identifier
@@ -68,8 +85,10 @@ impl fmt::Display for TokenKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x = match self {
             TokenKind::Eof => "EOF",
+            TokenKind::Operator(o) => return write!(f, "{o}"),
+            TokenKind::DataType(d) => return write!(f, "{d}"),
             TokenKind::Comment(s) => return write!(f, "Comment({s})"),
-            TokenKind::Contract => "contract",
+            TokenKind::Keyword(k) => return write!(f, "{k}"),
             TokenKind::Pointer(l) => return write!(f, "{l}"),
             TokenKind::Literal(l) => {
                 let mut s = String::new();

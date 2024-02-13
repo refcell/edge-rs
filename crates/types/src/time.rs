@@ -1,7 +1,10 @@
+//! Time Module
+//!
+//! Time utilities and helpers.
+
 use cfg_if;
 
-// `std::time::SystemTime` panics on `wasm32-unknown-unknown` target so use a u64 timestamp
-// instead
+// [std::time::SystemTime] panics for the `wasm32-unknown-unknown` target.
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "wasm32", target_os = "unknown"))] {
         use js_sys;

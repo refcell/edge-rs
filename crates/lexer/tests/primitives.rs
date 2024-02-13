@@ -1,20 +1,17 @@
-use edge_lexer::core::Lexer;
+use edge_lexer::lexer::Lexer;
 use edge_types::prelude::*;
 
 #[test]
 fn parses_empty_contract() {
-    let source = "contract EmptyContract {}";
-    let flattened_source = FullFileSource {
-        source,
-        file: None,
-        spans: vec![],
-    };
-    let mut lexer = Lexer::new(flattened_source.source.clone());
+    let mut lexer = Lexer::new("contract EmptyContract {}");
 
     // contract
     let tok = lexer.next().unwrap().unwrap();
     let type_span = Span::new(0..7, None);
-    assert_eq!(tok, Token::new(TokenKind::Contract, type_span.clone()));
+    assert_eq!(
+        tok,
+        Token::new(TokenKind::Keyword(Keyword::Contract), type_span.clone())
+    );
 
     // whitespace
     let tok = lexer.next().unwrap().unwrap();

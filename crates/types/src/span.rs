@@ -1,5 +1,8 @@
+//! Span Module
+//!
+//! Contains the logic for handling source code spans.
+
 use crate::source::*;
-use serde::{Deserialize, Serialize};
 use std::ops::Add;
 use std::ops::Range;
 use std::sync::Arc;
@@ -11,7 +14,7 @@ pub trait Spanned {
 }
 
 /// A Span is a section of a source file.
-#[derive(Default, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Span {
     /// The start of the span.
     pub start: usize,

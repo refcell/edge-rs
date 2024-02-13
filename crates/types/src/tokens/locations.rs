@@ -36,6 +36,8 @@
 //! | Internal Code     | 16          | Code size is less than 0xffff
 //! | External Code     | 176         | Contains 160 bit address and 16 bit code pointer
 
+use std::fmt;
+
 /// Data Location
 ///
 /// The [Location] is a data location annotation indicating to which data
@@ -82,7 +84,7 @@ pub enum Location {
     ExternalCode,
 }
 
-impl Display for Location {
+impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x = match self {
             Location::PersistentStorage => "s",

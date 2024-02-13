@@ -1,15 +1,14 @@
+//! File source objects and utilities.
+
 use crate::span::Span;
 use crate::time;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use serde::{Deserialize, Serialize};
-
 /// Source File
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, Default, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct Source {
     /// File ID
-    #[serde(skip)]
     pub id: Uuid,
     /// File Path
     pub path: String,
@@ -22,7 +21,7 @@ pub struct Source {
 }
 
 /// Full File Source
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Clone)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub struct FullFileSource<'a> {
     /// Flattened file source
     pub source: &'a str,

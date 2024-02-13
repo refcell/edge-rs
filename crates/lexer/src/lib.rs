@@ -9,13 +9,13 @@
 #![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
 
 /// The core lexer module.
-pub mod core;
+pub mod lexer;
 
 /// Lexer Errors.
 pub mod errors;
 
 /// The prelude re-exports commonly used types across various modules in this crate.
 pub mod prelude {
-    pub use crate::core::*;
     pub use crate::errors::*;
+    pub use crate::lexer::*;
 }

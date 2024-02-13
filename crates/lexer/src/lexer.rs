@@ -283,34 +283,12 @@ impl<'a> Lexer<'a> {
                     self.eat_while(Some(ch), |c| c.is_alphanumeric() || c == '_');
 
                 let mut found_kind: Option<TokenKind> = None;
-                let keys = [
-                    TokenKind::Contract,
-                    // TokenKind::Macro,
-                    // TokenKind::Fn,
-                    // TokenKind::Test,
-                    // TokenKind::Function,
-                    // TokenKind::Constant,
-                    // TokenKind::Error,
-                    // TokenKind::Takes,
-                    // TokenKind::Returns,
-                    // TokenKind::Event,
-                    // TokenKind::NonPayable,
-                    // TokenKind::Payable,
-                    // TokenKind::Indexed,
-                    // TokenKind::View,
-                    // TokenKind::Pure,
-                    // // First check for packed jump table
-                    // TokenKind::JumpTablePacked,
-                    // // Match with jump table if not
-                    // TokenKind::JumpTable,
-                    // TokenKind::CodeTable,
-                ];
+                let keys = Keyword::all();
                 for kind in keys.into_iter() {
                     let key = kind.to_string();
                     let peeked = word.clone();
-
                     if key == peeked {
-                        found_kind = Some(kind);
+                        found_kind = Some(TokenKind::Keyword(kind));
                         break;
                     }
                 }
@@ -324,7 +302,7 @@ impl<'a> Lexer<'a> {
 
                 if let Some(kind) = &found_kind {
                     match kind {
-                        TokenKind::Contract => self.context = Context::Contract,
+                        TokenKind::Keyword(Keyword::Contract) => self.context = Context::Contract,
                         // TokenKind::Macro | TokenKind::Fn | TokenKind::Test => {
                         //     self.context = Context::MacroDefinition
                         // }
