@@ -1,6 +1,6 @@
 # Edge Language
 
-- [Introduction](intro.md)
+1. [Introduction](intro.md)
 
 # Specifications
 
@@ -48,17 +48,17 @@
 
 # The Compiler
 
-- [Overview](compiler/overview.md)
-- [Quickstart](compiler/quickstart.md)
+1. [Overview](compiler/overview.md)
+1. [Quickstart](compiler/quickstart.md)
 
 # Tooling
 
-- [Overview](tools/overview.md)
+1. [Overview](tools/overview.md)
 
 # Contributing
 
-- [Contributing](contributing/contributing.md)
+1. [Contributing](contributing/contributing.md)
 
 # Contact
 
-- [Contact](contact/contact.md)
+1. [Contact](contact/contact.md)
