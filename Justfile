@@ -23,6 +23,10 @@ test:
 test-ci:
     cargo nextest run --workspace
 
+# Fix formatting
+format-fix:
+    cargo +nightly fmt --all
+
 # Check formatting
 check-format:
     cargo +nightly fmt --all -- --check

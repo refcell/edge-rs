@@ -135,10 +135,7 @@ fn parse_binary_add_expression() {
             assert_eq!(*op, edge_ast::BinOp::Add);
         }
     } else {
-        panic!(
-            "expected Expr, got {:?}",
-            program.stmts[0]
-        );
+        panic!("expected Expr, got {:?}", program.stmts[0]);
     }
 }
 
@@ -294,14 +291,20 @@ fn parse_break_statement() {
     // (parser doesn't enforce context, just syntax)
     let result = parse("break;");
     assert!(result.is_ok(), "parse break failed: {:?}", result.err());
-    assert!(matches!(result.unwrap().stmts[0], edge_ast::Stmt::Break(..)));
+    assert!(matches!(
+        result.unwrap().stmts[0],
+        edge_ast::Stmt::Break(..)
+    ));
 }
 
 #[test]
 fn parse_continue_statement() {
     let result = parse("continue;");
     assert!(result.is_ok(), "parse continue failed: {:?}", result.err());
-    assert!(matches!(result.unwrap().stmts[0], edge_ast::Stmt::Continue(..)));
+    assert!(matches!(
+        result.unwrap().stmts[0],
+        edge_ast::Stmt::Continue(..)
+    ));
 }
 
 // ─── Impl Block ───────────────────────────────────────────────────
@@ -310,8 +313,15 @@ fn parse_continue_statement() {
 fn parse_impl_block() {
     let source = "impl Foo { fn bar() {} }";
     let result = parse(source);
-    assert!(result.is_ok(), "parse impl block failed: {:?}", result.err());
-    assert!(matches!(result.unwrap().stmts[0], edge_ast::Stmt::ImplBlock(..)));
+    assert!(
+        result.is_ok(),
+        "parse impl block failed: {:?}",
+        result.err()
+    );
+    assert!(matches!(
+        result.unwrap().stmts[0],
+        edge_ast::Stmt::ImplBlock(..)
+    ));
 }
 
 // ─── Contract with Functions ──────────────────────────────────────
@@ -320,7 +330,11 @@ fn parse_impl_block() {
 fn parse_contract_with_functions() {
     let source = "contract Counter { let count: &s u256; pub fn increment() { } }";
     let result = parse(source);
-    assert!(result.is_ok(), "parse contract with functions failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "parse contract with functions failed: {:?}",
+        result.err()
+    );
     if let edge_ast::Stmt::ContractDecl(ref c) = result.unwrap().stmts[0] {
         assert_eq!(c.name.name, "Counter");
         assert_eq!(c.fields.len(), 1);
@@ -352,5 +366,8 @@ fn parse_match_statement() {
     let source = "match x { Foo::Bar => { } }";
     let result = parse(source);
     assert!(result.is_ok(), "parse match failed: {:?}", result.err());
-    assert!(matches!(result.unwrap().stmts[0], edge_ast::Stmt::Match(..)));
+    assert!(matches!(
+        result.unwrap().stmts[0],
+        edge_ast::Stmt::Match(..)
+    ));
 }

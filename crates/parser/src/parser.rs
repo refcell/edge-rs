@@ -510,9 +510,11 @@ impl Parser {
         if self.check(&TokenKind::Colon) {
             self.advance();
             supertraits.push(self.parse_ident()?);
-            while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Arithmetic(
-                edge_types::tokens::ArithmeticOperator::Add,
-            ))) {
+            while self.check(&TokenKind::Operator(
+                edge_types::tokens::Operator::Arithmetic(
+                    edge_types::tokens::ArithmeticOperator::Add,
+                ),
+            )) {
                 self.advance();
                 supertraits.push(self.parse_ident()?);
             }
@@ -523,7 +525,9 @@ impl Parser {
         let mut items = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
             self.skip_whitespace_and_comments();
-            if self.check(&TokenKind::CloseBrace) { break; }
+            if self.check(&TokenKind::CloseBrace) {
+                break;
+            }
             items.push(self.parse_trait_item()?);
         }
 
@@ -577,7 +581,11 @@ impl Parser {
                 let span = const_name.span.clone();
                 self.expect(TokenKind::Colon)?;
                 let ty = self.parse_type_sig()?;
-                let const_decl = edge_ast::ConstDecl { name: const_name, ty: Some(ty), span };
+                let const_decl = edge_ast::ConstDecl {
+                    name: const_name,
+                    ty: Some(ty),
+                    span,
+                };
                 self.skip_whitespace_and_comments();
                 if self.check(&TokenKind::Operator(Operator::Assignment)) {
                     self.advance();
@@ -634,7 +642,9 @@ impl Parser {
 
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
             self.skip_whitespace_and_comments();
-            if self.check(&TokenKind::CloseBrace) { break; }
+            if self.check(&TokenKind::CloseBrace) {
+                break;
+            }
 
             if self.check(&TokenKind::Keyword(Keyword::Let)) {
                 self.advance();
@@ -652,7 +662,11 @@ impl Parser {
                 self.expect(TokenKind::Operator(Operator::Assignment))?;
                 let expr = self.parse_expr()?;
                 self.expect(TokenKind::Semicolon)?;
-                let const_decl = edge_ast::ConstDecl { name: const_name, ty: Some(const_type), span: const_span };
+                let const_decl = edge_ast::ConstDecl {
+                    name: const_name,
+                    ty: Some(const_type),
+                    span: const_span,
+                };
                 consts.push((const_decl, expr));
             } else if self.check(&TokenKind::Keyword(Keyword::Fn))
                 || self.check(&TokenKind::Keyword(Keyword::Pub))
@@ -766,13 +780,17 @@ impl Parser {
         let mut arms = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
             self.skip_whitespace_and_comments();
-            if self.check(&TokenKind::CloseBrace) { break; }
+            if self.check(&TokenKind::CloseBrace) {
+                break;
+            }
             let pattern = self.parse_match_pattern()?;
             self.expect(TokenKind::FatArrow)?;
             let body = self.parse_code_block()?;
             arms.push(edge_ast::pattern::MatchArm { pattern, body });
             self.skip_whitespace_and_comments();
-            if self.check(&TokenKind::Comma) { self.advance(); }
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
         }
 
         self.expect(TokenKind::CloseBrace)?;
@@ -797,10 +815,14 @@ impl Parser {
                 self.advance();
                 while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
                     self.skip_whitespace_and_comments();
-                    if self.check(&TokenKind::CloseParen) { break; }
+                    if self.check(&TokenKind::CloseParen) {
+                        break;
+                    }
                     bindings.push(self.parse_ident()?);
                     self.skip_whitespace_and_comments();
-                    if !self.check(&TokenKind::CloseParen) { self.expect(TokenKind::Comma)?; }
+                    if !self.check(&TokenKind::CloseParen) {
+                        self.expect(TokenKind::Comma)?;
+                    }
                 }
                 self.expect(TokenKind::CloseParen)?;
             }
@@ -809,12 +831,14 @@ impl Parser {
                 end: self.tokens[self.cursor - 1].span.end,
                 file: ident.span.file.clone(),
             };
-            Ok(edge_ast::pattern::MatchPattern::Union(edge_ast::pattern::UnionPattern {
-                union_name: ident,
-                member_name: member,
-                bindings,
-                span,
-            }))
+            Ok(edge_ast::pattern::MatchPattern::Union(
+                edge_ast::pattern::UnionPattern {
+                    union_name: ident,
+                    member_name: member,
+                    bindings,
+                    span,
+                },
+            ))
         } else {
             Ok(edge_ast::pattern::MatchPattern::Ident(ident))
         }
@@ -943,7 +967,10 @@ impl Parser {
         self.expect(TokenKind::CloseParen)?;
         self.expect(TokenKind::Semicolon)?;
         Ok(Stmt::DoWhile(
-            LoopBlock { items, span: start_tok.span },
+            LoopBlock {
+                items,
+                span: start_tok.span,
+            },
             cond,
         ))
     }
@@ -976,7 +1003,9 @@ impl Parser {
         let mut items = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
             self.skip_whitespace_and_comments();
-            if self.check(&TokenKind::CloseBrace) { break; }
+            if self.check(&TokenKind::CloseBrace) {
+                break;
+            }
 
             let is_pub = if self.check(&TokenKind::Keyword(Keyword::Pub)) {
                 self.advance();
@@ -1002,7 +1031,11 @@ impl Parser {
                     self.expect(TokenKind::Operator(Operator::Assignment))?;
                     let expr = self.parse_expr()?;
                     self.expect(TokenKind::Semicolon)?;
-                    let const_decl = edge_ast::ConstDecl { name: const_name, ty: Some(ty), span: const_span };
+                    let const_decl = edge_ast::ConstDecl {
+                        name: const_name,
+                        ty: Some(ty),
+                        span: const_span,
+                    };
                     items.push(edge_ast::item::ImplItem::ConstAssign(const_decl, expr));
                 }
                 TokenKind::Keyword(Keyword::Type) => {
@@ -1019,7 +1052,9 @@ impl Parser {
                     self.expect(TokenKind::Semicolon)?;
                     items.push(edge_ast::item::ImplItem::TypeAssign(type_decl, ty));
                 }
-                _ => { self.advance(); }
+                _ => {
+                    self.advance();
+                }
             }
         }
 
