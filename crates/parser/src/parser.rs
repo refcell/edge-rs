@@ -430,11 +430,9 @@ impl Parser {
             }
 
             // For now, use the last segment as the import path
-            if let Some(last) = path_segments.last() {
-                Some(edge_ast::ImportPath::Ident(last.clone()))
-            } else {
-                None
-            }
+            path_segments
+                .last()
+                .map(|last| edge_ast::ImportPath::Ident(last.clone()))
         } else {
             None
         };
@@ -538,7 +536,9 @@ impl Parser {
                 self.expect(TokenKind::Operator(Operator::Assignment))?;
                 let _expr = self.parse_expr()?;
                 self.expect(TokenKind::Semicolon)?;
-            } else if self.check(&TokenKind::Keyword(Keyword::Fn)) || self.check(&TokenKind::Keyword(Keyword::Pub)) {
+            } else if self.check(&TokenKind::Keyword(Keyword::Fn))
+                || self.check(&TokenKind::Keyword(Keyword::Pub))
+            {
                 // Skip function definitions
                 // Consume tokens until we hit the next let/const or closing brace
                 let mut brace_depth = 0;
@@ -789,7 +789,9 @@ impl Parser {
             }
 
             // Check for assignment specially
-            if self.check(&TokenKind::Operator(edge_types::tokens::Operator::Assignment)) {
+            if self.check(&TokenKind::Operator(
+                edge_types::tokens::Operator::Assignment,
+            )) {
                 let _op_start = self.advance().span.clone();
                 let right = self.parse_binary_expr(prec + 1)?;
 
@@ -921,7 +923,7 @@ impl Parser {
                 let token = self.advance();
                 // Extract the actual integer value from the literal bytes
                 let mut value: u128 = 0;
-                for byte in lit_bytes.iter() {
+                for byte in &lit_bytes {
                     value = (value << 8) | (*byte as u128);
                 }
                 let lit = Lit::Int(value as u64, None, token.span);
@@ -1121,12 +1123,17 @@ impl Parser {
         }
     }
 
-    /// Convert from edge_types PrimitiveType to edge_ast PrimitiveType
-    fn convert_primitive_type(&self, pt: edge_types::tokens::types::PrimitiveType) -> edge_ast::PrimitiveType {
+    /// Convert from `edge_types` `PrimitiveType` to `edge_ast` `PrimitiveType`
+    const fn convert_primitive_type(
+        &self,
+        pt: edge_types::tokens::types::PrimitiveType,
+    ) -> edge_ast::PrimitiveType {
         match pt {
             edge_types::tokens::types::PrimitiveType::UInt(n) => edge_ast::PrimitiveType::UInt(n),
             edge_types::tokens::types::PrimitiveType::Int(n) => edge_ast::PrimitiveType::Int(n),
-            edge_types::tokens::types::PrimitiveType::FixedBytes(n) => edge_ast::PrimitiveType::FixedBytes(n),
+            edge_types::tokens::types::PrimitiveType::FixedBytes(n) => {
+                edge_ast::PrimitiveType::FixedBytes(n)
+            }
             edge_types::tokens::types::PrimitiveType::Address => edge_ast::PrimitiveType::Address,
             edge_types::tokens::types::PrimitiveType::Bool => edge_ast::PrimitiveType::Bool,
             edge_types::tokens::types::PrimitiveType::Bit => edge_ast::PrimitiveType::Bit,
@@ -1137,8 +1144,8 @@ impl Parser {
         }
     }
 
-    /// Convert from edge_types Location to edge_ast Location
-    fn convert_location(&self, loc: edge_types::tokens::Location) -> edge_ast::ty::Location {
+    /// Convert from `edge_types` `Location` to `edge_ast` `Location`
+    const fn convert_location(&self, loc: edge_types::tokens::Location) -> edge_ast::ty::Location {
         match loc {
             edge_types::tokens::Location::PersistentStorage => edge_ast::ty::Location::Stack,
             edge_types::tokens::Location::TransientStorage => edge_ast::ty::Location::Transient,
