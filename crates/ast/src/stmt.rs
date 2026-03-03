@@ -141,6 +141,9 @@ pub enum Stmt {
 
     /// Event declaration
     EventDecl(EventDecl),
+
+    /// Emit statement: emit EventName(args...)
+    Emit(Ident, Vec<crate::Expr>, Span),
 }
 
 impl Stmt {
@@ -183,6 +186,7 @@ impl Stmt {
             Self::Continue(span) => span.clone(),
             Self::Expr(expr) => expr.span(),
             Self::EventDecl(event) => event.span.clone(),
+            Self::Emit(_, _, span) => span.clone(),
         }
     }
 }

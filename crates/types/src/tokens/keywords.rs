@@ -70,6 +70,8 @@ pub enum Keyword {
     Matches,
     /// Super keyword for parent scope
     Super,
+    /// Emit event
+    Emit,
 }
 
 impl Keyword {
@@ -108,6 +110,7 @@ impl Keyword {
             Keyword::Anon,
             Keyword::Matches,
             Keyword::Super,
+            Keyword::Emit,
         ]
     }
 }
@@ -146,6 +149,7 @@ impl fmt::Display for Keyword {
             Keyword::Anon => "anon",
             Keyword::Matches => "matches",
             Keyword::Super => "super",
+            Keyword::Emit => "emit",
         };
         write!(f, "{}", x)
     }

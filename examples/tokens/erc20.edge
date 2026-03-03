@@ -140,7 +140,7 @@ contract ERC20 {
     fn _mint(to: addr, amount: u256) {
         total_supply = total_supply + amount;
         balances[to] = balances[to] + amount;
-        // emit Transfer(address(0), to, amount);
+        emit Transfer(0, to, amount);
     }
 
     // Decrease total supply and debit `from`.
@@ -148,7 +148,7 @@ contract ERC20 {
     fn _burn(from: addr, amount: u256) {
         balances[from] = balances[from] - amount;
         total_supply = total_supply - amount;
-        // emit Transfer(from, address(0), amount);
+        emit Transfer(from, 0, amount);
     }
 
     // Move tokens from `from` to `to` with balance enforcement.
@@ -158,12 +158,12 @@ contract ERC20 {
         from_balance = balances[from];
         balances[from] = from_balance - amount;
         balances[to] = balances[to] + amount;
-        // emit Transfer(from, to, amount);
+        emit Transfer(from, to, amount);
     }
 
     // Set or update the allowance for spender to draw from owner.
     fn _approve(owner: addr, spender: addr, amount: u256) {
         allowances[owner][spender] = amount;
-        // emit Approval(owner, spender, amount);
+        emit Approval(owner, spender, amount);
     }
 }

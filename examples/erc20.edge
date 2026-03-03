@@ -88,23 +88,23 @@ contract ERC20 {
         from_balance = balances[from];
         balances[from] = from_balance - amount;
         balances[to] = balances[to] + amount;
-        // emit Transfer(from, to, amount);
+        emit Transfer(from, to, amount);
     }
 
     fn _approve(owner: addr, spender: addr, amount: u256) {
         allowances[owner][spender] = amount;
-        // emit Approval(owner, spender, amount);
+        emit Approval(owner, spender, amount);
     }
 
     fn _mint(to: addr, amount: u256) {
         total_supply = total_supply + amount;
         balances[to] = balances[to] + amount;
-        // emit Transfer(address(0), to, amount);
+        emit Transfer(0, to, amount);
     }
 
     fn _burn(from: addr, amount: u256) {
         balances[from] = balances[from] - amount;
         total_supply = total_supply - amount;
-        // emit Transfer(from, address(0), amount);
+        emit Transfer(from, 0, amount);
     }
 }

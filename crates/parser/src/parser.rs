@@ -150,6 +150,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Do) => self.parse_do_while(),
             TokenKind::Keyword(Keyword::Comptime) => self.parse_comptime(),
             TokenKind::Keyword(Keyword::Impl) => self.parse_impl_block(),
+            TokenKind::Keyword(Keyword::Emit) => self.parse_emit(),
             _ => self.parse_expr_stmt(),
         }
     }
@@ -899,6 +900,37 @@ impl Parser {
         };
 
         Ok(Stmt::Return(Some(expr), span))
+    }
+
+    /// Parse emit statement: emit EventName(args...)
+    fn parse_emit(&mut self) -> ParseResult<Stmt> {
+        let start_tok = self.expect(TokenKind::Keyword(Keyword::Emit))?;
+        let name = self.parse_ident()?;
+        self.expect(TokenKind::OpenParen)?;
+
+        let mut args = Vec::new();
+        while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::CloseParen) {
+                break;
+            }
+            args.push(self.parse_expr()?);
+            self.skip_whitespace_and_comments();
+            if !self.check(&TokenKind::CloseParen) {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+
+        self.expect(TokenKind::CloseParen)?;
+        self.expect(TokenKind::Semicolon)?;
+
+        let span = Span {
+            start: start_tok.span.start,
+            end: self.tokens[self.cursor - 1].span.end,
+            file: start_tok.span.file,
+        };
+
+        Ok(Stmt::Emit(name, args, span))
     }
 
     /// Parse do-while statement
