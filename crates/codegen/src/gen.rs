@@ -1,7 +1,8 @@
 //! EVM bytecode code generator
 
-use crate::opcode::Opcode;
 use indexmap::IndexMap;
+
+use crate::opcode::Opcode;
 
 /// The input to the code generator (mirrors `IrProgram` structure)
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -205,11 +206,7 @@ impl CodeGenerator {
         Ok(())
     }
 
-    fn emit_function(
-        &self,
-        asm: &mut Assembler,
-        func: &FunctionInput,
-    ) -> Result<(), CodeGenError> {
+    fn emit_function(&self, asm: &mut Assembler, func: &FunctionInput) -> Result<(), CodeGenError> {
         let fn_label = format!("fn_{}", func.name);
         asm.emit_jumpdest(&fn_label); // function entry point
         asm.emit_opcode(Opcode::Pop); // pop the selector that's still on stack from dispatcher
@@ -391,7 +388,9 @@ impl Assembler {
     /// Finalize: patch all label references and return bytes
     fn resolve_labels(mut self) -> Result<Vec<u8>, CodeGenError> {
         for (ref_offset, label) in &self.label_refs {
-            let target = self.label_offsets.get(label.as_str())
+            let target = self
+                .label_offsets
+                .get(label.as_str())
                 .copied()
                 .ok_or_else(|| CodeGenError::UndefinedLabel(label.clone()))?;
             // Write 2-byte big-endian target

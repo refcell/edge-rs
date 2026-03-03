@@ -1,13 +1,18 @@
 //! AST to IR lowering
 
 use edge_ast::{
-    expr::Expr, lit::Lit, op::BinOp, stmt::{BlockItem, CodeBlock, Stmt},
+    expr::Expr,
+    lit::Lit,
+    op::BinOp,
+    stmt::{BlockItem, CodeBlock, Stmt},
     Program,
 };
 use indexmap::IndexMap;
 
-use crate::instruction::IrInstruction;
-use crate::program::{IrContract, IrFunction, IrProgram};
+use crate::{
+    instruction::IrInstruction,
+    program::{IrContract, IrFunction, IrProgram},
+};
 
 /// Error type for lowering failures
 #[derive(Debug, thiserror::Error)]
@@ -146,10 +151,7 @@ impl Lowerer {
         Ok(IrProgram { contracts })
     }
 
-    fn lower_contract(
-        &self,
-        contract: &edge_ast::ContractDecl,
-    ) -> Result<IrContract, LowerError> {
+    fn lower_contract(&self, contract: &edge_ast::ContractDecl) -> Result<IrContract, LowerError> {
         let mut functions = Vec::new();
 
         for fn_decl in &contract.functions {
@@ -164,8 +166,7 @@ impl Lowerer {
                     LowerError::UndefinedVariable(format!("function not in metadata: {}", fn_name))
                 })?;
 
-            let ir_fn =
-                self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body)?;
+            let ir_fn = self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body)?;
             functions.push(ir_fn);
         }
 

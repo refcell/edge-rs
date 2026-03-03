@@ -3,15 +3,14 @@
 //! This module implements the type checker that walks the AST, resolves type information,
 //! computes storage layouts, and generates function selectors for the compiler driver.
 
-use indexmap::IndexMap;
-use tiny_keccak::{Hasher, Keccak};
-
 use edge_ast::{
     item::{ContractDecl, ContractFnDecl},
     stmt::Stmt,
     ty::{Location, PrimitiveType, TypeSig},
     Program,
 };
+use indexmap::IndexMap;
+use tiny_keccak::{Hasher, Keccak};
 
 /// Storage slot assignment for contract fields
 #[derive(Debug, Clone)]
@@ -96,7 +95,10 @@ impl TypeChecker {
     }
 
     /// Check a single contract declaration
-    fn check_contract(&self, contract: &ContractDecl) -> Result<ContractInfo, crate::TypeCheckError> {
+    fn check_contract(
+        &self,
+        contract: &ContractDecl,
+    ) -> Result<ContractInfo, crate::TypeCheckError> {
         let name = contract.name.name.clone();
 
         // Build storage layout for &s fields

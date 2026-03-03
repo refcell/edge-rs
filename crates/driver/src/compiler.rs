@@ -94,12 +94,11 @@ impl Compiler {
         }
 
         // Type check pass
-        let checked = edge_typeck::TypeChecker::new()
-            .check(&ast)
-            .map_err(|e| {
-                self.session.emit_error(Diagnostic::error(format!("type error: {e}")));
-                CompileError::TypeCheckErrors
-            })?;
+        let checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
+            self.session
+                .emit_error(Diagnostic::error(format!("type error: {e}")));
+            CompileError::TypeCheckErrors
+        })?;
 
         // Lower to IR and generate bytecode for each contract
         let mut all_bytecode: Vec<u8> = Vec::new();
@@ -109,7 +108,9 @@ impl Compiler {
             let storage_slots = contract_info.storage.slots.clone();
 
             // Build function metadata for lowerer
-            let fn_metas: Vec<edge_ir::FnMeta> = contract_info.functions.iter()
+            let fn_metas: Vec<edge_ir::FnMeta> = contract_info
+                .functions
+                .iter()
                 .map(|f| edge_ir::FnMeta {
                     name: f.name.clone(),
                     selector: f.selector,
@@ -127,12 +128,15 @@ impl Compiler {
             })?;
 
             // Find the matching IR contract
-            let ir_contract = ir_program.contracts.iter()
+            let ir_contract = ir_program
+                .contracts
+                .iter()
                 .find(|c| c.name == contract_info.name)
                 .ok_or_else(|| {
-                    self.session.emit_error(Diagnostic::error(
-                        format!("contract {} not found in IR program", contract_info.name),
-                    ));
+                    self.session.emit_error(Diagnostic::error(format!(
+                        "contract {} not found in IR program",
+                        contract_info.name
+                    )));
                     CompileError::Aborted
                 })?;
 
@@ -143,11 +147,12 @@ impl Compiler {
             let bytecode = edge_codegen::CodeGenerator::new()
                 .generate(&contract_input)
                 .map_err(|e| {
-                    self.session.emit_error(Diagnostic::error(format!("codegen error: {e}")));
+                    self.session
+                        .emit_error(Diagnostic::error(format!("codegen error: {e}")));
                     CompileError::CodeGenErrors
                 })?;
 
-            all_bytecode = bytecode;  // use last contract's bytecode (MVP: single contract)
+            all_bytecode = bytecode; // use last contract's bytecode (MVP: single contract)
         }
 
         Ok(CompileOutput {
@@ -207,9 +212,13 @@ impl Compiler {
 
     /// Convert an IR contract to codegen input
     fn ir_to_codegen(ir_contract: &edge_ir::IrContract) -> edge_codegen::ContractInput {
-        let functions = ir_contract.functions.iter()
+        let functions = ir_contract
+            .functions
+            .iter()
             .map(|ir_fn| {
-                let body = ir_fn.body.iter()
+                let body = ir_fn
+                    .body
+                    .iter()
                     .map(Self::ir_instruction_to_gen_instr)
                     .collect();
                 edge_codegen::FunctionInput {
@@ -263,8 +272,12 @@ impl Compiler {
             edge_ir::IrInstruction::Log(n) => edge_codegen::GenInstr::Log(*n),
             edge_ir::IrInstruction::Jump => edge_codegen::GenInstr::Jump,
             edge_ir::IrInstruction::JumpI => edge_codegen::GenInstr::JumpI,
-            edge_ir::IrInstruction::JumpDest(label) => edge_codegen::GenInstr::JumpDest(label.clone()),
-            edge_ir::IrInstruction::PushLabel(label) => edge_codegen::GenInstr::PushLabel(label.clone()),
+            edge_ir::IrInstruction::JumpDest(label) => {
+                edge_codegen::GenInstr::JumpDest(label.clone())
+            }
+            edge_ir::IrInstruction::PushLabel(label) => {
+                edge_codegen::GenInstr::PushLabel(label.clone())
+            }
             edge_ir::IrInstruction::Return => edge_codegen::GenInstr::Return,
             edge_ir::IrInstruction::Revert => edge_codegen::GenInstr::Revert,
             edge_ir::IrInstruction::Stop => edge_codegen::GenInstr::Stop,
