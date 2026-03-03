@@ -165,10 +165,14 @@ pub struct ContractFnDecl {
     pub params: Vec<(Ident, crate::ty::TypeSig)>,
     /// Return types
     pub returns: Vec<crate::ty::TypeSig>,
-    /// Whether function is external
+    /// Whether function is public
+    pub is_pub: bool,
+    /// Whether function is external (ext)
     pub is_ext: bool,
     /// Whether function is mutable
     pub is_mut: bool,
+    /// Function body
+    pub body: crate::stmt::CodeBlock,
     /// Source span
     pub span: Span,
 }

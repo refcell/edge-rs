@@ -59,6 +59,9 @@ edge-lexer = { path = "crates/lexer" }
 edge-ast = { path = "crates/ast" }
 edge-parser = { path = "crates/parser" }
 edge-diagnostics = { path = "crates/diagnostics" }
+edge-typeck = { path = "crates/typeck" }
+edge-ir = { path = "crates/ir" }
+edge-codegen = { path = "crates/codegen" }
 edge-driver = { path = "crates/driver" }
 anyhow = "1.0.79"
 inquire = "0.6.2"
@@ -70,6 +73,8 @@ clap = { version = "4.5.0", features = ["derive"] }
 thiserror = { version = "2.0", default-features = false }
 dirs = "5"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+indexmap = "2.0"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 [profile.dev]
 incremental = true

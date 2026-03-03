@@ -1,6 +1,6 @@
 [package]
-name = "edge-driver"
-description = "Edge Language Compiler Driver"
+name = "edge-typeck"
+description = "Edge Language Type Checker"
 version = { workspace = true }
 edition = { workspace = true }
 license = { workspace = true }
@@ -11,16 +11,9 @@ homepage = { workspace = true }
 [dependencies]
 edge-types = { workspace = true }
 edge-ast = { workspace = true }
-edge-lexer = { workspace = true }
-edge-parser = { workspace = true }
-edge-diagnostics = { workspace = true }
-edge-typeck = { workspace = true }
-edge-ir = { workspace = true }
-edge-codegen = { workspace = true }
-anyhow = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 indexmap = { workspace = true }
+tiny-keccak = { workspace = true }
 
 [lints]
 workspace = true

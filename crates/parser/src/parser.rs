@@ -695,16 +695,17 @@ impl Parser {
                     false
                 };
                 let fn_decl = self.parse_fn_decl()?;
-                let _body = self.parse_code_block()?;
+                let body = self.parse_code_block()?;
                 functions.push(edge_ast::ContractFnDecl {
                     name: fn_decl.name,
                     params: fn_decl.params,
                     returns: fn_decl.returns,
+                    is_pub,
                     is_ext,
                     is_mut,
+                    body,
                     span: fn_decl.span,
                 });
-                let _ = is_pub; // tracked for future use
             } else {
                 self.advance();
             }
@@ -773,7 +774,7 @@ impl Parser {
 
     /// Parse match statement
     fn parse_match(&mut self) -> ParseResult<Stmt> {
-        self.expect(TokenKind::Keyword(Keyword::Match))?;
+        let start_tok = self.expect(TokenKind::Keyword(Keyword::Match))?;
         let expr = self.parse_expr()?;
         self.expect(TokenKind::OpenBrace)?;
 
@@ -793,8 +794,13 @@ impl Parser {
             }
         }
 
-        self.expect(TokenKind::CloseBrace)?;
-        Ok(Stmt::Match(expr, arms))
+        let end_tok = self.expect(TokenKind::CloseBrace)?;
+        let span = Span {
+            start: start_tok.span.start,
+            end: end_tok.span.end,
+            file: start_tok.span.file,
+        };
+        Ok(Stmt::Match(expr, arms, span))
     }
 
     /// Parse match pattern
@@ -1394,26 +1400,13 @@ impl Parser {
                 )) {
                     self.advance();
                     let mut params = Vec::new();
-                    while !self.check(&TokenKind::Operator(
-                        edge_types::tokens::Operator::Comparison(
-                            edge_types::tokens::ComparisonOperator::GreaterThan,
-                        ),
-                    )) && !self.is_at_end()
-                    {
+                    while !self.is_generic_close() && !self.is_at_end() {
                         params.push(self.parse_type_sig()?);
-                        if !self.check(&TokenKind::Operator(
-                            edge_types::tokens::Operator::Comparison(
-                                edge_types::tokens::ComparisonOperator::GreaterThan,
-                            ),
-                        )) {
+                        if !self.is_generic_close() {
                             self.expect(TokenKind::Comma)?;
                         }
                     }
-                    self.expect(TokenKind::Operator(
-                        edge_types::tokens::Operator::Comparison(
-                            edge_types::tokens::ComparisonOperator::GreaterThan,
-                        ),
-                    ))?;
+                    self.expect_generic_gt()?;
                     params
                 } else {
                     Vec::new()
@@ -1680,6 +1673,59 @@ impl Parser {
         self.expect(TokenKind::CloseBrace)?;
 
         Ok(items)
+    }
+
+    // ============ Generic Type Helpers ============
+
+    /// Returns true if the current token closes a generic parameter list (`>` or `>>`).
+    /// `>>` can appear when closing nested generics like `map<K, map<K, V>>`.
+    fn is_generic_close(&self) -> bool {
+        matches!(
+            &self.peek().kind,
+            TokenKind::Operator(edge_types::tokens::Operator::Comparison(
+                edge_types::tokens::ComparisonOperator::GreaterThan
+            )) | TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                edge_types::tokens::BitwiseOperator::RightShift
+            ))
+        )
+    }
+
+    /// Consume a closing `>` for a generic parameter list.
+    /// When `>>` is encountered (nested generics like `map<K, map<K, V>>`), consume it
+    /// and insert a synthetic `>` token so the enclosing generic context can close cleanly.
+    fn expect_generic_gt(&mut self) -> ParseResult<()> {
+        self.skip_whitespace_and_comments();
+        let gt = TokenKind::Operator(edge_types::tokens::Operator::Comparison(
+            edge_types::tokens::ComparisonOperator::GreaterThan,
+        ));
+        if self.check(&gt) {
+            self.advance();
+            Ok(())
+        } else if self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+            edge_types::tokens::BitwiseOperator::RightShift,
+        ))) {
+            // Split >> into two >: consume and insert a synthetic > for the enclosing context.
+            let tok = self.advance();
+            let synthetic = Token {
+                kind: gt,
+                span: Span {
+                    start: tok.span.end,
+                    end: tok.span.end,
+                    file: tok.span.file,
+                },
+            };
+            self.tokens.insert(self.cursor, synthetic);
+            Ok(())
+        } else {
+            let token = self.peek().clone();
+            Err(ParseError::unexpected(
+                &token.kind,
+                &TokenKind::Operator(edge_types::tokens::Operator::Comparison(
+                    edge_types::tokens::ComparisonOperator::GreaterThan,
+                )),
+                token.span,
+            ))
+        }
     }
 
     // ============ Identifier Parsing ============
