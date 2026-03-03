@@ -7,6 +7,8 @@ use std::fmt;
 pub enum Operator {
     /// An Assignment Operator
     Assignment,
+    /// Compound Assignment Operator
+    CompoundAssignment(CompoundAssignmentOperator),
     /// Arithmetic Operator
     Arithmetic(ArithmeticOperator),
     /// Comparison Operator
@@ -17,10 +19,56 @@ pub enum Operator {
     Bitwise(BitwiseOperator),
 }
 
+/// Compound assignment operators
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CompoundAssignmentOperator {
+    /// +=
+    AddAssign,
+    /// -=
+    SubAssign,
+    /// *=
+    MulAssign,
+    /// /=
+    DivAssign,
+    /// %=
+    ModAssign,
+    /// **=
+    ExpAssign,
+    /// &=
+    AndAssign,
+    /// |=
+    OrAssign,
+    /// ^=
+    XorAssign,
+    /// >>=
+    ShrAssign,
+    /// <<=
+    ShlAssign,
+}
+
+impl fmt::Display for CompoundAssignmentOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompoundAssignmentOperator::AddAssign => write!(f, "+="),
+            CompoundAssignmentOperator::SubAssign => write!(f, "-="),
+            CompoundAssignmentOperator::MulAssign => write!(f, "*="),
+            CompoundAssignmentOperator::DivAssign => write!(f, "/="),
+            CompoundAssignmentOperator::ModAssign => write!(f, "%="),
+            CompoundAssignmentOperator::ExpAssign => write!(f, "**="),
+            CompoundAssignmentOperator::AndAssign => write!(f, "&="),
+            CompoundAssignmentOperator::OrAssign => write!(f, "|="),
+            CompoundAssignmentOperator::XorAssign => write!(f, "^="),
+            CompoundAssignmentOperator::ShrAssign => write!(f, ">>="),
+            CompoundAssignmentOperator::ShlAssign => write!(f, "<<="),
+        }
+    }
+}
+
 impl fmt::Display for Operator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Operator::Assignment => write!(f, "="),
+            Operator::CompoundAssignment(op) => write!(f, "{}", op),
             Operator::Arithmetic(op) => write!(f, "{}", op),
             Operator::Comparison(op) => write!(f, "{}", op),
             Operator::Logical(op) => write!(f, "{}", op),
@@ -42,6 +90,8 @@ pub enum ArithmeticOperator {
     Div,
     /// Modulus
     Mod,
+    /// Exponentiation
+    Exp,
 }
 
 impl fmt::Display for ArithmeticOperator {
@@ -52,6 +102,7 @@ impl fmt::Display for ArithmeticOperator {
             ArithmeticOperator::Mul => write!(f, "*"),
             ArithmeticOperator::Div => write!(f, "/"),
             ArithmeticOperator::Mod => write!(f, "%"),
+            ArithmeticOperator::Exp => write!(f, "**"),
         }
     }
 }

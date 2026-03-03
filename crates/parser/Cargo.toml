@@ -1,0 +1,18 @@
+[package]
+name = "edge-parser"
+description = "Edge Language Parser"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+edge-ast = { workspace = true }
+edge-lexer = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

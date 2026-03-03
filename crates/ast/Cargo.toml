@@ -1,0 +1,15 @@
+[package]
+name = "edge-ast"
+description = "Edge Language Abstract Syntax Tree"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+
+[lints]
+workspace = true

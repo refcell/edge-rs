@@ -2,77 +2,83 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-  workflow_dispatch:
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
 
 permissions:
   contents: read
 
-env:
-  RUSTFLAGS: -Dwarnings
-
 jobs:
-  cargo-tests:
+  build:
+    name: Build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: ./.github/actions/setup
         with:
-          toolchain: nightly
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - run: cargo test --all
-      - run: cargo test --all --all-features
+          rust-cache-shared-key: "stable"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
+      - run: just build-ci
 
-  cargo-lint:
+  test:
+    name: Test
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: ./.github/actions/setup
         with:
-          toolchain: nightly
-          profile: minimal
-          components: rustfmt, clippy
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - run: cargo +nightly fmt --all -- --check
-      - run: cargo +nightly clippy --all --all-features -- -D warnings
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+      - run: just test-ci
 
-  cargo-build:
+  fmt:
+    name: Format
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: ./.github/actions/setup
         with:
           toolchain: nightly
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - continue-on-error: true
-        run: cargo build --all
-        id: build
+          components: rustfmt
+          rust-cache-shared-key: "nightly"
+          rust-cache-save: ${{ github.ref == 'refs/heads/main' }}
+      - run: just check-format
 
-  cargo-doc:
+  clippy:
+    name: Clippy
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: ./.github/actions/setup
         with:
-          toolchain: nightly
-          profile: minimal
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - name: doclints
-        continue-on-error: true
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --all --no-deps --all-features --document-private-items
-        id: build
-      - run: cargo test --doc --all --all-features
+          components: clippy
+          rust-cache-shared-key: "stable"
+      - run: just check-clippy-ci
+
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          rust-cache-shared-key: "stable"
+      - run: just check-deny
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          rust-cache-shared-key: "stable"
+      - run: just check-docs

@@ -1,0 +1,22 @@
+[package]
+name = "edge-driver"
+description = "Edge Language Compiler Driver"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+edge-ast = { workspace = true }
+edge-lexer = { workspace = true }
+edge-parser = { workspace = true }
+edge-diagnostics = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

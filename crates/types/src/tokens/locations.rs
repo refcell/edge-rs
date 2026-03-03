@@ -45,7 +45,7 @@ use std::fmt;
 /// for data location pointers. This is a divergence from general purpose
 /// programming languages to more accurately represent the EVM execution
 /// environment.
-#[derive(Debug, Clone, PartialOrd, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum Location {
     /// Persistent Storage
     ///

@@ -6,7 +6,7 @@
 use std::fmt;
 
 /// Edge Language Keywords
-#[derive(Debug, Clone, PartialOrd, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
 pub enum Keyword {
     /// A contract definition
     Contract,
@@ -14,8 +14,8 @@ pub enum Keyword {
     Type,
     /// A constant variable
     Const,
-    /// A function identifier
-    Function,
+    /// A function definition
+    Fn,
     /// Specifies that the data is packed
     Packed,
     /// A trait definition
@@ -42,6 +42,34 @@ pub enum Keyword {
     For,
     /// While loop declaration
     While,
+    /// Variable declaration
+    Let,
+    /// Mutability modifier
+    Mut,
+    /// Public visibility
+    Pub,
+    /// Loop declaration
+    Loop,
+    /// Do-while loop
+    Do,
+    /// Break loop
+    Break,
+    /// Continue loop
+    Continue,
+    /// Compile-time keyword
+    Comptime,
+    /// Event declaration
+    Event,
+    /// Indexed modifier for event fields
+    Indexed,
+    /// External function modifier
+    Ext,
+    /// Anonymous event modifier
+    Anon,
+    /// Pattern matching keyword
+    Matches,
+    /// Super keyword for parent scope
+    Super,
 }
 
 impl Keyword {
@@ -52,7 +80,7 @@ impl Keyword {
             Keyword::Contract,
             Keyword::Type,
             Keyword::Const,
-            Keyword::Function,
+            Keyword::Fn,
             Keyword::Packed,
             Keyword::Trait,
             Keyword::Impl,
@@ -66,6 +94,20 @@ impl Keyword {
             Keyword::Else,
             Keyword::For,
             Keyword::While,
+            Keyword::Let,
+            Keyword::Mut,
+            Keyword::Pub,
+            Keyword::Loop,
+            Keyword::Do,
+            Keyword::Break,
+            Keyword::Continue,
+            Keyword::Comptime,
+            Keyword::Event,
+            Keyword::Indexed,
+            Keyword::Ext,
+            Keyword::Anon,
+            Keyword::Matches,
+            Keyword::Super,
         ]
     }
 }
@@ -76,7 +118,7 @@ impl fmt::Display for Keyword {
             Keyword::Contract => "contract",
             Keyword::Type => "type",
             Keyword::Const => "const",
-            Keyword::Function => "function",
+            Keyword::Fn => "fn",
             Keyword::Packed => "packed",
             Keyword::Trait => "trait",
             Keyword::Impl => "impl",
@@ -90,6 +132,20 @@ impl fmt::Display for Keyword {
             Keyword::Else => "else",
             Keyword::For => "for",
             Keyword::While => "while",
+            Keyword::Let => "let",
+            Keyword::Mut => "mut",
+            Keyword::Pub => "pub",
+            Keyword::Loop => "loop",
+            Keyword::Do => "do",
+            Keyword::Break => "break",
+            Keyword::Continue => "continue",
+            Keyword::Comptime => "comptime",
+            Keyword::Event => "event",
+            Keyword::Indexed => "indexed",
+            Keyword::Ext => "ext",
+            Keyword::Anon => "anon",
+            Keyword::Matches => "matches",
+            Keyword::Super => "super",
         };
         write!(f, "{}", x)
     }

@@ -50,8 +50,10 @@ pub enum TokenKind {
     Comment(String),
     /// Whitespace
     Whitespace,
-    /// A hex literal
+    /// A numeric literal
     Literal(Literal),
+    /// A string literal
+    StringLiteral(String),
     /// An Identifier
     Ident(String),
     /// An open parenthesis
@@ -72,6 +74,18 @@ pub enum TokenKind {
     Colon,
     /// A semicolon
     Semicolon,
+    /// Arrow (->)
+    Arrow,
+    /// Fat arrow (=>)
+    FatArrow,
+    /// Double colon (::)
+    DoubleColon,
+    /// Dot (.)
+    Dot,
+    /// Question (?)
+    Question,
+    /// At (@)
+    At,
 }
 
 impl TokenKind {
@@ -109,6 +123,7 @@ impl fmt::Display for TokenKind {
                 }
                 return write!(f, "{s}");
             }
+            TokenKind::StringLiteral(s) => return write!(f, "\"{s}\""),
             TokenKind::Whitespace => " ",
             TokenKind::Ident(s) => return write!(f, "{s}"),
             TokenKind::OpenBrace => "{",
@@ -120,6 +135,12 @@ impl fmt::Display for TokenKind {
             TokenKind::Comma => ",",
             TokenKind::Colon => ":",
             TokenKind::Semicolon => ";",
+            TokenKind::Arrow => "->",
+            TokenKind::FatArrow => "=>",
+            TokenKind::DoubleColon => "::",
+            TokenKind::Dot => ".",
+            TokenKind::Question => "?",
+            TokenKind::At => "@",
         };
         write!(f, "{x}")
     }

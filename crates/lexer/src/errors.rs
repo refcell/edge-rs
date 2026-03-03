@@ -28,6 +28,8 @@ pub enum LexicalErrorKind {
     InvalidArraySize(String),
     /// Invalid Primitive EVM Type
     InvalidPrimitiveType(String),
+    /// Unterminated string literal
+    UnterminatedString,
 }
 
 impl Spanned for LexicalError {

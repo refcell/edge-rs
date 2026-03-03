@@ -1,0 +1,56 @@
+name: Setup
+description: Shared CI setup for Edge compiler
+
+inputs:
+  toolchain:
+    description: Rust toolchain channel
+    default: "stable"
+  components:
+    description: Rust components (clippy, rustfmt)
+    default: ""
+  tools:
+    description: Cargo tools (cargo-nextest, cargo-deny, etc.)
+    default: ""
+  rust-cache-shared-key:
+    description: Shared key for Rust cache
+    default: ""
+  rust-cache-save:
+    description: Whether to save the Rust cache
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust (stable via rust-toolchain.toml)
+      if: inputs.toolchain == 'stable'
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        rustup show active-toolchain
+        if [ -n "$COMPONENTS" ]; then
+          rustup component add $COMPONENTS
+        fi
+
+    - name: Install Rust (nightly)
+      if: inputs.toolchain == 'nightly'
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: ${{ inputs.components }}
+
+    - name: Rust cache
+      if: inputs.rust-cache-shared-key != ''
+      uses: Swatinem/rust-cache@v2
+      with:
+        cache-on-failure: true
+        shared-key: ${{ inputs.rust-cache-shared-key }}
+        save-if: ${{ inputs.rust-cache-save }}
+
+    - name: Install just
+      uses: extractions/setup-just@v3
+
+    - name: Install cargo tools
+      if: inputs.tools != ''
+      uses: taiki-e/install-action@v2
+      with:
+        tool: ${{ inputs.tools }}

@@ -46,7 +46,7 @@ fn parses_type() {
     // u8
     let tok = lexer.next().unwrap().unwrap();
     let u8_span = Span::new(23..24, None);
-    let kind = TokenKind::DataType(DataType::U8);
+    let kind = TokenKind::DataType(DataType::Primitive(PrimitiveType::UInt(8)));
     assert_eq!(tok, Token::new(kind, u8_span.clone()));
 
     // Comma
@@ -62,7 +62,7 @@ fn parses_type() {
     // u8
     let tok = lexer.next().unwrap().unwrap();
     let u8_span = Span::new(27..28, None);
-    let kind = TokenKind::DataType(DataType::U8);
+    let kind = TokenKind::DataType(DataType::Primitive(PrimitiveType::UInt(8)));
     assert_eq!(tok, Token::new(kind, u8_span.clone()));
 
     // Comma
@@ -78,7 +78,7 @@ fn parses_type() {
     // u8
     let tok = lexer.next().unwrap().unwrap();
     let u8_span = Span::new(31..32, None);
-    let kind = TokenKind::DataType(DataType::U8);
+    let kind = TokenKind::DataType(DataType::Primitive(PrimitiveType::UInt(8)));
     assert_eq!(tok, Token::new(kind, u8_span.clone()));
 
     // CloseParen

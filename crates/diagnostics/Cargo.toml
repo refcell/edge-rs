@@ -1,0 +1,16 @@
+[package]
+name = "edge-diagnostics"
+description = "Edge Language Diagnostics and Error Reporting"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

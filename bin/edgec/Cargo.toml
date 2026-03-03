@@ -1,0 +1,21 @@
+[package]
+name = "edgec"
+description = "The Edge Language Compiler"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+license = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[[bin]]
+name = "edgec"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+edge-driver = { workspace = true }
+edge-types = { workspace = true }

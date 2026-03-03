@@ -146,21 +146,173 @@ impl<'a> Lexer<'a> {
         Ok(token_kind.into_single_span(self.position))
     }
 
-    // pub fn eat_digit(&mut self, initial_char: char) -> TokenResult {
-    //     let (integer_str, start, end) =
-    //         self.eat_while(Some(initial_char), |ch| ch.is_ascii_digit());
-    //     let integer = integer_str.parse().unwrap();
-    //     let integer_token = TokenKind::Num(integer);
-    //     let span = Span {
-    //         start: start as usize,
-    //         end: end as usize,
-    //         file: None,
-    //     };
-    //     Ok(Token {
-    //         kind: integer_token,
-    //         span,
-    //     })
-    // }
+    /// Parse EVM primitive type from string (e.g., "u256", "i8", "b32")
+    fn parse_evm_type(word: &str) -> Option<PrimitiveType> {
+        if word == "addr" {
+            return Some(PrimitiveType::Address);
+        }
+        if word == "bool" {
+            return Some(PrimitiveType::Bool);
+        }
+        if word == "bit" {
+            return Some(PrimitiveType::Bit);
+        }
+
+        // Check for u<size>
+        if let Some(size_str) = word.strip_prefix('u') {
+            if let Ok(size) = size_str.parse::<u16>() {
+                if size >= 8 && size <= 256 && size % 8 == 0 {
+                    return Some(PrimitiveType::UInt(size));
+                }
+            }
+            return None;
+        }
+
+        // Check for i<size>
+        if let Some(size_str) = word.strip_prefix('i') {
+            if let Ok(size) = size_str.parse::<u16>() {
+                if size >= 8 && size <= 256 && size % 8 == 0 {
+                    return Some(PrimitiveType::Int(size));
+                }
+            }
+            return None;
+        }
+
+        // Check for b<size>
+        if let Some(size_str) = word.strip_prefix('b') {
+            if let Ok(size) = size_str.parse::<u8>() {
+                if size >= 1 && size <= 32 {
+                    return Some(PrimitiveType::FixedBytes(size));
+                }
+            }
+            return None;
+        }
+
+        None
+    }
+
+    /// Consume a numeric literal with optional type suffix
+    pub fn eat_digit(&mut self, initial_char: char) -> TokenResult {
+        let (integer_str, start, end) =
+            self.eat_while(Some(initial_char), |ch| ch.is_ascii_digit() || ch == '_');
+
+        // Check for type suffix (u8, u16, ..., u256, i8, ..., i256)
+        let suffix_start = self.position;
+        let (suffix_word, _, suffix_end) =
+            self.eat_while(None, |c| c.is_alphanumeric() || c == '_');
+
+        if !suffix_word.is_empty() {
+            // We have a potential type suffix
+            if Self::parse_evm_type(&suffix_word).is_some() {
+                // Valid type suffix, consume it
+                let span = Span {
+                    start: start as usize,
+                    end: suffix_end as usize,
+                    file: None,
+                };
+                let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+                return Ok(Token {
+                    kind: TokenKind::Literal(literal),
+                    span,
+                });
+            } else {
+                // Not a valid type suffix, reset position
+                self.position = suffix_start;
+            }
+        }
+
+        let span = Span {
+            start: start as usize,
+            end: end as usize,
+            file: None,
+        };
+        let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+        Ok(Token {
+            kind: TokenKind::Literal(literal),
+            span,
+        })
+    }
+
+    /// Consume a binary literal (0b...)
+    pub fn eat_binary(&mut self) -> TokenResult {
+        let start = self.position;
+        self.consume(); // consume 'b'
+        let (binary_str, _, end) =
+            self.eat_while(None, |ch| ch == '0' || ch == '1' || ch == '_');
+
+        // Check for type suffix
+        let suffix_start = self.position;
+        let (suffix_word, _, suffix_end) =
+            self.eat_while(None, |c| c.is_alphanumeric() || c == '_');
+
+        let end_pos = if !suffix_word.is_empty() && Self::parse_evm_type(&suffix_word).is_some() {
+            suffix_end
+        } else {
+            self.position = suffix_start;
+            end
+        };
+
+        let span = Span {
+            start: (start - 1) as usize, // Include the '0'
+            end: end_pos as usize,
+            file: None,
+        };
+        let literal = str_to_bytes32(binary_str.replace('_', "").as_ref());
+        Ok(Token {
+            kind: TokenKind::Literal(literal),
+            span,
+        })
+    }
+
+    /// Consume a string literal
+    pub fn eat_string_literal(&mut self, quote_char: char) -> TokenResult {
+        let start = self.position;
+        let mut string_content = String::new();
+        let mut escaped = false;
+
+        while let Some(ch) = self.consume() {
+            if escaped {
+                // Handle escape sequences
+                match ch {
+                    'n' => string_content.push('\n'),
+                    't' => string_content.push('\t'),
+                    'r' => string_content.push('\r'),
+                    '\\' => string_content.push('\\'),
+                    '"' => string_content.push('"'),
+                    '\'' => string_content.push('\''),
+                    _ => {
+                        string_content.push('\\');
+                        string_content.push(ch);
+                    }
+                }
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_char {
+                let span = Span {
+                    start: start as usize,
+                    end: self.position as usize,
+                    file: None,
+                };
+                return Ok(Token {
+                    kind: TokenKind::StringLiteral(string_content),
+                    span,
+                });
+            } else {
+                string_content.push(ch);
+            }
+        }
+
+        // Unclosed string literal
+        Err(LexicalError::new(
+            LexicalErrorKind::UnterminatedString,
+            Span {
+                start: start as usize,
+                end: self.position as usize,
+                file: None,
+            },
+        ))
+    }
 
     /// Check if a given keyword follows the keyword rules in the `source`.
     /// If not, it is a `TokenKind::Ident`.
@@ -285,17 +437,26 @@ impl<'a> Lexer<'a> {
 
             // Alphabetical characters
             ch if ch.is_alphabetic() || ch.eq(&'_') => {
-                let (word, start, mut end) =
+                let (word, start, end) =
                     self.eat_while(Some(ch), |c| c.is_alphanumeric() || c == '_');
 
                 let mut found_kind: Option<TokenKind> = None;
-                let keys = Keyword::all();
-                for kind in keys.into_iter() {
-                    let key = kind.to_string();
-                    let peeked = word.clone();
-                    if key == peeked {
-                        found_kind = Some(TokenKind::Keyword(kind));
-                        break;
+
+                // First check for EVM primitive types
+                if let Some(prim_type) = Self::parse_evm_type(&word) {
+                    found_kind = Some(TokenKind::DataType(DataType::Primitive(prim_type)));
+                }
+
+                // If not a type, check for keywords
+                if found_kind.is_none() {
+                    let keys = Keyword::all();
+                    for kind in keys.into_iter() {
+                        let key = kind.to_string();
+                        let peeked = word.clone();
+                        if key == peeked {
+                            found_kind = Some(TokenKind::Keyword(kind));
+                            break;
+                        }
                     }
                 }
 
@@ -347,17 +508,327 @@ impl<'a> Lexer<'a> {
 
                 Ok(kind.into_span(start, end))
             }
+
+            // Decimal digits
+            ch if ch.is_ascii_digit() => self.eat_digit(ch),
             '{' => self.single_char_token(TokenKind::OpenBrace),
             '}' => self.single_char_token(TokenKind::CloseBrace),
-            '=' => self.single_char_token(TokenKind::Operator(Operator::Assignment)),
             '(' => self.single_char_token(TokenKind::OpenParen),
             ')' => self.single_char_token(TokenKind::CloseParen),
             '[' => self.single_char_token(TokenKind::OpenBracket),
             ']' => self.single_char_token(TokenKind::CloseBracket),
-
             ',' => self.single_char_token(TokenKind::Comma),
-            ':' => self.single_char_token(TokenKind::Colon),
             ';' => self.single_char_token(TokenKind::Semicolon),
+
+            // Operators and special tokens
+            '+' => {
+                if self.peek() == Some('=') {
+                    self.consume();
+                    self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                        CompoundAssignmentOperator::AddAssign,
+                    )))
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                        ArithmeticOperator::Add,
+                    )))
+                }
+            }
+
+            '-' => {
+                match self.peek() {
+                    Some('=') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                            CompoundAssignmentOperator::SubAssign,
+                        )))
+                    }
+                    Some('>') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Arrow)
+                    }
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                        ArithmeticOperator::Sub,
+                    ))),
+                }
+            }
+
+            '*' => {
+                if self.peek() == Some('*') {
+                    self.consume();
+                    if self.peek() == Some('=') {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                            CompoundAssignmentOperator::ExpAssign,
+                        )))
+                    } else {
+                        self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                            ArithmeticOperator::Exp,
+                        )))
+                    }
+                } else if self.peek() == Some('=') {
+                    self.consume();
+                    self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                        CompoundAssignmentOperator::MulAssign,
+                    )))
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                        ArithmeticOperator::Mul,
+                    )))
+                }
+            }
+
+            '%' => {
+                if self.peek() == Some('=') {
+                    self.consume();
+                    self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                        CompoundAssignmentOperator::ModAssign,
+                    )))
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                        ArithmeticOperator::Mod,
+                    )))
+                }
+            }
+
+            '&' => {
+                // Check for data location annotations first (&s, &t, &m, &cd, &rd, &ic, &ec)
+                // or compound assignment (&=) or logical AND (&&)
+                if let Some(next) = self.peek() {
+                    match next {
+                        's' => {
+                            self.consume();
+                            self.single_char_token(TokenKind::Pointer(Location::PersistentStorage))
+                        }
+                        't' => {
+                            self.consume();
+                            self.single_char_token(TokenKind::Pointer(Location::TransientStorage))
+                        }
+                        'm' => {
+                            self.consume();
+                            self.single_char_token(TokenKind::Pointer(Location::Memory))
+                        }
+                        'c' => {
+                            // Peek ahead to see if it's &cd
+                            let start = self.position;
+                            self.consume(); // consume 'c'
+                            if self.peek() == Some('d') {
+                                self.consume(); // consume 'd'
+                                self.single_char_token(TokenKind::Pointer(Location::Calldata))
+                            } else {
+                                // Not &cd, just & - return AND and position will be at 'c'
+                                // Actually we already consumed 'c', so we need to handle this carefully
+                                // For now, emit AND with the correct span
+                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
+                                    .into_single_span(start))
+                            }
+                        }
+                        'r' => {
+                            let start = self.position;
+                            self.consume(); // consume 'r'
+                            if self.peek() == Some('d') {
+                                self.consume(); // consume 'd'
+                                self.single_char_token(TokenKind::Pointer(Location::Returndata))
+                            } else {
+                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
+                                    .into_single_span(start))
+                            }
+                        }
+                        'i' => {
+                            let start = self.position;
+                            self.consume(); // consume 'i'
+                            if self.peek() == Some('c') {
+                                self.consume(); // consume 'c'
+                                self.single_char_token(TokenKind::Pointer(Location::InternalCode))
+                            } else {
+                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
+                                    .into_single_span(start))
+                            }
+                        }
+                        'e' => {
+                            let start = self.position;
+                            self.consume(); // consume 'e'
+                            if self.peek() == Some('c') {
+                                self.consume(); // consume 'c'
+                                self.single_char_token(TokenKind::Pointer(Location::ExternalCode))
+                            } else {
+                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
+                                    .into_single_span(start))
+                            }
+                        }
+                        '=' => {
+                            self.consume();
+                            self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                                CompoundAssignmentOperator::AndAssign,
+                            )))
+                        }
+                        '&' => {
+                            self.consume();
+                            self.single_char_token(TokenKind::Operator(Operator::Logical(
+                                LogicalOperator::And,
+                            )))
+                        }
+                        _ => self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                            BitwiseOperator::And,
+                        ))),
+                    }
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                        BitwiseOperator::And,
+                    )))
+                }
+            }
+
+            '|' => {
+                match self.peek() {
+                    Some('=') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                            CompoundAssignmentOperator::OrAssign,
+                        )))
+                    }
+                    Some('|') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::Logical(
+                            LogicalOperator::Or,
+                        )))
+                    }
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                        BitwiseOperator::Or,
+                    ))),
+                }
+            }
+
+            '^' => {
+                if self.peek() == Some('=') {
+                    self.consume();
+                    self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                        CompoundAssignmentOperator::XorAssign,
+                    )))
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                        BitwiseOperator::Xor,
+                    )))
+                }
+            }
+
+            '~' => self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                BitwiseOperator::Not,
+            ))),
+
+            '!' => {
+                if self.peek() == Some('=') {
+                    self.consume();
+                    self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                        ComparisonOperator::NotEqual,
+                    )))
+                } else {
+                    self.single_char_token(TokenKind::Operator(Operator::Logical(
+                        LogicalOperator::Not,
+                    )))
+                }
+            }
+
+            '<' => {
+                match self.peek() {
+                    Some('<') => {
+                        self.consume();
+                        if self.peek() == Some('=') {
+                            self.consume();
+                            self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                                CompoundAssignmentOperator::ShlAssign,
+                            )))
+                        } else {
+                            self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                BitwiseOperator::LeftShift,
+                            )))
+                        }
+                    }
+                    Some('=') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                            ComparisonOperator::LessThanOrEqual,
+                        )))
+                    }
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                        ComparisonOperator::LessThan,
+                    ))),
+                }
+            }
+
+            '>' => {
+                match self.peek() {
+                    Some('>') => {
+                        self.consume();
+                        if self.peek() == Some('=') {
+                            self.consume();
+                            self.single_char_token(TokenKind::Operator(Operator::CompoundAssignment(
+                                CompoundAssignmentOperator::ShrAssign,
+                            )))
+                        } else {
+                            self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                BitwiseOperator::RightShift,
+                            )))
+                        }
+                    }
+                    Some('=') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                            ComparisonOperator::GreaterThanOrEqual,
+                        )))
+                    }
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                        ComparisonOperator::GreaterThan,
+                    ))),
+                }
+            }
+
+            '=' => {
+                match self.peek() {
+                    Some('=') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::Operator(Operator::Comparison(
+                            ComparisonOperator::Equal,
+                        )))
+                    }
+                    Some('>') => {
+                        self.consume();
+                        self.single_char_token(TokenKind::FatArrow)
+                    }
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Assignment)),
+                }
+            }
+
+            '.' => self.single_char_token(TokenKind::Dot),
+
+            '?' => self.single_char_token(TokenKind::Question),
+
+            '@' => self.single_char_token(TokenKind::At),
+
+            ':' => {
+                if self.peek() == Some(':') {
+                    self.consume();
+                    self.single_char_token(TokenKind::DoubleColon)
+                } else {
+                    self.single_char_token(TokenKind::Colon)
+                }
+            }
+
+            '"' | '\'' => self.eat_string_literal(ch),
+
+            '0' => {
+                match self.peek() {
+                    Some('x') | Some('X') => {
+                        self.consume();
+                        self.eat_hex_digit('0')
+                    }
+                    Some('b') | Some('B') => {
+                        self.consume();
+                        self.eat_binary()
+                    }
+                    Some(c) if c.is_ascii_digit() => self.eat_digit(ch),
+                    _ => self.eat_digit(ch),
+                }
+            }
 
             ch if ch.is_ascii_whitespace() => {
                 let (_, start, end) = self.eat_whitespace();
