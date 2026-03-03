@@ -18,14 +18,7 @@
 
 ## What is Edge?
 
-Edge is a statically-typed, Rust-inspired language that compiles to EVM bytecode. It features:
-
-- **EVM-native types** — `u8`–`u256`, `i8`–`i256`, `b1`–`b32`, `addr`, `bool`, `bit`
-- **Data locations** — `&s` (storage), `&t` (transient), `&m` (memory), `&cd` (calldata)
-- **Contracts & ABIs** — first-class `contract` and `abi` declarations
-- **Traits & generics** — `trait`, `impl`, and type parameters
-- **Pattern matching** — `match` with union types
-- **Comptime** — compile-time evaluation via `comptime`
+Edge is a statically-typed, Rust-inspired language that compiles to EVM bytecode. It gives you EVM-native integer and byte types (`u8` through `u256`, `i8` through `i256`, `b1` through `b32`), along with `addr`, `bool`, and `bit` as first-class primitives. Every variable carries an explicit data location annotation — `&s` for storage, `&t` for transient storage, `&m` for memory, `&cd` for calldata — so the compiler always knows exactly where your data lives and can enforce that statically. Contracts and ABIs are declared at the language level rather than bolted on. The type system supports traits, generics, and pattern matching over union types, and a `comptime` keyword lets you run arbitrary code at compile time to generate constants or specialized implementations without runtime cost.
 
 ## Install
 
@@ -58,11 +51,13 @@ edgec build examples/counter.edge
 
 ## Lore
 
-Edge was conceived by [jtriley](https://github.com/jtriley-eth), an Ethereum developer and EVM language researcher who had spent years studying the design space of smart contract languages. In November 2023 he published "The Edge Programming Language" on his Substack, laying out both a diagnosis and a proposed cure.
+Edge was conceived by [jtriley](https://github.com/jtriley-eth), an Ethereum developer and EVM language researcher who had spent years studying the design space of smart contract languages. In November 2023 he published ["The Edge Programming Language"](https://jtriley.substack.com/p/the-edge-programming-language) on his Substack, laying out both a diagnosis and a proposed cure.
 
-The diagnosis was blunt. A 2021 Trail of Bits report found that roughly ninety percent of all deployed EVM smart contracts share at least fifty-six percent of their bytecode with other contracts, a sign that the abstraction mechanisms available to developers were badly broken. Teams were copy-pasting instead of composing. The existing languages either gave you Solidity's implicit compiler decisions and sprawling inheritance graphs, or they gave you Huff's raw opcodes with no type safety at all. Nothing in between let an experienced engineer write genuinely reusable, auditable, low-overhead code without reaching for assembly.
+The diagnosis was blunt. A 2021 Trail of Bits report found that roughly ninety percent of all deployed EVM smart contracts share at least fifty-six percent of their bytecode with other contracts, a sign that the abstraction mechanisms available to developers were badly broken. Teams were copy-pasting instead of composing. The existing languages either gave you Solidity's implicit compiler decisions and sprawling inheritance graphs, or they gave you [Huff](https://huff.sh)'s raw opcodes with no type safety at all. Nothing in between let an experienced engineer write genuinely reusable, auditable, low-overhead code without reaching for assembly.
 
-jtriley had written extensively about this gap — comparing Huff and Yul, cataloguing the ways Solidity quietly allocates memory as if garbage collection exists when it does not, and documenting how its type system makes it hard to transfer assets without inline assembly. His conclusion was that the field had become trapped in what he called status quo ossification: new languages kept arriving as Solidity lookalikes chasing gas efficiency, without offering anything fundamentally new.
+jtriley had spent significant time inside the Huff ecosystem alongside [refcell](https://github.com/refcell), [clabby](https://github.com/clabby), and others who were core contributors to [huff-rs](https://github.com/huff-language/huff-rs) and the broader [huff-language](https://github.com/huff-language) organization. That work — building [huffmate](https://github.com/huff-language/huffmate), writing optimized contracts directly in opcodes, and pushing up against everything Huff could not express — gave the group a precise understanding of where the abstraction floor needed to be and what it felt like to bump into a language ceiling on production code.
+
+jtriley had also written extensively about this gap, comparing Huff and Yul, cataloguing the ways Solidity quietly allocates memory as if garbage collection exists when it does not, and documenting how its type system makes it hard to transfer assets without inline assembly. His conclusion was that the field had become trapped in what he called status quo ossification: new languages kept arriving as Solidity lookalikes chasing gas efficiency, without offering anything fundamentally new.
 
 Edge was his attempt to start from first principles. The goal was not to replace Solidity for beginners but to give experienced teams a language that combined the granularity of Huff with the type system and compile-time execution of a high-level language. That combination, jtriley argued, would unlock constructs that no existing smart contract language could express at all — type-checked SSTORE2 implementations, in-memory hash maps, compressed ABI encoders, elliptic curve types, nested virtual machines with zero stack overhead. The key insight was that explicit data location annotations for all seven EVM storage areas, paired with parametric polymorphism and a trait system, would let the type checker enforce correctness that developers currently had to maintain by hand or discover through audit.
 
