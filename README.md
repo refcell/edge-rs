@@ -2,11 +2,20 @@
 
 [![CI]][actions]
 [![License]][mit-license]
+[![Language]][edge-lang]
+[![EVM]][evm-link]
+[![Rust]][rust-link]
 
 [CI]: https://img.shields.io/github/actions/workflow/status/refcell/edge-rs/ci.yml?branch=main&label=ci
 [actions]: https://github.com/refcell/edge-rs/actions?query=branch%3Amain
 [License]: https://img.shields.io/badge/license-MIT-7795AF.svg
 [mit-license]: https://github.com/refcell/edge-rs/blob/main/LICENSE.md
+[Language]: https://img.shields.io/badge/language-edge-39ff14.svg
+[edge-lang]: https://edgelang.netlify.app/
+[EVM]: https://img.shields.io/badge/target-EVM-39ff14.svg
+[evm-link]: https://ethereum.org/en/developers/docs/evm/
+[Rust]: https://img.shields.io/badge/built%20with-rust-orange.svg
+[rust-link]: https://www.rust-lang.org/
 
 **edge-rs** is a compiler for the [Edge language](https://edgelang.netlify.app/) — an EVM-targeted DSL for writing smart contracts with a Rust-like type system.
 
