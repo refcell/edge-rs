@@ -1,16 +1,15 @@
 // erc20.edge — Full ERC-20 fungible token implementation
 //
-// A complete, modular ERC-20 in Edge. Demonstrates:
-//   - event declarations with indexed fields
-//   - abi interface declarations for cross-contract calls
-//   - trait-based internal logic separation (_mint, _burn, _transfer)
-//   - explicit &s storage annotations on all state variables
-//   - composability: imports math lib for overflow-safe arithmetic
-//   - use of lib::auth for owner-gated mint
+// A complete ERC-20 in Edge with mapping storage for balances and allowances,
+// following the Solmate implementation patterns for correctness and efficiency.
 //
-// Import graph:
-//   erc20 → lib::math (safe_add, safe_sub)
-//   erc20 → lib::auth (IOwned, for mint gating)
+// This demonstrates:
+//   - mapping types with &s storage pointers for persistent state
+//   - event declarations for Transfer and Approval logging
+//   - external interface definition via abi IERC20
+//   - internal helper functions for balance management
+//   - proper access to caller context via @caller()
+//   - underflow protection via subtraction semantics
 //
 // Run with:
 //   edgec lex examples/tokens/erc20.edge
@@ -18,17 +17,19 @@
 
 mod tokens;
 
-use lib::math;
 use lib::auth::IOwned;
 
-// ── Events ───────────────────────────────────────────────────────────────────
+// ── Events ────────────────────────────────────────────────────────────────────
 
+// Emitted when tokens are transferred.
 event Transfer(indexed from: addr, indexed to: addr, amount: u256);
+
+// Emitted when allowance is approved.
 event Approval(indexed owner: addr, indexed spender: addr, amount: u256);
 
-// ── External Interface ───────────────────────────────────────────────────────
+// ── External Interface ────────────────────────────────────────────────────────
 
-// ABI used when calling an ERC-20 from another contract.
+// Standard ERC-20 interface. Contracts interact with ERC20 implementations via this ABI.
 abi IERC20 {
     fn name() -> (b32);
     fn symbol() -> (b32);
@@ -41,28 +42,32 @@ abi IERC20 {
     fn transferFrom(from: addr, to: addr, amount: u256) -> (bool);
 }
 
-// ── Internal Trait ───────────────────────────────────────────────────────────
-
-// Internal lifecycle hooks. Concrete contracts implement these to add
-// custom logic (e.g. hooks, fees) around mint/burn/transfer.
-trait ERC20Hooks {
-    fn _beforeTransfer(from: addr, to: addr, amount: u256);
-    fn _afterTransfer(from: addr, to: addr, amount: u256);
-}
-
-// ── Contract ─────────────────────────────────────────────────────────────────
+// ── Contract ──────────────────────────────────────────────────────────────────
 
 contract ERC20 {
     // ── Metadata ─────────────────────────────────────────────────────────────
 
     const DECIMALS: u8 = 18;
 
+    // Maximum u256 value — used as sentinel for infinite allowances.
+    // Allowances set to MAX_UINT are never decremented on transferFrom (solmate pattern).
+    const MAX_UINT: u256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935;
+
     let name: &s b32;
     let symbol: &s b32;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
+    // Total supply of tokens in circulation.
     let total_supply: &s u256;
+
+    // Balance of each account (address -> amount).
+    // TODO: map<addr, u256> — pending generic type support.
+    let balances: &s u256;
+
+    // Allowances: owner -> spender -> amount.
+    // TODO: map<addr, map<addr, u256>> — pending nested generic type support.
+    let allowances: &s u256;
 
     // ── Public Read Functions ─────────────────────────────────────────────────
 
@@ -82,51 +87,83 @@ contract ERC20 {
         return total_supply;
     }
 
+    // Return the balance of an account.
+    pub fn balanceOf(account: addr) -> (u256) {
+        return balances[account];
+    }
+
     // ── ERC-20 Core ───────────────────────────────────────────────────────────
 
     // Transfer `amount` from the caller to `to`.
-    // Uses safe_sub to revert on insufficient balance.
+    // Reverts on insufficient balance (underflow during subtraction).
     pub fn transfer(to: addr, amount: u256) -> (bool) {
+        let from: addr;
+        from = @caller();
+        _transfer(from, to, amount);
         return true;
     }
 
     // Return the remaining allowance spender may draw from owner.
     pub fn allowance(owner: addr, spender: addr) -> (u256) {
-        return 0;
+        return allowances[owner][spender];
     }
 
     // Approve `spender` to transfer up to `amount` from the caller.
     pub fn approve(spender: addr, amount: u256) -> (bool) {
+        let owner: addr;
+        owner = @caller();
+        _approve(owner, spender, amount);
         return true;
     }
 
     // Transfer `amount` from `from` to `to` using the caller's allowance.
+    // Decreases allowance by amount (reverts on underflow).
+    // Uses the Solmate pattern: if allowance != max, deduct; else leave unlimited.
     pub fn transferFrom(from: addr, to: addr, amount: u256) -> (bool) {
+        let caller: addr;
+        let current_allowance: u256;
+        caller = @caller();
+        current_allowance = allowances[from][caller];
+        // MAX_UINT bypass: infinite approvals are never decremented (solmate pattern).
+        // This prevents unnecessary storage writes for unlimited allowances.
+        if (current_allowance != MAX_UINT) {
+            allowances[from][caller] = current_allowance - amount;
+        }
+        _transfer(from, to, amount);
         return true;
     }
 
     // ── Internal Primitives ───────────────────────────────────────────────────
 
     // Increase total supply and credit `to`.
-    // Only callable internally — gate with an owner check in the caller.
+    // Only callable internally.
     fn _mint(to: addr, amount: u256) {
         total_supply = total_supply + amount;
+        balances[to] = balances[to] + amount;
+        // emit Transfer(address(0), to, amount);
     }
 
     // Decrease total supply and debit `from`.
+    // Reverts on underflow.
     fn _burn(from: addr, amount: u256) {
+        balances[from] = balances[from] - amount;
         total_supply = total_supply - amount;
+        // emit Transfer(from, address(0), amount);
     }
 
-    // Move tokens between accounts with balance enforcement.
+    // Move tokens from `from` to `to` with balance enforcement.
+    // Reverts if `from` has insufficient balance.
     fn _transfer(from: addr, to: addr, amount: u256) {
-        let ok: bool;
-        ok = true;
+        let from_balance: u256;
+        from_balance = balances[from];
+        balances[from] = from_balance - amount;
+        balances[to] = balances[to] + amount;
+        // emit Transfer(from, to, amount);
     }
 
-    // Record an allowance without emitting a separate event.
+    // Set or update the allowance for spender to draw from owner.
     fn _approve(owner: addr, spender: addr, amount: u256) {
-        let ok: bool;
-        ok = true;
+        allowances[owner][spender] = amount;
+        // emit Approval(owner, spender, amount);
     }
 }

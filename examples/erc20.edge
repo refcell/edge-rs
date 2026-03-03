@@ -1,9 +1,19 @@
-// erc20.edge — a minimal ERC-20 token implementation
+// erc20.edge — Minimal ERC-20 token implementation
+//
+// A simplified ERC-20 contract demonstrating core functionality.
+// This is the most straightforward example of implementing the standard,
+// suitable as a starting point for custom tokens.
 //
 // Run with:
 //   edgec lex examples/erc20.edge
 //   edgec parse examples/erc20.edge
-//   edgec build examples/erc20.edge
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event Transfer(indexed from: addr, indexed to: addr, amount: u256);
+event Approval(indexed owner: addr, indexed spender: addr, amount: u256);
+
+// ── External Interface ────────────────────────────────────────────────────────
 
 abi IERC20 {
     fn totalSupply() -> (u256);
@@ -14,29 +24,87 @@ abi IERC20 {
     fn transferFrom(from: addr, to: addr, amount: u256) -> (bool);
 }
 
+// ── Contract ──────────────────────────────────────────────────────────────────
+
 contract ERC20 {
     // Token metadata
-    const NAME: &s b32;
-    const SYMBOL: &s b32;
-    const DECIMALS: u8;
+    const DECIMALS: u8 = 18;
 
-    // State
+    let name: &s b32;
+    let symbol: &s b32;
+
+    // Core state: total supply and user balances
     let total_supply: &s u256;
 
-    // Implements IERC20
+    // Balances mapping: account -> amount
+    // TODO: map<addr, u256> — pending generic type support.
+    let balances: &s u256;
+
+    // Allowances mapping: owner -> spender -> amount
+    // TODO: map<addr, map<addr, u256>> — pending nested generic type support.
+    let allowances: &s u256;
+
+    // Metadata functions
     pub fn totalSupply() -> (u256) {
         return total_supply;
     }
 
+    pub fn balanceOf(account: addr) -> (u256) {
+        return balances[account];
+    }
+
+    // Core ERC-20 functions
     pub fn transfer(to: addr, amount: u256) -> (bool) {
+        let from: addr;
+        from = @caller();
+        _transfer(from, to, amount);
         return true;
     }
 
+    pub fn allowance(owner: addr, spender: addr) -> (u256) {
+        return allowances[owner][spender];
+    }
+
     pub fn approve(spender: addr, amount: u256) -> (bool) {
+        let owner: addr;
+        owner = @caller();
+        _approve(owner, spender, amount);
         return true;
     }
 
     pub fn transferFrom(from: addr, to: addr, amount: u256) -> (bool) {
+        let caller: addr;
+        let current_allowance: u256;
+        caller = @caller();
+        current_allowance = allowances[from][caller];
+        allowances[from][caller] = current_allowance - amount;
+        _transfer(from, to, amount);
         return true;
+    }
+
+    // Internal helpers
+    fn _transfer(from: addr, to: addr, amount: u256) {
+        let from_balance: u256;
+        from_balance = balances[from];
+        balances[from] = from_balance - amount;
+        balances[to] = balances[to] + amount;
+        // emit Transfer(from, to, amount);
+    }
+
+    fn _approve(owner: addr, spender: addr, amount: u256) {
+        allowances[owner][spender] = amount;
+        // emit Approval(owner, spender, amount);
+    }
+
+    fn _mint(to: addr, amount: u256) {
+        total_supply = total_supply + amount;
+        balances[to] = balances[to] + amount;
+        // emit Transfer(address(0), to, amount);
+    }
+
+    fn _burn(from: addr, amount: u256) {
+        balances[from] = balances[from] - amount;
+        total_supply = total_supply - amount;
+        // emit Transfer(from, address(0), amount);
     }
 }
