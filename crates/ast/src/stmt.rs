@@ -2,7 +2,7 @@
 //!
 //! Defines all statement types used in the Edge language.
 
-use crate::item::*;
+use crate::item::{TypeDecl, TraitDecl, ImplBlock, FnDecl, AbiDecl, ContractDecl, ContractImpl, ConstDecl, ModuleDecl, ModuleImport, EventDecl};
 use crate::pattern::MatchArm;
 use crate::Ident;
 use edge_types::span::Span;
@@ -65,7 +65,7 @@ pub enum Stmt {
     /// Implementation block
     ImplBlock(ImplBlock),
 
-    /// Function assignment: fn name() { ... }
+    /// Function assignment: fn `name()` { ... }
     FnAssign(FnDecl, CodeBlock),
 
     /// ABI declaration
@@ -83,14 +83,14 @@ pub enum Stmt {
     /// Module declaration: mod name { ... }
     ModuleDecl(ModuleDecl),
 
-    /// Module import: use path::to::item
+    /// Module import: use `path::to::item`
     ModuleImport(ModuleImport),
 
     /// Core loop: loop { ... }
     Loop(LoopBlock),
 
     /// For loop: for (init; cond; update) { ... }
-    ForLoop(Option<Box<Stmt>>, Option<crate::Expr>, Option<Box<Stmt>>, LoopBlock),
+    ForLoop(Option<Box<Self>>, Option<crate::Expr>, Option<Box<Self>>, LoopBlock),
 
     /// While loop: while (cond) { ... }
     WhileLoop(crate::Expr, LoopBlock),
@@ -111,7 +111,7 @@ pub enum Stmt {
     Match(crate::Expr, Vec<MatchArm>),
 
     /// Compile-time branch: comptime { ... }
-    ComptimeBranch(Box<Stmt>),
+    ComptimeBranch(Box<Self>),
 
     /// Compile-time function: comptime fn ...
     ComptimeFn(FnDecl, CodeBlock),
@@ -136,24 +136,24 @@ impl Stmt {
     /// Get the span of this statement
     pub fn span(&self) -> Span {
         match self {
-            Stmt::VarDecl(_, _, span) => span.clone(),
-            Stmt::VarAssign(_, _, span) => span.clone(),
-            Stmt::TypeAssign(_, _, span) => span.clone(),
-            Stmt::TraitDecl(_, span) => span.clone(),
-            Stmt::ImplBlock(item) => item.span.clone(),
-            Stmt::FnAssign(fn_decl, _) => fn_decl.span.clone(),
-            Stmt::AbiDecl(abi) => abi.span.clone(),
-            Stmt::ContractDecl(contract) => contract.span.clone(),
-            Stmt::ContractImpl(impl_block) => impl_block.span.clone(),
-            Stmt::ConstAssign(_, _, span) => span.clone(),
-            Stmt::ModuleDecl(module) => module.span.clone(),
-            Stmt::ModuleImport(import) => import.span.clone(),
-            Stmt::Loop(block) => block.span.clone(),
-            Stmt::ForLoop(_, _, _, block) => block.span.clone(),
-            Stmt::WhileLoop(_, block) => block.span.clone(),
-            Stmt::DoWhile(block, _) => block.span.clone(),
-            Stmt::CodeBlock(block) => block.span.clone(),
-            Stmt::IfElse(conditions, else_block) => {
+            Self::VarDecl(_, _, span) => span.clone(),
+            Self::VarAssign(_, _, span) => span.clone(),
+            Self::TypeAssign(_, _, span) => span.clone(),
+            Self::TraitDecl(_, span) => span.clone(),
+            Self::ImplBlock(item) => item.span.clone(),
+            Self::FnAssign(fn_decl, _) => fn_decl.span.clone(),
+            Self::AbiDecl(abi) => abi.span.clone(),
+            Self::ContractDecl(contract) => contract.span.clone(),
+            Self::ContractImpl(impl_block) => impl_block.span.clone(),
+            Self::ConstAssign(_, _, span) => span.clone(),
+            Self::ModuleDecl(module) => module.span.clone(),
+            Self::ModuleImport(import) => import.span.clone(),
+            Self::Loop(block) => block.span.clone(),
+            Self::ForLoop(_, _, _, block) => block.span.clone(),
+            Self::WhileLoop(_, block) => block.span.clone(),
+            Self::DoWhile(block, _) => block.span.clone(),
+            Self::CodeBlock(block) => block.span.clone(),
+            Self::IfElse(conditions, else_block) => {
                 if let Some((_, block)) = conditions.first() {
                     block.span.clone()
                 } else if let Some(block) = else_block {
@@ -162,15 +162,15 @@ impl Stmt {
                     Span::EOF
                 }
             }
-            Stmt::IfMatch(_, _, block) => block.span.clone(),
-            Stmt::Match(_, _) => Span::EOF, // TODO: store span in Match
-            Stmt::ComptimeBranch(stmt) => stmt.span(),
-            Stmt::ComptimeFn(fn_decl, _) => fn_decl.span.clone(),
-            Stmt::Return(_, span) => span.clone(),
-            Stmt::Break(span) => span.clone(),
-            Stmt::Continue(span) => span.clone(),
-            Stmt::Expr(expr) => expr.span(),
-            Stmt::EventDecl(event) => event.span.clone(),
+            Self::IfMatch(_, _, block) => block.span.clone(),
+            Self::Match(_, _) => Span::EOF, // TODO: store span in Match
+            Self::ComptimeBranch(stmt) => stmt.span(),
+            Self::ComptimeFn(fn_decl, _) => fn_decl.span.clone(),
+            Self::Return(_, span) => span.clone(),
+            Self::Break(span) => span.clone(),
+            Self::Continue(span) => span.clone(),
+            Self::Expr(expr) => expr.span(),
+            Self::EventDecl(event) => event.span.clone(),
         }
     }
 }

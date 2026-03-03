@@ -137,7 +137,7 @@ impl Compiler {
     }
 
     /// Get a reference to the session
-    pub fn session(&self) -> &Session {
+    pub const fn session(&self) -> &Session {
         &self.session
     }
 }

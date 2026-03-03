@@ -62,7 +62,7 @@ pub fn format_even_bytes(hex: String) -> String {
     }
 }
 
-/// Convert string slice to Vec<u8>, size not capped
+/// Convert string slice to `Vec<u8>`, size not capped
 pub fn str_to_vec(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
     let bytes: Result<Vec<u8>, _> = (0..s.len())
         .step_by(2)

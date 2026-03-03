@@ -90,6 +90,7 @@ impl Shell {
     }
 
     /// Get the shell name for display
+    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self.shell_type {
             ShellType::Bash => "bash",

@@ -3,3 +3,5 @@ mod contract;
 
 #[path = "keywords/type.rs"]
 mod r#type;
+
+mod operators;

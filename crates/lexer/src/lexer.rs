@@ -20,6 +20,7 @@ pub enum Context {
 /// ## Lexer
 ///
 /// The lexer encapsulated in a struct.
+#[allow(missing_debug_implementations)]
 pub struct Lexer<'a> {
     /// The source code as peekable chars.
     pub chars: Peekable<Zip<Chars<'a>, RangeFrom<u32>>>,
@@ -99,6 +100,7 @@ impl<'a> Lexer<'a> {
         (word, start, self.position)
     }
 
+    /// Lexes a hexadecimal integer literal starting with the given initial character.
     pub fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
         let (integer_str, mut start, end) = self.eat_while(Some(initial_char), |ch| {
             ch.is_ascii_hexdigit() | (ch == 'x')
@@ -142,6 +144,7 @@ impl<'a> Lexer<'a> {
     //     str_literal_token.into_span(start_span, end_span + 1)
     // }
 
+    /// Creates a single-character token with the current position span.
     pub fn single_char_token(&self, token_kind: TokenKind) -> TokenResult {
         Ok(token_kind.into_single_span(self.position))
     }
@@ -161,7 +164,7 @@ impl<'a> Lexer<'a> {
         // Check for u<size>
         if let Some(size_str) = word.strip_prefix('u') {
             if let Ok(size) = size_str.parse::<u16>() {
-                if size >= 8 && size <= 256 && size % 8 == 0 {
+                if (8..=256).contains(&size) && size % 8 == 0 {
                     return Some(PrimitiveType::UInt(size));
                 }
             }
@@ -171,7 +174,7 @@ impl<'a> Lexer<'a> {
         // Check for i<size>
         if let Some(size_str) = word.strip_prefix('i') {
             if let Ok(size) = size_str.parse::<u16>() {
-                if size >= 8 && size <= 256 && size % 8 == 0 {
+                if (8..=256).contains(&size) && size % 8 == 0 {
                     return Some(PrimitiveType::Int(size));
                 }
             }
@@ -181,7 +184,7 @@ impl<'a> Lexer<'a> {
         // Check for b<size>
         if let Some(size_str) = word.strip_prefix('b') {
             if let Ok(size) = size_str.parse::<u8>() {
-                if size >= 1 && size <= 32 {
+                if (1..=32).contains(&size) {
                     return Some(PrimitiveType::FixedBytes(size));
                 }
             }
@@ -319,13 +322,11 @@ impl<'a> Lexer<'a> {
     ///
     /// Rules:
     /// - ...
-    pub fn check_keyword_rules(&mut self, found_kind: &Option<TokenKind>) -> bool {
-        match found_kind {
-            // TODO: Add keyword rules here
-            _ => true,
-        }
+    pub fn check_keyword_rules(&mut self, _found_kind: &Option<TokenKind>) -> bool {
+        true
     }
 
+    /// Advances the lexer and returns the next token in the source.
     pub fn next_token(&mut self) -> TokenResult {
         let ch = if let Some(ch) = self.consume() {
             ch
@@ -855,6 +856,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Result type for lexer operations.
 pub type TokenResult = Result<Token, LexicalError>;
 
 impl<'a> Iterator for Lexer<'a> {

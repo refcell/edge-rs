@@ -6,7 +6,7 @@ use crate::Ident;
 use edge_types::span::Span;
 
 /// A union pattern for matching
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnionPattern {
     /// Union type name
     pub union_name: Ident,
@@ -19,7 +19,7 @@ pub struct UnionPattern {
 }
 
 /// A single match arm pattern
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MatchPattern {
     /// Union variant pattern
     Union(UnionPattern),
@@ -33,9 +33,9 @@ impl MatchPattern {
     /// Get the span of this pattern
     pub fn span(&self) -> Span {
         match self {
-            MatchPattern::Union(p) => p.span.clone(),
-            MatchPattern::Ident(id) => id.span.clone(),
-            MatchPattern::Wildcard => Span::EOF,
+            Self::Union(p) => p.span.clone(),
+            Self::Ident(id) => id.span.clone(),
+            Self::Wildcard => Span::EOF,
         }
     }
 }

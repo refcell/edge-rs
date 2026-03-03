@@ -14,5 +14,9 @@ edge-ast = { workspace = true }
 edge-lexer = { workspace = true }
 thiserror = { workspace = true }
 
+[[test]]
+name = "parser_tests"
+path = "tests/parser_tests.rs"
+
 [lints]
 workspace = true

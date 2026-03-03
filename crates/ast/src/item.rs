@@ -28,7 +28,7 @@ pub struct FnDecl {
 }
 
 /// A type declaration
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeDecl {
     /// Type name
     pub name: Ident,
@@ -201,7 +201,7 @@ pub enum ImportPath {
     /// Single identifier
     Ident(Ident),
     /// Nested import: { a, b, ... }
-    Nested(Vec<ImportPath>),
+    Nested(Vec<Self>),
     /// All imports: *
     All,
 }

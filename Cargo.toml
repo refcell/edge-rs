@@ -3,7 +3,6 @@ members = ["bin/*", "crates/*"]
 resolver = "2"
 
 [workspace.package]
-name = "edge-rs"
 description = "Edge Language Compiler Workspace"
 version = "0.1.0"
 edition = "2021"

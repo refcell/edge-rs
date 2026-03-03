@@ -149,15 +149,15 @@ impl DiagnosticBag {
                 let col = label.span.start.saturating_sub(line_start) + 1;
                 let len = (label.span.end.saturating_sub(label.span.start)).max(1);
 
-                eprintln!("  --> line {}:{}", line_num, col);
+                eprintln!("  --> line {line_num}:{col}");
                 eprintln!("   |");
-                eprintln!("   | {}", line);
+                eprintln!("   | {line}");
                 eprintln!("   | {}{} {}", " ".repeat(col.saturating_sub(1)), "^".repeat(len), label.message);
                 eprintln!("   |");
             }
 
             for note in &diag.notes {
-                eprintln!("   = note: {}", note);
+                eprintln!("   = note: {note}");
             }
         }
     }

@@ -26,13 +26,13 @@ pub enum Location {
 impl std::fmt::Display for Location {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Location::Stack => write!(f, "&s"),
-            Location::Transient => write!(f, "&t"),
-            Location::Memory => write!(f, "&m"),
-            Location::Calldata => write!(f, "&cd"),
-            Location::Returndata => write!(f, "&rd"),
-            Location::ImmutableCode => write!(f, "&ic"),
-            Location::ExternalCode => write!(f, "&ec"),
+            Self::Stack => write!(f, "&s"),
+            Self::Transient => write!(f, "&t"),
+            Self::Memory => write!(f, "&m"),
+            Self::Calldata => write!(f, "&cd"),
+            Self::Returndata => write!(f, "&rd"),
+            Self::ImmutableCode => write!(f, "&ic"),
+            Self::ExternalCode => write!(f, "&ec"),
         }
     }
 }
@@ -57,12 +57,12 @@ pub enum PrimitiveType {
 impl std::fmt::Display for PrimitiveType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PrimitiveType::UInt(n) => write!(f, "u{}", n),
-            PrimitiveType::Int(n) => write!(f, "i{}", n),
-            PrimitiveType::FixedBytes(n) => write!(f, "b{}", n),
-            PrimitiveType::Address => write!(f, "addr"),
-            PrimitiveType::Bool => write!(f, "bool"),
-            PrimitiveType::Bit => write!(f, "bit"),
+            Self::UInt(n) => write!(f, "u{n}"),
+            Self::Int(n) => write!(f, "i{n}"),
+            Self::FixedBytes(n) => write!(f, "b{n}"),
+            Self::Address => write!(f, "addr"),
+            Self::Bool => write!(f, "bool"),
+            Self::Bit => write!(f, "bit"),
         }
     }
 }
@@ -73,25 +73,25 @@ pub enum TypeSig {
     /// Primitive type
     Primitive(PrimitiveType),
     /// Array type: [T; N]
-    Array(Box<TypeSig>, Box<crate::Expr>),
+    Array(Box<Self>, Box<crate::Expr>),
     /// Packed array: packed [T; N]
-    PackedArray(Box<TypeSig>, Box<crate::Expr>),
+    PackedArray(Box<Self>, Box<crate::Expr>),
     /// Struct type: { field: T, ... }
     Struct(Vec<StructField>),
     /// Packed struct type
     PackedStruct(Vec<StructField>),
     /// Tuple type: (T, T, ...)
-    Tuple(Vec<TypeSig>),
+    Tuple(Vec<Self>),
     /// Packed tuple type
-    PackedTuple(Vec<TypeSig>),
+    PackedTuple(Vec<Self>),
     /// Union/Sum type: A | B(T) | ...
     Union(Vec<UnionMember>),
     /// Function type: T -> U
-    Function(Box<TypeSig>, Box<TypeSig>),
-    /// Named type (possibly with type parameters): MyType<T, U>
-    Named(Ident, Vec<TypeSig>),
+    Function(Box<Self>, Box<Self>),
+    /// Named type (possibly with type parameters): `MyType`<T, U>
+    Named(Ident, Vec<Self>),
     /// Pointer type: &location ptr
-    Pointer(Location, Box<TypeSig>),
+    Pointer(Location, Box<Self>),
     /// Event type: `[anon] event { ... }`
     Event(bool, Vec<EventField>),
 }

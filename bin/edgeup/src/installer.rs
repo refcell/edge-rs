@@ -6,9 +6,11 @@ use std::fs;
 use std::path::PathBuf;
 use crate::shell::Shell;
 
+#[allow(dead_code)]
 const GITHUB_REPO: &str = "refcell/edge-rs";
 
 /// Release information from GitHub API
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GithubRelease {
     pub tag_name: String,

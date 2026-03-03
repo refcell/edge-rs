@@ -30,8 +30,8 @@ fn parses_type() {
     assert_eq!(tok, Token::new(TokenKind::Whitespace, ws_span.clone()));
 
     // Equals
-    let tok = lexer.next().unwrap().unwrap();
-    let eq_span = Span::new(20..20, None);
+    let _tok = lexer.next().unwrap().unwrap();
+    let _eq_span = Span::new(20..20, None);
 
     // Whitespace
     let tok = lexer.next().unwrap().unwrap();

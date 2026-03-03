@@ -12,6 +12,7 @@ use edge_types::tokens::{Keyword, Operator, Token, TokenKind};
 use crate::errors::{ParseError, ParseResult};
 
 /// The parser struct
+#[derive(Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     cursor: usize,
@@ -25,7 +26,7 @@ impl Parser {
 
         loop {
             let token = lexer.next_token().map_err(|e| {
-                ParseError::LexerError(format!("{:?}", e))
+                ParseError::LexerError(format!("{e:?}"))
             })?;
 
             let is_eof = token.kind == TokenKind::Eof;
@@ -391,7 +392,7 @@ impl Parser {
         self.skip_whitespace_and_comments();
 
         if let Some(unary_op) = self.try_parse_unary_op() {
-            let start = self.advance().span.clone();
+            let start = self.advance().span;
             let expr = self.parse_unary_expr()?;
             let span = Span {
                 start: start.start,
@@ -685,7 +686,7 @@ impl Parser {
 
     /// Parse a code block
     fn parse_code_block(&mut self) -> ParseResult<CodeBlock> {
-        let start = self.expect(TokenKind::OpenBrace)?.span.clone();
+        let start = self.expect(TokenKind::OpenBrace)?.span;
 
         let mut stmts = Vec::new();
         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
@@ -697,7 +698,7 @@ impl Parser {
             stmts.push(BlockItem::Stmt(Box::new(self.parse_stmt()?)));
         }
 
-        let end = self.expect(TokenKind::CloseBrace)?.span.clone();
+        let end = self.expect(TokenKind::CloseBrace)?.span;
 
         Ok(CodeBlock {
             stmts,

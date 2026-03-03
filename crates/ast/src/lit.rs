@@ -6,7 +6,7 @@ use crate::ty::PrimitiveType;
 use edge_types::span::Span;
 
 /// A literal value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lit {
     /// Integer literal: 42, 42u8, etc.
     Int(u64, Option<PrimitiveType>, Span),
@@ -24,11 +24,11 @@ impl Lit {
     /// Get the span of this literal
     pub fn span(&self) -> Span {
         match self {
-            Lit::Int(_, _, span) => span.clone(),
-            Lit::Str(_, span) => span.clone(),
-            Lit::Bool(_, span) => span.clone(),
-            Lit::Hex(_, span) => span.clone(),
-            Lit::Bin(_, span) => span.clone(),
+            Self::Int(_, _, span) => span.clone(),
+            Self::Str(_, span) => span.clone(),
+            Self::Bool(_, span) => span.clone(),
+            Self::Hex(_, span) => span.clone(),
+            Self::Bin(_, span) => span.clone(),
         }
     }
 }

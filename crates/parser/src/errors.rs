@@ -1,14 +1,13 @@
 //! Parse Errors
 
 use edge_types::span::Span;
-use edge_types::tokens::TokenKind;
 use std::fmt;
 
 /// Result type for parser operations
 pub type ParseResult<T> = Result<T, ParseError>;
 
 /// Parser errors
-#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
     /// Unexpected token
     #[error("Unexpected token {found} at {span:?}, expected {expected}")]
@@ -77,7 +76,7 @@ impl ParseError {
     }
 
     /// Get the span of this error
-    pub fn span(&self) -> Option<&Span> {
+    pub const fn span(&self) -> Option<&Span> {
         match self {
             Self::UnexpectedToken { span, .. }
             | Self::InvalidTypeSig { span, .. }
