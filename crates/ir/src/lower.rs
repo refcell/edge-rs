@@ -131,7 +131,7 @@ pub struct Lowerer {
 #[allow(dead_code)]
 impl Lowerer {
     /// Create a new lowerer
-    pub fn new(storage_slots: IndexMap<String, u32>, fn_metas: Vec<FnMeta>) -> Self {
+    pub const fn new(storage_slots: IndexMap<String, u32>, fn_metas: Vec<FnMeta>) -> Self {
         Self {
             storage_slots,
             fn_metas,
@@ -234,7 +234,9 @@ impl Lowerer {
                         ctx.emit(IrInstruction::Pop);
                         Ok(())
                     }
-                    _ => Err(LowerError::UnsupportedExpr(format!("unsupported lhs: {lhs:?}"))),
+                    _ => Err(LowerError::UnsupportedExpr(format!(
+                        "unsupported lhs: {lhs:?}"
+                    ))),
                 }
             }
             Stmt::Return(Some(expr), _span) => {
@@ -309,7 +311,9 @@ impl Lowerer {
                 ctx.emit(IrInstruction::JumpDest(end_label));
                 Ok(())
             }
-            _ => Err(LowerError::UnsupportedStmt(format!("unsupported statement: {stmt:?}"))),
+            _ => Err(LowerError::UnsupportedStmt(format!(
+                "unsupported statement: {stmt:?}"
+            ))),
         }
     }
 
@@ -483,7 +487,9 @@ impl Lowerer {
                 Ok(())
             }
             Expr::Paren(inner, _) => self.lower_expr(ctx, inner),
-            _ => Err(LowerError::UnsupportedExpr(format!("unsupported expression: {expr:?}"))),
+            _ => Err(LowerError::UnsupportedExpr(format!(
+                "unsupported expression: {expr:?}"
+            ))),
         }
     }
 }
