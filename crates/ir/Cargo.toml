@@ -1,0 +1,18 @@
+[package]
+name = "edge-ir"
+description = "Edge Language IR and Lowering"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+edge-ast = { workspace = true }
+thiserror = { workspace = true }
+indexmap = "2.0"
+
+[lints]
+workspace = true

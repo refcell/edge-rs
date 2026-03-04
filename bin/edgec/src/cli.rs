@@ -133,20 +133,28 @@ impl Cli {
             }
             EmitKind::Bytecode => {
                 if let Some(ref bytecode) = output.bytecode {
-                    if args.verbose {
-                        eprintln!("Bytecode size: {} bytes", bytecode.len());
-                    }
-                    if let Some(output_file) = &args.output {
-                        std::fs::write(output_file, bytecode)?;
-                        eprintln!("Wrote bytecode to {}", output_file.display());
+                    if bytecode.is_empty() {
+                        eprintln!("warning: empty bytecode produced");
                     } else {
-                        eprintln!(
-                            "Compilation successful, {} bytes of bytecode generated",
-                            bytecode.len()
-                        );
+                        // Print hex representation
+                        let hex: String = bytecode.iter().map(|b| format!("{b:02x}")).collect();
+                        println!("Bytecode ({} bytes):", bytecode.len());
+                        println!("0x{hex}");
+
+                        // Write to output file if specified
+                        if let Some(output_file) = &args.output {
+                            std::fs::write(output_file, bytecode)?;
+                            if args.verbose {
+                                eprintln!("Wrote bytecode to {}", output_file.display());
+                            }
+                        }
+
+                        if args.verbose {
+                            eprintln!("Compilation successful");
+                        }
                     }
                 } else {
-                    eprintln!("warning: bytecode generation not yet implemented, skipping output");
+                    eprintln!("warning: bytecode generation produced no output");
                 }
             }
         }

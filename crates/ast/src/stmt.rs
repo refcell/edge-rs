@@ -119,7 +119,7 @@ pub enum Stmt {
     IfMatch(crate::Expr, crate::pattern::UnionPattern, CodeBlock),
 
     /// Match statement: match expr { ... }
-    Match(crate::Expr, Vec<MatchArm>),
+    Match(crate::Expr, Vec<MatchArm>, Span),
 
     /// Compile-time branch: comptime { ... }
     ComptimeBranch(Box<Self>),
@@ -178,7 +178,7 @@ impl Stmt {
                 }
             }
             Self::IfMatch(_, _, block) => block.span.clone(),
-            Self::Match(_, _) => Span::EOF, // TODO: store span in Match
+            Self::Match(_, _, span) => span.clone(),
             Self::ComptimeBranch(stmt) => stmt.span(),
             Self::ComptimeFn(fn_decl, _) => fn_decl.span.clone(),
             Self::Return(_, span) => span.clone(),
