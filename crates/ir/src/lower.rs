@@ -49,9 +49,9 @@ pub struct FnMeta {
 /// Context for lowering a single function
 #[allow(dead_code)]
 struct FnContext {
-    /// Storage slots: field_name → slot number
+    /// Storage slots: `field_name` → slot number
     storage_slots: IndexMap<String, u32>,
-    /// Local variables: var_name → memory offset (multiple of 32)
+    /// Local variables: `var_name` → memory offset (multiple of 32)
     locals: IndexMap<String, u64>,
     /// Next available memory offset for a new local
     next_mem_offset: u64,
@@ -163,7 +163,7 @@ impl Lowerer {
                 .iter()
                 .find(|m| &m.name == fn_name)
                 .ok_or_else(|| {
-                    LowerError::UndefinedVariable(format!("function not in metadata: {}", fn_name))
+                    LowerError::UndefinedVariable(format!("function not in metadata: {fn_name}"))
                 })?;
 
             let ir_fn = self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body)?;
@@ -234,10 +234,7 @@ impl Lowerer {
                         ctx.emit(IrInstruction::Pop);
                         Ok(())
                     }
-                    _ => Err(LowerError::UnsupportedExpr(format!(
-                        "unsupported lhs: {:?}",
-                        lhs
-                    ))),
+                    _ => Err(LowerError::UnsupportedExpr(format!("unsupported lhs: {lhs:?}"))),
                 }
             }
             Stmt::Return(Some(expr), _span) => {
@@ -312,10 +309,7 @@ impl Lowerer {
                 ctx.emit(IrInstruction::JumpDest(end_label));
                 Ok(())
             }
-            _ => Err(LowerError::UnsupportedStmt(format!(
-                "unsupported statement: {:?}",
-                stmt
-            ))),
+            _ => Err(LowerError::UnsupportedStmt(format!("unsupported statement: {stmt:?}"))),
         }
     }
 
@@ -349,11 +343,7 @@ impl Lowerer {
                         ctx.emit(IrInstruction::Push(vec![if *b { 1 } else { 0 }]));
                         Ok(())
                     }
-                    Lit::Hex(bytes, _) => {
-                        ctx.emit(IrInstruction::Push(bytes.clone()));
-                        Ok(())
-                    }
-                    Lit::Bin(bytes, _) => {
+                    Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
                         ctx.emit(IrInstruction::Push(bytes.clone()));
                         Ok(())
                     }
@@ -370,17 +360,15 @@ impl Lowerer {
                     // Storage variable
                     ctx.emit_push_u32(slot);
                     ctx.emit(IrInstruction::SLoad);
-                    Ok(())
                 } else if let Some(&offset) = ctx.locals.get(&id.name) {
                     // Local variable
                     ctx.emit_push_u64(offset);
                     ctx.emit(IrInstruction::MLoad);
-                    Ok(())
                 } else {
                     // Fallback: push zero
                     ctx.emit(IrInstruction::Push(vec![0]));
-                    Ok(())
                 }
+                Ok(())
             }
             Expr::Binary(lhs, op, rhs, _) => {
                 // Lower lhs, then rhs
@@ -409,13 +397,11 @@ impl Lowerer {
                         ctx.emit(IrInstruction::Lt);
                         ctx.emit(IrInstruction::IsZero);
                     }
-                    BinOp::BitwiseAnd => ctx.emit(IrInstruction::And),
-                    BinOp::BitwiseOr => ctx.emit(IrInstruction::Or),
+                    BinOp::BitwiseAnd | BinOp::LogicalAnd => ctx.emit(IrInstruction::And),
+                    BinOp::BitwiseOr | BinOp::LogicalOr => ctx.emit(IrInstruction::Or),
                     BinOp::BitwiseXor => ctx.emit(IrInstruction::Xor),
                     BinOp::Shl => ctx.emit(IrInstruction::Shl),
                     BinOp::Shr => ctx.emit(IrInstruction::Shr),
-                    BinOp::LogicalAnd => ctx.emit(IrInstruction::And),
-                    BinOp::LogicalOr => ctx.emit(IrInstruction::Or),
                     BinOp::Exp => {
                         // EXP not in our instruction set yet; emit placeholder
                         ctx.emit(IrInstruction::Push(vec![0]));
@@ -423,8 +409,7 @@ impl Lowerer {
                     _ => {
                         // Compound assignment operators handled elsewhere
                         return Err(LowerError::UnsupportedExpr(format!(
-                            "unsupported binary op: {:?}",
-                            op
+                            "unsupported binary op: {op:?}"
                         )));
                     }
                 }
@@ -498,10 +483,7 @@ impl Lowerer {
                 Ok(())
             }
             Expr::Paren(inner, _) => self.lower_expr(ctx, inner),
-            _ => Err(LowerError::UnsupportedExpr(format!(
-                "unsupported expression: {:?}",
-                expr
-            ))),
+            _ => Err(LowerError::UnsupportedExpr(format!("unsupported expression: {expr:?}"))),
         }
     }
 }

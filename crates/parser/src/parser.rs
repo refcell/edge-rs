@@ -1720,7 +1720,7 @@ impl Parser {
             let token = self.peek().clone();
             Err(ParseError::unexpected(
                 &token.kind,
-                &TokenKind::Operator(edge_types::tokens::Operator::Comparison(
+                TokenKind::Operator(edge_types::tokens::Operator::Comparison(
                     edge_types::tokens::ComparisonOperator::GreaterThan,
                 )),
                 token.span,

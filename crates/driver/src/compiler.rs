@@ -236,7 +236,7 @@ impl Compiler {
         }
     }
 
-    /// Convert a single IR instruction to a GenInstr
+    /// Convert a single IR instruction to a `GenInstr`
     fn ir_instruction_to_gen_instr(instr: &edge_ir::IrInstruction) -> edge_codegen::GenInstr {
         match instr {
             edge_ir::IrInstruction::Push(bytes) => edge_codegen::GenInstr::Push(bytes.clone()),
