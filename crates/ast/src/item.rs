@@ -167,8 +167,12 @@ pub struct ContractFnDecl {
     pub returns: Vec<crate::ty::TypeSig>,
     /// Whether function is external
     pub is_ext: bool,
+    /// Whether function is public
+    pub is_pub: bool,
     /// Whether function is mutable
     pub is_mut: bool,
+    /// Function body (if defined inline in the contract)
+    pub body: Option<crate::stmt::CodeBlock>,
     /// Source span
     pub span: Span,
 }

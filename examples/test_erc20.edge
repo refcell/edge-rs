@@ -1,0 +1,78 @@
+// test_erc20.edge — ERC-20 variant with public mint for testing
+//
+// Identical to erc20.edge but exposes mint() publicly so tests can seed balances.
+
+event Transfer(indexed from: addr, indexed to: addr, amount: u256);
+event Approval(indexed owner: addr, indexed spender: addr, amount: u256);
+
+abi IERC20Test {
+    fn totalSupply() -> (u256);
+    fn balanceOf(account: addr) -> (u256);
+    fn transfer(to: addr, amount: u256) -> (bool);
+    fn allowance(owner: addr, spender: addr) -> (u256);
+    fn approve(spender: addr, amount: u256) -> (bool);
+    fn transferFrom(from: addr, to: addr, amount: u256) -> (bool);
+    fn mint(to: addr, amount: u256);
+}
+
+contract ERC20Test {
+    let total_supply: &s u256;
+    let balances: &s u256;
+    let allowances: &s u256;
+
+    pub fn totalSupply() -> (u256) {
+        return total_supply;
+    }
+
+    pub fn balanceOf(account: addr) -> (u256) {
+        return balances[account];
+    }
+
+    pub fn transfer(to: addr, amount: u256) -> (bool) {
+        let from: addr;
+        from = @caller();
+        _transfer(from, to, amount);
+        return true;
+    }
+
+    pub fn allowance(owner: addr, spender: addr) -> (u256) {
+        return allowances[owner][spender];
+    }
+
+    pub fn approve(spender: addr, amount: u256) -> (bool) {
+        let owner: addr;
+        owner = @caller();
+        _approve(owner, spender, amount);
+        return true;
+    }
+
+    pub fn transferFrom(from: addr, to: addr, amount: u256) -> (bool) {
+        let caller: addr;
+        let current_allowance: u256;
+        caller = @caller();
+        current_allowance = allowances[from][caller];
+        allowances[from][caller] = current_allowance - amount;
+        _transfer(from, to, amount);
+        return true;
+    }
+
+    // Public mint for testing
+    pub fn mint(to: addr, amount: u256) {
+        total_supply = total_supply + amount;
+        balances[to] = balances[to] + amount;
+        emit Transfer(0, to, amount);
+    }
+
+    fn _transfer(from: addr, to: addr, amount: u256) {
+        let from_balance: u256;
+        from_balance = balances[from];
+        balances[from] = from_balance - amount;
+        balances[to] = balances[to] + amount;
+        emit Transfer(from, to, amount);
+    }
+
+    fn _approve(owner: addr, spender: addr, amount: u256) {
+        allowances[owner][spender] = amount;
+        emit Approval(owner, spender, amount);
+    }
+}

@@ -6,7 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use edge_driver::{
     compiler::Compiler,
-    config::{CompilerConfig, EmitKind},
+    config::{CompilerConfig, EmitKind, OptimizeFor},
 };
 
 /// The Edge Language Compiler
@@ -44,8 +44,8 @@ pub struct BuildArgs {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// What to emit: tokens, ast, bytecode
-    #[arg(long, value_parser = ["tokens", "ast", "bytecode"], default_value = "bytecode")]
+    /// What to emit: tokens, ast, ir, bytecode
+    #[arg(long, value_parser = ["tokens", "ast", "ir", "bytecode"], default_value = "bytecode")]
     pub emit: String,
 
     /// Optimization level (0-3)
@@ -55,6 +55,10 @@ pub struct BuildArgs {
     /// Verbose output
     #[arg(short, long)]
     pub verbose: bool,
+
+    /// What metric to optimize extraction for
+    #[arg(long, value_parser = ["gas", "size"], default_value = "gas")]
+    pub optimize_for: String,
 }
 
 /// Arguments for the check command
@@ -99,6 +103,7 @@ impl Cli {
         let emit = match args.emit.as_str() {
             "tokens" => EmitKind::Tokens,
             "ast" => EmitKind::Ast,
+            "ir" => EmitKind::Ir,
             "bytecode" => EmitKind::Bytecode,
             _ => EmitKind::Bytecode,
         };
@@ -109,6 +114,10 @@ impl Cli {
         config.emit = emit;
         config.optimization_level = args.opt_level;
         config.verbose = args.verbose;
+        config.optimize_for = match args.optimize_for.as_str() {
+            "size" => OptimizeFor::Size,
+            _ => OptimizeFor::Gas,
+        };
 
         // Create and run compiler
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -131,6 +140,28 @@ impl Cli {
                     println!("{:#?}", ast);
                 }
             }
+            EmitKind::Ir => {
+                if let Some(ref ir) = output.ir {
+                    println!("=== EVM IR (s-expression) ===");
+                    for contract in &ir.contracts {
+                        println!(";; Contract: {}", contract.name);
+                        println!(";; Storage fields: {}", contract.storage_fields.len());
+                        for field in &contract.storage_fields {
+                            println!(";;   {}", edge_ir::sexp::expr_to_sexp(field));
+                        }
+                        println!();
+                        println!(";; Constructor:");
+                        println!("{}", edge_ir::sexp::expr_to_sexp(&contract.constructor));
+                        println!();
+                        println!(";; Runtime:");
+                        println!("{}", edge_ir::sexp::expr_to_sexp(&contract.runtime));
+                    }
+                    for func in &ir.free_functions {
+                        println!();
+                        println!("{}", edge_ir::sexp::expr_to_sexp(func));
+                    }
+                }
+            }
             EmitKind::Bytecode => {
                 if let Some(ref bytecode) = output.bytecode {
                     if args.verbose {
@@ -140,13 +171,16 @@ impl Cli {
                         std::fs::write(output_file, bytecode)?;
                         eprintln!("Wrote bytecode to {}", output_file.display());
                     } else {
+                        // Print hex-encoded bytecode to stdout
+                        let hex: String = bytecode.iter().map(|b| format!("{b:02x}")).collect();
+                        println!("{hex}");
                         eprintln!(
                             "Compilation successful, {} bytes of bytecode generated",
                             bytecode.len()
                         );
                     }
                 } else {
-                    eprintln!("warning: bytecode generation not yet implemented, skipping output");
+                    eprintln!("warning: no bytecode generated");
                 }
             }
         }

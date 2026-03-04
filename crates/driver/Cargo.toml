@@ -14,9 +14,16 @@ edge-ast = { workspace = true }
 edge-lexer = { workspace = true }
 edge-parser = { workspace = true }
 edge-diagnostics = { workspace = true }
+edge-ir = { workspace = true }
+edge-codegen = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+edge-parser = { workspace = true }
+edge-ir = { workspace = true }
+edge-codegen = { workspace = true }
 
 [lints]
 workspace = true

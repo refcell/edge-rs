@@ -20,6 +20,8 @@ pub struct CompileOutput {
     pub tokens: Option<Vec<Token>>,
     /// Emitted AST (if emit=ast)
     pub ast: Option<Program>,
+    /// Emitted IR (if emit=ir)
+    pub ir: Option<edge_ir::EvmProgram>,
     /// Emitted bytecode (if emit=bytecode)
     pub bytecode: Option<Vec<u8>>,
 }
@@ -69,6 +71,7 @@ impl Compiler {
             return Ok(CompileOutput {
                 tokens: Some(tokens),
                 ast: None,
+                ir: None,
                 bytecode: None,
             });
         }
@@ -80,16 +83,50 @@ impl Compiler {
             return Ok(CompileOutput {
                 tokens: None,
                 ast: Some(ast),
+                ir: None,
                 bytecode: None,
             });
         }
 
-        // Future: type check, codegen
-        tracing::warn!("Bytecode emission not yet implemented");
+        // IR lowering + optimization
+        let ir_program = edge_ir::lower_and_optimize(
+            &ast,
+            self.session.config.optimization_level,
+            self.session.config.optimize_for,
+        )
+        .map_err(|e| {
+            let diag = Diagnostic::error(format!("IR lowering error: {e}"));
+            self.session.emit_error(diag);
+            self.session.diagnostics.report_all(&self.session.source);
+            CompileError::Aborted
+        })?;
+
+        if emit == EmitKind::Ir {
+            return Ok(CompileOutput {
+                tokens: None,
+                ast: Some(ast),
+                ir: Some(ir_program),
+                bytecode: None,
+            });
+        }
+
+        // Code generation
+        let bytecode = edge_codegen::compile(
+            &ir_program,
+            self.session.config.optimization_level,
+            self.session.config.optimize_for,
+        ).map_err(|e| {
+            self.session.emit_error(
+                Diagnostic::error(format!("codegen error: {e}")),
+            );
+            CompileError::Aborted
+        })?;
+
         Ok(CompileOutput {
             tokens: None,
             ast: Some(ast),
-            bytecode: None,
+            ir: None,
+            bytecode: Some(bytecode),
         })
     }
 

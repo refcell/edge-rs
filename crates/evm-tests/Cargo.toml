@@ -1,0 +1,22 @@
+[package]
+name = "edge-evm-tests"
+description = "EVM semantic tests for the Edge compiler"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+publish = false
+
+[dependencies]
+edge-driver = { workspace = true }
+edge-ir = { workspace = true }
+edge-codegen = { workspace = true }
+edge-parser = { workspace = true }
+revm = { version = "19", default-features = false, features = ["std"] }
+alloy-primitives = "0.8"
+alloy-sol-types = "0.8"
+
+[lints]
+workspace = true

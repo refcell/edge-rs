@@ -1,0 +1,168 @@
+;; ============================================================
+;; Peephole Optimizations
+;; ============================================================
+;; Simple, safe rewrites: identity removal, zero folding,
+;; constant folding, double-negation elimination, reassociation.
+
+;; ---- Identity removal ----
+;; x + 0 -> x
+(rewrite (Bop (OpAdd) (Const (SmallInt 0) ty ctx) e) e :ruleset peepholes)
+(rewrite (Bop (OpAdd) e (Const (SmallInt 0) ty ctx)) e :ruleset peepholes)
+
+;; x * 1 -> x
+(rewrite (Bop (OpMul) (Const (SmallInt 1) ty ctx) e) e :ruleset peepholes)
+(rewrite (Bop (OpMul) e (Const (SmallInt 1) ty ctx)) e :ruleset peepholes)
+
+;; x - 0 -> x
+(rewrite (Bop (OpSub) e (Const (SmallInt 0) ty ctx)) e :ruleset peepholes)
+
+;; x / 1 -> x
+(rewrite (Bop (OpDiv) e (Const (SmallInt 1) ty ctx)) e :ruleset peepholes)
+
+;; x % 1 -> 0
+(rewrite (Bop (OpMod) e (Const (SmallInt 1) ty ctx))
+         (Const (SmallInt 0) ty ctx) :ruleset peepholes)
+
+;; ---- Zero multiplication ----
+;; x * 0 -> 0
+(rewrite (Bop (OpMul) (Const (SmallInt 0) ty ctx) e)
+         (Const (SmallInt 0) ty ctx) :ruleset peepholes)
+(rewrite (Bop (OpMul) e (Const (SmallInt 0) ty ctx))
+         (Const (SmallInt 0) ty ctx) :ruleset peepholes)
+
+;; 0 / x -> 0
+(rewrite (Bop (OpDiv) (Const (SmallInt 0) ty ctx) e)
+         (Const (SmallInt 0) ty ctx) :ruleset peepholes)
+
+;; 0 % x -> 0
+(rewrite (Bop (OpMod) (Const (SmallInt 0) ty ctx) e)
+         (Const (SmallInt 0) ty ctx) :ruleset peepholes)
+
+;; ---- Constant folding (small integers) ----
+;; add, sub, mul
+(rewrite (Bop (OpAdd) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+         (Const (SmallInt (+ i j)) ty ctx) :ruleset peepholes)
+(rewrite (Bop (OpSub) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+         (Const (SmallInt (- i j)) ty ctx) :ruleset peepholes)
+(rewrite (Bop (OpMul) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+         (Const (SmallInt (* i j)) ty ctx) :ruleset peepholes)
+
+;; div (guarded against division by zero)
+(rule ((= e (Bop (OpDiv) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (!= j 0))
+      ((union e (Const (SmallInt (/ i j)) ty ctx)))
+      :ruleset peepholes)
+
+;; mod (guarded against division by zero)
+(rule ((= e (Bop (OpMod) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (!= j 0))
+      ((union e (Const (SmallInt (% i j)) ty ctx)))
+      :ruleset peepholes)
+
+;; ---- Constant comparison folding ----
+;; LT: i < j
+(rule ((= e (Bop (OpLt) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (< i j))
+      ((union e (Const (SmallInt 1) ty ctx)))
+      :ruleset peepholes)
+(rule ((= e (Bop (OpLt) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (>= i j))
+      ((union e (Const (SmallInt 0) ty ctx)))
+      :ruleset peepholes)
+
+;; GT: i > j
+(rule ((= e (Bop (OpGt) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (> i j))
+      ((union e (Const (SmallInt 1) ty ctx)))
+      :ruleset peepholes)
+(rule ((= e (Bop (OpGt) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (<= i j))
+      ((union e (Const (SmallInt 0) ty ctx)))
+      :ruleset peepholes)
+
+;; EQ: i == j
+(rule ((= e (Bop (OpEq) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (= i j))
+      ((union e (Const (SmallInt 1) ty ctx)))
+      :ruleset peepholes)
+(rule ((= e (Bop (OpEq) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2)))
+       (!= i j))
+      ((union e (Const (SmallInt 0) ty ctx)))
+      :ruleset peepholes)
+
+;; ---- IsZero of constants ----
+;; IsZero(0) -> 1
+(rewrite (Uop (OpIsZero) (Const (SmallInt 0) ty ctx))
+         (Const (SmallInt 1) ty ctx) :ruleset peepholes)
+;; IsZero(nonzero) -> 0
+(rule ((= e (Uop (OpIsZero) (Const (SmallInt i) ty ctx)))
+       (!= i 0))
+      ((union e (Const (SmallInt 0) ty ctx)))
+      :ruleset peepholes)
+
+;; ---- Boolean simplifications ----
+;; true && x -> x
+(rewrite (Bop (OpLogAnd) (Const (ConstBool true) ty ctx) e) e :ruleset peepholes)
+(rewrite (Bop (OpLogAnd) e (Const (ConstBool true) ty ctx)) e :ruleset peepholes)
+;; false && x -> false
+(rewrite (Bop (OpLogAnd) (Const (ConstBool false) ty ctx) e)
+         (Const (ConstBool false) ty ctx) :ruleset peepholes)
+;; false || x -> x
+(rewrite (Bop (OpLogOr) (Const (ConstBool false) ty ctx) e) e :ruleset peepholes)
+(rewrite (Bop (OpLogOr) e (Const (ConstBool false) ty ctx)) e :ruleset peepholes)
+;; true || x -> true
+(rewrite (Bop (OpLogOr) (Const (ConstBool true) ty ctx) e)
+         (Const (ConstBool true) ty ctx) :ruleset peepholes)
+
+;; ---- Double negation ----
+;; IsZero(IsZero(x)) -> x (for boolean expressions)
+(rewrite (Uop (OpIsZero) (Uop (OpIsZero) x)) x :ruleset peepholes)
+;; NOT(NOT(x)) -> x
+(rewrite (Uop (OpNot) (Uop (OpNot) x)) x :ruleset peepholes)
+
+;; ---- Select simplifications ----
+;; Select(cond, x, x) -> x
+(rewrite (Top (OpSelect) pred x x) x :ruleset peepholes)
+
+;; ---- Reassociation (enables cascading constant folding) ----
+;; (x + i) + j -> x + (i + j)
+(rewrite (Bop (OpAdd) (Bop (OpAdd) x (Const (SmallInt i) ty ctx)) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpAdd) x (Const (SmallInt (+ i j)) ty ctx))
+         :ruleset peepholes)
+;; (i + x) + j -> x + (i + j)
+(rewrite (Bop (OpAdd) (Bop (OpAdd) (Const (SmallInt i) ty ctx) x) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpAdd) x (Const (SmallInt (+ i j)) ty ctx))
+         :ruleset peepholes)
+
+;; (x * i) * j -> x * (i * j)
+(rewrite (Bop (OpMul) (Bop (OpMul) x (Const (SmallInt i) ty ctx)) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpMul) x (Const (SmallInt (* i j)) ty ctx))
+         :ruleset peepholes)
+;; (i * x) * j -> x * (i * j)
+(rewrite (Bop (OpMul) (Bop (OpMul) (Const (SmallInt i) ty ctx) x) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpMul) x (Const (SmallInt (* i j)) ty ctx))
+         :ruleset peepholes)
+
+;; (x - i) + j -> x + (j - i)
+(rewrite (Bop (OpAdd) (Bop (OpSub) x (Const (SmallInt i) ty ctx)) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpAdd) x (Const (SmallInt (- j i)) ty ctx))
+         :ruleset peepholes)
+
+;; (x - i) - j -> x - (i + j)
+(rewrite (Bop (OpSub) (Bop (OpSub) x (Const (SmallInt i) ty ctx)) (Const (SmallInt j) ty2 ctx2))
+         (Bop (OpSub) x (Const (SmallInt (+ i j)) ty ctx))
+         :ruleset peepholes)
+
+;; ---- Commutativity (helps CSE find equivalences) ----
+;; ADD is commutative
+(rewrite (Bop (OpAdd) a b) (Bop (OpAdd) b a) :ruleset peepholes)
+;; MUL is commutative
+(rewrite (Bop (OpMul) a b) (Bop (OpMul) b a) :ruleset peepholes)
+;; EQ is commutative
+(rewrite (Bop (OpEq) a b) (Bop (OpEq) b a) :ruleset peepholes)
+;; AND is commutative
+(rewrite (Bop (OpAnd) a b) (Bop (OpAnd) b a) :ruleset peepholes)
+;; OR is commutative
+(rewrite (Bop (OpOr) a b) (Bop (OpOr) b a) :ruleset peepholes)
+;; XOR is commutative
+(rewrite (Bop (OpXor) a b) (Bop (OpXor) b a) :ruleset peepholes)

@@ -695,16 +695,17 @@ impl Parser {
                     false
                 };
                 let fn_decl = self.parse_fn_decl()?;
-                let _body = self.parse_code_block()?;
+                let body = self.parse_code_block()?;
                 functions.push(edge_ast::ContractFnDecl {
                     name: fn_decl.name,
                     params: fn_decl.params,
                     returns: fn_decl.returns,
                     is_ext,
+                    is_pub,
                     is_mut,
+                    body: Some(body),
                     span: fn_decl.span,
                 });
-                let _ = is_pub; // tracked for future use
             } else {
                 self.advance();
             }
