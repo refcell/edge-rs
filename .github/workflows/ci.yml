@@ -93,3 +93,14 @@ jobs:
         with:
           rust-cache-shared-key: "stable"
       - run: just check-examples
+
+  acceptance:
+    name: Acceptance Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: cargo-nextest
+          rust-cache-shared-key: "stable"
+      - run: just e2e-ci
