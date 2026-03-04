@@ -1,6 +1,7 @@
 //! IR program structure
 
 use alloy_primitives::Selector;
+
 use crate::instruction::IrInstruction;
 
 /// A function in the IR

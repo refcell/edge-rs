@@ -5,6 +5,7 @@
 use std::{fmt, fmt::Write};
 
 use alloy_primitives::B256;
+
 use crate::span::Span;
 
 pub mod keywords;
