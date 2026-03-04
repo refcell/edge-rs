@@ -703,7 +703,7 @@ impl Parser {
                     is_pub,
                     is_ext,
                     is_mut,
-                    body,
+                    body: Some(body),
                     span: fn_decl.span,
                 });
             } else {

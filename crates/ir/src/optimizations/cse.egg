@@ -1,0 +1,10 @@
+;; ============================================================
+;; Common Subexpression Elimination
+;; ============================================================
+;; CSE is handled naturally by egglog's e-graph: identical
+;; subexpressions are automatically shared in the same e-class.
+;; The commutativity rules in peepholes.egg further enhance this
+;; by ensuring e.g. (ADD a b) and (ADD b a) are in the same e-class.
+;;
+;; No explicit rules needed — the e-graph structure provides CSE
+;; for free via hash-consing of terms.

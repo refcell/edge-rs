@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+pub use edge_ir::OptimizeFor;
+
 /// What the compiler should emit
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum EmitKind {
@@ -9,6 +11,8 @@ pub enum EmitKind {
     Tokens,
     /// Emit AST only (debugging)
     Ast,
+    /// Emit IR only (debugging)
+    Ir,
     /// Emit EVM bytecode (default)
     #[default]
     Bytecode,
@@ -27,6 +31,8 @@ pub struct CompilerConfig {
     pub optimization_level: u8,
     /// Verbose output
     pub verbose: bool,
+    /// What metric to optimize for during extraction
+    pub optimize_for: OptimizeFor,
 }
 
 impl CompilerConfig {
@@ -38,6 +44,7 @@ impl CompilerConfig {
             emit: EmitKind::default(),
             optimization_level: 0,
             verbose: false,
+            optimize_for: OptimizeFor::default(),
         }
     }
 }

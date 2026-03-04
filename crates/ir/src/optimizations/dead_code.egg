@@ -1,0 +1,85 @@
+;; ============================================================
+;; Dead Code Elimination
+;; ============================================================
+;; Remove pure (side-effect-free) computations whose results
+;; are unused in Concat chains.
+;;
+;; In the IR, `Concat(a, b)` evaluates `a` then `b`, returning `b`.
+;; So `a`'s VALUE is always discarded — it exists only for side effects.
+;; If `a` is pure (no side effects), we can eliminate it entirely.
+;;
+;; The code block lowering produces left-nested Concat chains:
+;;   Concat(Concat(Concat(Single(s0), Single(s1)), Single(s2)), ...)
+;; We peel off dead pure entries from the tail of the left side.
+
+;; ---- Purity relation ----
+;; An expression is pure if evaluating it has no observable side effects.
+;; Side-effecting ops: SStore, TStore, MStore, MStore8, Log, Return, Revert, ExtCall.
+;; Everything else (arithmetic, reads, constants, env) is pure.
+
+(relation IsPure (EvmExpr))
+
+;; Leaf nodes are pure
+(rule ((= e (Const c ty ctx)))  ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Arg ty ctx)))      ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Empty ty ctx)))    ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Selector s)))      ((IsPure e)) :ruleset dead-code)
+
+;; All unary ops are pure (IsZero, Not, Neg, SignExtend)
+(rule ((= e (Uop op x)))       ((IsPure e)) :ruleset dead-code)
+
+;; All binary ops are pure (arithmetic, comparison, bitwise, reads)
+(rule ((= e (Bop (OpAdd) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSub) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpMul) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpDiv) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSDiv) a b)))          ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpMod) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSMod) a b)))          ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpExp) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpLt) a b)))            ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpGt) a b)))            ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSLt) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSGt) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpEq) a b)))            ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpAnd) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpOr) a b)))            ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpXor) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpShl) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpShr) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSar) a b)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpByte) a b)))          ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpCalldataLoad) a b)))  ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpSLoad) a b)))         ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpTLoad) a b)))         ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpMLoad) a b)))         ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Top (OpKeccak256) a b c)))   ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpLogAnd) a b)))        ((IsPure e)) :ruleset dead-code)
+(rule ((= e (Bop (OpLogOr) a b)))         ((IsPure e)) :ruleset dead-code)
+
+;; Select is pure (conditional, no side effects)
+(rule ((= e (Top (OpSelect) a b c)))      ((IsPure e)) :ruleset dead-code)
+
+;; Environment reads are pure
+(rule ((= e (EnvRead op state)))           ((IsPure e)) :ruleset dead-code)
+(rule ((= e (EnvRead1 op arg state)))      ((IsPure e)) :ruleset dead-code)
+
+;; Get (tuple element extraction) is pure
+(rule ((= e (Get inner idx)))              ((IsPure e)) :ruleset dead-code)
+
+;; Var (let-binding reference) is pure
+(rule ((= e (Var name)))                   ((IsPure e)) :ruleset dead-code)
+
+;; ---- Dead statement elimination in Concat chains ----
+
+;; Base case: Concat(Single(pure), rest) → rest
+;; The pure expression's value is discarded; it has no side effects.
+(rule ((= e (Concat (Single inner) rest)) (IsPure inner))
+      ((union e rest))
+      :ruleset dead-code)
+
+;; Recursive case: Concat(Concat(prev, Single(pure)), rest) → Concat(prev, rest)
+;; Peels one dead pure entry from the tail of the left-nested chain.
+(rule ((= e (Concat (Concat prev (Single inner)) rest)) (IsPure inner))
+      ((union e (Concat prev rest)))
+      :ruleset dead-code)

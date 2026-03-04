@@ -1,17 +1,23 @@
 [package]
 name = "edge-codegen"
-description = "Edge Language EVM Bytecode Emitter"
-version = { workspace = true }
-edition = { workspace = true }
-rust-version = { workspace = true }
-license = { workspace = true }
-authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
+description = "Edge Language EVM Bytecode Code Generator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-thiserror = { workspace = true }
+edge-types = { workspace = true }
+edge-ast = { workspace = true }
+edge-ir = { workspace = true }
+edge-diagnostics = { workspace = true }
 indexmap = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+egglog = { workspace = true }
 alloy-primitives = { workspace = true }
 
 [lints]

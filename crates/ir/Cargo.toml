@@ -1,19 +1,26 @@
 [package]
 name = "edge-ir"
-description = "Edge Language IR and Lowering"
-version = { workspace = true }
-edition = { workspace = true }
-license = { workspace = true }
-authors = { workspace = true }
-repository = { workspace = true }
-homepage = { workspace = true }
+description = "Edge Language Egglog-based Intermediate Representation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 edge-types = { workspace = true }
 edge-ast = { workspace = true }
+edge-diagnostics = { workspace = true }
+egglog = { workspace = true }
+indexmap = { workspace = true }
 thiserror = { workspace = true }
-indexmap = "2.0"
+tracing = { workspace = true }
 alloy-primitives = { workspace = true }
+
+[dev-dependencies]
+edge-parser = { workspace = true }
 
 [lints]
 workspace = true

@@ -1,0 +1,215 @@
+//! Builder/convenience functions for constructing IR nodes.
+//!
+//! These helpers reduce boilerplate when building `EvmExpr` trees
+//! during AST lowering.
+
+use std::rc::Rc;
+
+use crate::schema::{
+    EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType,
+    EvmUnaryOp, RcExpr,
+};
+
+// ---- Constants ----
+
+/// Create a small integer constant.
+pub fn const_int(val: i64, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Const(
+        EvmConstant::SmallInt(val),
+        EvmType::Base(EvmBaseType::UIntT(256)),
+        ctx,
+    ))
+}
+
+/// Create a big integer constant from hex.
+pub fn const_bigint(hex: String, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Const(
+        EvmConstant::LargeInt(hex),
+        EvmType::Base(EvmBaseType::UIntT(256)),
+        ctx,
+    ))
+}
+
+/// Create a boolean constant.
+pub fn const_bool(val: bool, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Const(
+        EvmConstant::Bool(val),
+        EvmType::Base(EvmBaseType::BoolT),
+        ctx,
+    ))
+}
+
+/// Create an address constant.
+pub fn const_addr(hex: String, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Const(
+        EvmConstant::Addr(hex),
+        EvmType::Base(EvmBaseType::AddrT),
+        ctx,
+    ))
+}
+
+/// Create a typed constant.
+pub fn const_typed(val: EvmConstant, ty: EvmType, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Const(val, ty, ctx))
+}
+
+// ---- Leaf nodes ----
+
+/// Create an argument reference.
+pub fn arg(ty: EvmType, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Arg(ty, ctx))
+}
+
+/// Create an empty tuple.
+pub fn empty(ty: EvmType, ctx: EvmContext) -> RcExpr {
+    Rc::new(EvmExpr::Empty(ty, ctx))
+}
+
+// ---- Binary operations ----
+
+/// Create a binary operation.
+pub fn bop(op: EvmBinaryOp, lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Bop(op, lhs, rhs))
+}
+
+/// Shorthand: addition
+pub fn add(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Add, lhs, rhs)
+}
+
+/// Shorthand: subtraction
+pub fn sub(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Sub, lhs, rhs)
+}
+
+/// Shorthand: multiplication
+pub fn mul(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Mul, lhs, rhs)
+}
+
+/// Shorthand: storage load
+pub fn sload(slot: RcExpr, state: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::SLoad, slot, state)
+}
+
+/// Shorthand: transient storage load
+pub fn tload(slot: RcExpr, state: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::TLoad, slot, state)
+}
+
+/// Shorthand: equality comparison
+pub fn eq(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Eq, lhs, rhs)
+}
+
+// ---- Unary operations ----
+
+/// Create a unary operation.
+pub fn uop(op: EvmUnaryOp, expr: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Uop(op, expr))
+}
+
+/// Shorthand: is zero check
+pub fn iszero(expr: RcExpr) -> RcExpr {
+    uop(EvmUnaryOp::IsZero, expr)
+}
+
+// ---- Ternary operations ----
+
+/// Create a ternary operation.
+pub fn top(op: EvmTernaryOp, a: RcExpr, b: RcExpr, c: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Top(op, a, b, c))
+}
+
+/// Shorthand: storage store
+pub fn sstore(slot: RcExpr, val: RcExpr, state: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::SStore, slot, val, state)
+}
+
+/// Shorthand: transient storage store
+pub fn tstore(slot: RcExpr, val: RcExpr, state: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::TStore, slot, val, state)
+}
+
+/// Shorthand: memory store
+pub fn mstore(offset: RcExpr, val: RcExpr, state: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::MStore, offset, val, state)
+}
+
+// ---- Tuple operations ----
+
+/// Get element at index from a tuple.
+pub fn get(expr: RcExpr, idx: usize) -> RcExpr {
+    Rc::new(EvmExpr::Get(expr, idx))
+}
+
+/// Wrap in a single-element tuple.
+pub fn single(expr: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Single(expr))
+}
+
+/// Concatenate two tuples.
+pub fn concat(a: RcExpr, b: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Concat(a, b))
+}
+
+// ---- Control flow ----
+
+/// If-then-else.
+pub fn if_then_else(pred: RcExpr, inputs: RcExpr, then_: RcExpr, else_: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::If(pred, inputs, then_, else_))
+}
+
+/// Do-while loop.
+pub fn do_while(inputs: RcExpr, pred_and_body: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::DoWhile(inputs, pred_and_body))
+}
+
+// ---- EVM-specific ----
+
+/// Internal function call.
+pub fn call(name: String, args: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Call(name, args))
+}
+
+/// Return from contract.
+pub fn return_op(offset: RcExpr, size: RcExpr, state: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::ReturnOp(offset, size, state))
+}
+
+/// Revert.
+pub fn revert(offset: RcExpr, size: RcExpr, state: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Revert(offset, size, state))
+}
+
+/// Function definition.
+pub fn function(name: String, in_ty: EvmType, out_ty: EvmType, body: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::Function(name, in_ty, out_ty, body))
+}
+
+/// Function selector.
+pub fn selector(sig: String) -> RcExpr {
+    Rc::new(EvmExpr::Selector(sig))
+}
+
+/// Let binding: compute value once, reference via Var(name) in body.
+pub fn let_bind(name: String, value: RcExpr, body: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::LetBind(name, value, body))
+}
+
+/// Variable reference to a LetBind.
+pub fn var(name: String) -> RcExpr {
+    Rc::new(EvmExpr::Var(name))
+}
+
+/// Storage field definition.
+pub fn storage_field(name: String, slot: usize, ty: EvmType) -> RcExpr {
+    Rc::new(EvmExpr::StorageField(name, slot, ty))
+}
+
+/// Keccak256 hash: (offset, size, state) -> hash.
+/// The state parameter captures the memory dependency so that
+/// keccak256 calls with different memory contents are distinguishable.
+pub fn keccak256(offset: RcExpr, size: RcExpr, state: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::Keccak256, offset, size, state)
+}

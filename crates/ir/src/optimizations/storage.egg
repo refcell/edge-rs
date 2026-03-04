@@ -1,0 +1,91 @@
+;; ============================================================
+;; Storage Optimizations
+;; ============================================================
+;; Optimizations for persistent and transient storage access.
+
+;; ---- Redundant load after store ----
+;; SLoad(slot, SStore(slot, val, state)) -> val
+;; If we just wrote `val` to `slot`, reading it back gives `val`.
+(rewrite (Bop (OpSLoad) slot (Top (OpSStore) slot val state))
+         val :ruleset storage-opt)
+
+;; Same for transient storage
+(rewrite (Bop (OpTLoad) slot (Top (OpTStore) slot val state))
+         val :ruleset storage-opt)
+
+;; ---- Redundant store of loaded value ----
+;; SStore(slot, SLoad(slot, state), state) -> state
+;; Writing back the same value we just read is a no-op.
+(rewrite (Top (OpSStore) slot (Bop (OpSLoad) slot state) state)
+         state :ruleset storage-opt)
+
+;; Same for transient storage
+(rewrite (Top (OpTStore) slot (Bop (OpTLoad) slot state) state)
+         state :ruleset storage-opt)
+
+;; ---- Dead store elimination ----
+;; SStore(slot, val, SStore(slot, val2, state)) -> SStore(slot, val, state)
+;; Consecutive writes to the same slot: first write is dead.
+(rewrite (Top (OpSStore) slot val (Top (OpSStore) slot val2 state))
+         (Top (OpSStore) slot val state)
+         :ruleset storage-opt)
+
+;; Same for transient storage
+(rewrite (Top (OpTStore) slot val (Top (OpTStore) slot val2 state))
+         (Top (OpTStore) slot val state)
+         :ruleset storage-opt)
+
+;; ---- Store same value elimination ----
+;; SStore(slot, val, state) where SLoad(slot, state) == val -> state
+;; (Already covered by redundant store of loaded value above)
+
+;; ============================================================
+;; SLoad/TLoad Forwarding Through Non-Storage State Changes
+;; ============================================================
+;; Memory writes, LOG, and cross-domain storage writes do not affect
+;; the storage domain being loaded. Forwarding through these operations
+;; allows egglog hash-consing to deduplicate identical loads that were
+;; separated by transparent state changes.
+
+;; ---- SLoad through memory operations ----
+;; Memory writes don't affect persistent storage.
+(rewrite (Bop (OpSLoad) slot (Top (OpMStore) offset val state))
+         (Bop (OpSLoad) slot state)
+         :ruleset storage-opt)
+
+(rewrite (Bop (OpSLoad) slot (Top (OpMStore8) offset val state))
+         (Bop (OpSLoad) slot state)
+         :ruleset storage-opt)
+
+;; ---- SLoad through transient storage ----
+;; Transient storage writes don't affect persistent storage.
+(rewrite (Bop (OpSLoad) slot (Top (OpTStore) tslot val state))
+         (Bop (OpSLoad) slot state)
+         :ruleset storage-opt)
+
+;; ---- SLoad through Log ----
+;; LOG instructions don't modify storage.
+(rewrite (Bop (OpSLoad) slot (Log n topics data state))
+         (Bop (OpSLoad) slot state)
+         :ruleset storage-opt)
+
+;; ---- TLoad through memory operations ----
+;; Memory writes don't affect transient storage.
+(rewrite (Bop (OpTLoad) slot (Top (OpMStore) offset val state))
+         (Bop (OpTLoad) slot state)
+         :ruleset storage-opt)
+
+(rewrite (Bop (OpTLoad) slot (Top (OpMStore8) offset val state))
+         (Bop (OpTLoad) slot state)
+         :ruleset storage-opt)
+
+;; ---- TLoad through persistent storage ----
+;; Persistent storage writes don't affect transient storage.
+(rewrite (Bop (OpTLoad) slot (Top (OpSStore) sslot val state))
+         (Bop (OpTLoad) slot state)
+         :ruleset storage-opt)
+
+;; ---- TLoad through Log ----
+(rewrite (Bop (OpTLoad) slot (Log n topics data state))
+         (Bop (OpTLoad) slot state)
+         :ruleset storage-opt)

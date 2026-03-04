@@ -1,0 +1,169 @@
+;; ============================================================
+;; Arithmetic Optimizations
+;; ============================================================
+;; EVM-specific strength reduction and algebraic simplifications.
+
+;; ---- Strength reduction: mul by powers of 2 → SHL ----
+;; SHL is 3 gas, MUL is 5 gas — saves 2 gas per operation.
+(rewrite (Bop (OpMul) e (Const (SmallInt 2) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 1) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 4) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 2) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 8) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 3) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 16) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 4) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 32) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 5) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 64) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 6) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 128) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 7) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 256) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 8) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 512) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 9) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 1024) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 10) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 4096) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 12) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMul) e (Const (SmallInt 65536) ty ctx))
+         (Bop (OpShl) (Const (SmallInt 16) ty ctx) e)
+         :ruleset arithmetic-opt)
+
+;; ---- Strength reduction: div by powers of 2 → SHR ----
+;; SHR is 3 gas, DIV is 5 gas — saves 2 gas per operation.
+(rewrite (Bop (OpDiv) e (Const (SmallInt 2) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 1) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 4) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 2) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 8) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 3) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 16) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 4) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 32) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 5) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 64) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 6) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 128) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 7) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 256) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 8) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 512) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 9) ty ctx) e)
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpDiv) e (Const (SmallInt 1024) ty ctx))
+         (Bop (OpShr) (Const (SmallInt 10) ty ctx) e)
+         :ruleset arithmetic-opt)
+
+;; ---- Strength reduction: mod by powers of 2 → AND ----
+;; AND is 3 gas, MOD is 5 gas — saves 2 gas per operation.
+(rewrite (Bop (OpMod) e (Const (SmallInt 2) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 1) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 4) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 3) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 8) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 7) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 16) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 15) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 32) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 31) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 64) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 63) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 128) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 127) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 256) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 255) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 512) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 511) ty ctx))
+         :ruleset arithmetic-opt)
+(rewrite (Bop (OpMod) e (Const (SmallInt 1024) ty ctx))
+         (Bop (OpAnd) e (Const (SmallInt 1023) ty ctx))
+         :ruleset arithmetic-opt)
+
+;; ---- Exponentiation reduction ----
+;; x ** 0 -> 1
+(rewrite (Bop (OpExp) x (Const (SmallInt 0) ty ctx))
+         (Const (SmallInt 1) ty ctx)
+         :ruleset arithmetic-opt)
+
+;; x ** 1 -> x
+(rewrite (Bop (OpExp) x (Const (SmallInt 1) ty ctx))
+         x
+         :ruleset arithmetic-opt)
+
+;; x ** 2 -> x * x  (MUL is 5 gas, EXP is 60 gas — saves 55 gas)
+(rewrite (Bop (OpExp) x (Const (SmallInt 2) ty ctx))
+         (Bop (OpMul) x x)
+         :ruleset arithmetic-opt)
+
+;; x ** 3 -> x * (x * x)  (10 gas vs 60 gas)
+(rewrite (Bop (OpExp) x (Const (SmallInt 3) ty ctx))
+         (Bop (OpMul) x (Bop (OpMul) x x))
+         :ruleset arithmetic-opt)
+
+;; x ** 4 -> (x * x) * (x * x)
+(rewrite (Bop (OpExp) x (Const (SmallInt 4) ty ctx))
+         (Bop (OpMul) (Bop (OpMul) x x) (Bop (OpMul) x x))
+         :ruleset arithmetic-opt)
+
+;; ---- Bitwise identity ----
+;; x & x -> x
+(rewrite (Bop (OpAnd) x x) x :ruleset arithmetic-opt)
+;; x | x -> x
+(rewrite (Bop (OpOr) x x) x :ruleset arithmetic-opt)
+
+;; x ^ 0 -> x
+(rewrite (Bop (OpXor) e (Const (SmallInt 0) ty ctx)) e :ruleset arithmetic-opt)
+(rewrite (Bop (OpXor) (Const (SmallInt 0) ty ctx) e) e :ruleset arithmetic-opt)
+
+;; x & 0 -> 0
+(rewrite (Bop (OpAnd) e (Const (SmallInt 0) ty ctx))
+         (Const (SmallInt 0) ty ctx) :ruleset arithmetic-opt)
+(rewrite (Bop (OpAnd) (Const (SmallInt 0) ty ctx) e)
+         (Const (SmallInt 0) ty ctx) :ruleset arithmetic-opt)
+
+;; x | 0 -> x
+(rewrite (Bop (OpOr) e (Const (SmallInt 0) ty ctx)) e :ruleset arithmetic-opt)
+(rewrite (Bop (OpOr) (Const (SmallInt 0) ty ctx) e) e :ruleset arithmetic-opt)
+
+;; ---- Shift by 0 ----
+;; x << 0 -> x
+(rewrite (Bop (OpShl) (Const (SmallInt 0) ty ctx) e) e :ruleset arithmetic-opt)
+;; x >> 0 -> x
+(rewrite (Bop (OpShr) (Const (SmallInt 0) ty ctx) e) e :ruleset arithmetic-opt)
+;; x >>> 0 -> x (arithmetic shift)
+(rewrite (Bop (OpSar) (Const (SmallInt 0) ty ctx) e) e :ruleset arithmetic-opt)
+
+;; ---- EQ(x, 0) → ISZERO(x) — saves one PUSH opcode ----
+(rewrite (Bop (OpEq) e (Const (SmallInt 0) ty ctx))
+         (Uop (OpIsZero) e) :ruleset arithmetic-opt)
+(rewrite (Bop (OpEq) (Const (SmallInt 0) ty ctx) e)
+         (Uop (OpIsZero) e) :ruleset arithmetic-opt)

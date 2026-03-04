@@ -1,0 +1,21 @@
+;; ============================================================
+;; Memory Optimizations
+;; ============================================================
+;; Optimizations for memory read/write patterns.
+
+;; ---- Redundant load after store ----
+;; MLoad(offset, MStore(offset, val, state)) -> val
+(rewrite (Bop (OpMLoad) offset (Top (OpMStore) offset val state))
+         val :ruleset memory-opt)
+
+;; ---- Redundant store of loaded value ----
+;; MStore(offset, MLoad(offset, state), state) -> state
+(rewrite (Top (OpMStore) offset (Bop (OpMLoad) offset state) state)
+         state :ruleset memory-opt)
+
+;; ---- Dead store elimination ----
+;; MStore(offset, val, MStore(offset, val2, state)) -> MStore(offset, val, state)
+;; Consecutive writes to the same offset: first write is dead.
+(rewrite (Top (OpMStore) offset val (Top (OpMStore) offset val2 state))
+         (Top (OpMStore) offset val state)
+         :ruleset memory-opt)
