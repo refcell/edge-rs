@@ -51,7 +51,7 @@ fn encode_call(sel: [u8; 4], _args: &[[u8; 32]]) -> Vec<u8> {
 
 /// Decode a 32-byte ABI-encoded uint256 return value into a u64.
 ///
-/// Panics if `output` is shorter than 32 bytes or if the value exceeds u64::MAX.
+/// Panics if `output` is shorter than 32 bytes or if the value exceeds `u64::MAX`.
 fn decode_u256(output: &[u8]) -> u64 {
     assert!(
         output.len() >= 32,
