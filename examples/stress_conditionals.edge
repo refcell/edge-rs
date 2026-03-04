@@ -1,0 +1,80 @@
+// stress_conditionals.edge — nested conditionals with variable refs
+//
+// Tests: LetBind DUP depth through nested if-else chains,
+//        variable liveness across branches, dead code elimination.
+//
+// The dispatcher already creates one level of if-chain for __selector.
+// These functions add MORE nesting inside each branch.
+
+abi IStressCond {
+    fn classify(x: u256) -> (u256);
+    fn clamp(x: u256, lo: u256, hi: u256) -> (u256);
+    fn abs_diff(a: u256, y: u256) -> (u256);
+    fn tier_price(quantity: u256) -> (u256);
+}
+
+contract StressCond {
+    let value: &s u256;
+
+    // Cascading if-else chain — variable 'x' referenced in every branch.
+    // Tests: variable live across 4 branches, each reading x.
+    pub fn classify(x: u256) -> (u256) {
+        let category: u256;
+        if (x < 10) {
+            category = 0;
+        } else if (x < 100) {
+            category = 1;
+        } else if (x < 1000) {
+            category = 2;
+        } else {
+            category = 3;
+        }
+        return category;
+    }
+
+    // Two comparisons referencing all 3 params.
+    // Tests: multiple LetBind values alive simultaneously.
+    pub fn clamp(x: u256, lo: u256, hi: u256) -> (u256) {
+        let res: u256;
+        if (x < lo) {
+            res = lo;
+        } else if (x > hi) {
+            res = hi;
+        } else {
+            res = x;
+        }
+        return res;
+    }
+
+    // Conditional subtraction — params used in both branches.
+    pub fn abs_diff(a: u256, y: u256) -> (u256) {
+        let diff: u256;
+        if (a > y) {
+            diff = a - y;
+        } else {
+            diff = y - a;
+        }
+        return diff;
+    }
+
+    // 4-tier pricing: quantity checked at 3 thresholds.
+    // Each tier uses 'quantity' in the computation.
+    // Tests: variable read in 4 separate branches.
+    pub fn tier_price(quantity: u256) -> (u256) {
+        let price: u256;
+        if (quantity < 10) {
+            // Tier 1: 100 per unit
+            price = quantity * 100;
+        } else if (quantity < 50) {
+            // Tier 2: 80 per unit
+            price = quantity * 80;
+        } else if (quantity < 100) {
+            // Tier 3: 60 per unit
+            price = quantity * 60;
+        } else {
+            // Tier 4: 40 per unit
+            price = quantity * 40;
+        }
+        return price;
+    }
+}

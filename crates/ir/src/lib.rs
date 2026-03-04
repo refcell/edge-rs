@@ -29,6 +29,7 @@ pub mod schedule;
 pub mod schema;
 pub mod sexp;
 pub mod to_egglog;
+pub mod var_opt;
 
 pub use costs::OptimizeFor;
 pub use schema::{EvmContract, EvmExpr, EvmProgram, RcExpr};
@@ -82,10 +83,14 @@ pub fn lower_and_optimize(
 ) -> Result<EvmProgram, IrError> {
     // 1. Lower AST -> IR structs
     let mut lowering = to_egglog::AstToEgglog::new();
-    let ir_program = lowering.lower_program(program)?;
+    let mut ir_program = lowering.lower_program(program)?;
+
+    // 2. Variable optimizations (store-forwarding, dead elim, inlining, const prop)
+    // Runs at ALL optimization levels since these are cheap deterministic transforms.
+    var_opt::optimize_program(&mut ir_program);
 
     if optimization_level == 0 {
-        // No optimization: return the directly-lowered IR
+        // No egglog optimization: return after var_opt
         return Ok(ir_program);
     }
 

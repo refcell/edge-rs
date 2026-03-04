@@ -142,7 +142,6 @@ impl Cli {
             }
             EmitKind::Ir => {
                 if let Some(ref ir) = output.ir {
-                    println!("=== EVM IR (s-expression) ===");
                     for contract in &ir.contracts {
                         println!(";; Contract: {}", contract.name);
                         println!(";; Storage fields: {}", contract.storage_fields.len());
@@ -151,14 +150,14 @@ impl Cli {
                         }
                         println!();
                         println!(";; Constructor:");
-                        println!("{}", edge_ir::sexp::expr_to_sexp(&contract.constructor));
+                        println!("{}", edge_ir::sexp::expr_to_pretty(&contract.constructor, 0));
                         println!();
                         println!(";; Runtime:");
-                        println!("{}", edge_ir::sexp::expr_to_sexp(&contract.runtime));
+                        println!("{}", edge_ir::sexp::expr_to_pretty(&contract.runtime, 0));
                     }
                     for func in &ir.free_functions {
                         println!();
-                        println!("{}", edge_ir::sexp::expr_to_sexp(func));
+                        println!("{}", edge_ir::sexp::expr_to_pretty(func, 0));
                     }
                 }
             }

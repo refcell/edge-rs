@@ -266,9 +266,7 @@ pub enum EvmExpr {
     // ---- Tuple operations ----
     /// Get element from tuple at static index
     Get(RcExpr, usize),
-    /// Single-element tuple
-    Single(RcExpr),
-    /// Concatenate two tuples
+    /// Sequence two expressions (evaluate both, return second)
     Concat(RcExpr, RcExpr),
 
     // ---- Control flow ----
@@ -301,6 +299,8 @@ pub enum EvmExpr {
     LetBind(String, RcExpr, RcExpr),
     /// Variable reference to a LetBind
     Var(String),
+    /// Write to a LetBind variable's memory slot (mutates the variable in place)
+    VarStore(String, RcExpr),
 
     // ---- Top-level ----
     /// Function: (name, input_type, output_type, body)

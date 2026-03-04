@@ -20,7 +20,7 @@ use crate::{
 /// Tracks a variable binding during lowering.
 #[derive(Debug, Clone)]
 struct VarBinding {
-    /// The current value expression
+    /// The current value expression (for storage/transient: the IR tree; for memory-backed: ignored)
     value: RcExpr,
     /// Where this variable lives
     location: DataLocation,
@@ -28,6 +28,8 @@ struct VarBinding {
     storage_slot: Option<usize>,
     /// The type
     ty: EvmType,
+    /// For memory-backed local variables, the LetBind variable name
+    let_bind_name: Option<String>,
 }
 
 /// Scope for variable resolution during lowering.
@@ -65,6 +67,8 @@ pub struct AstToEgglog {
     contract_functions: Vec<(String, Vec<(String, edge_ast::ty::TypeSig)>, edge_ast::CodeBlock)>,
     /// Events declared in the program (name -> (params with indexed info and type))
     events: IndexMap<String, Vec<(String, bool, edge_ast::ty::TypeSig)>>,
+    /// Inline call depth — when > 0, `return` produces just the value (no RETURN opcode)
+    inline_depth: usize,
 }
 
 impl AstToEgglog {
@@ -83,6 +87,7 @@ impl AstToEgglog {
             storage_fields: Vec::new(),
             contract_functions: Vec::new(),
             events: IndexMap::new(),
+            inline_depth: 0,
         }
     }
 
@@ -167,6 +172,7 @@ impl AstToEgglog {
                 location,
                 storage_slot: Some(slot),
                 ty,
+                let_bind_name: None,
             };
             self.scopes
                 .last_mut()
@@ -247,9 +253,9 @@ impl AstToEgglog {
                 ctor_state = store.clone();
                 sstores.push(store);
             }
-            let mut result = ast_helpers::single(sstores[0].clone());
+            let mut result = sstores[0].clone();
             for store in &sstores[1..] {
-                result = ast_helpers::concat(result, ast_helpers::single(store.clone()));
+                result = ast_helpers::concat(result, store.clone());
             }
             result
         };
@@ -308,6 +314,7 @@ impl AstToEgglog {
                 location: DataLocation::Stack,
                 storage_slot: None,
                 ty,
+                let_bind_name: None,
             };
             self.scopes
                 .last_mut()
@@ -329,8 +336,8 @@ impl AstToEgglog {
             self.current_state.clone(),
         );
         Ok(ast_helpers::concat(
-            ast_helpers::single(body_ir),
-            ast_helpers::single(stop),
+            body_ir,
+            stop,
         ))
     }
 
@@ -369,6 +376,7 @@ impl AstToEgglog {
                 location: DataLocation::Stack,
                 storage_slot: None,
                 ty,
+                let_bind_name: None,
             };
             self.scopes
                 .last_mut()
@@ -391,8 +399,22 @@ impl AstToEgglog {
     /// LOG, etc.) from every statement are preserved in the IR tree and will
     /// be compiled by codegen.
     fn lower_code_block(&mut self, block: &edge_ast::CodeBlock) -> Result<RcExpr, IrError> {
-        let mut stmts: Vec<RcExpr> = Vec::new();
+        // First pass: scan for VarDecl names to identify memory-backed locals.
+        // We need this list BEFORE lowering to know which variables to wrap in LetBinds.
+        let var_decl_names: Vec<String> = block
+            .stmts
+            .iter()
+            .filter_map(|item| match item {
+                edge_ast::BlockItem::Stmt(stmt) => match stmt.as_ref() {
+                    edge_ast::Stmt::VarDecl(ident, _, _) => Some(ident.name.clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
 
+        // Lower all statements
+        let mut stmts: Vec<RcExpr> = Vec::new();
         for item in &block.stmts {
             let ir = match item {
                 edge_ast::BlockItem::Stmt(stmt) => self.lower_stmt(stmt)?,
@@ -408,10 +430,20 @@ impl AstToEgglog {
             ));
         }
 
-        let mut result = ast_helpers::single(stmts[0].clone());
+        let mut result = stmts[0].clone();
         for stmt in &stmts[1..] {
-            result = ast_helpers::concat(result, ast_helpers::single(stmt.clone()));
+            result = ast_helpers::concat(result, stmt.clone());
         }
+
+        // Wrap the result in LetBinds for memory-backed locals (innermost first).
+        // LetBind allocates a memory slot and initializes it with the given value.
+        // VarStore/Var will write/read from that slot.
+        for name in var_decl_names.iter().rev() {
+            let var_name = format!("__local_{name}");
+            let zero = ast_helpers::const_int(0, self.current_ctx.clone());
+            result = ast_helpers::let_bind(var_name, zero, result);
+        }
+
         Ok(result)
     }
 
@@ -424,18 +456,25 @@ impl AstToEgglog {
                     .map(|ts| self.lower_type_sig(ts))
                     .unwrap_or(EvmType::Base(EvmBaseType::UIntT(256)));
                 let zero = ast_helpers::const_int(0, self.current_ctx.clone());
+                let var_name = format!("__local_{}", ident.name);
                 let binding = VarBinding {
                     value: zero.clone(),
-                    location: DataLocation::Stack,
+                    location: DataLocation::Memory,
                     storage_slot: None,
                     ty,
+                    let_bind_name: Some(var_name),
                 };
                 self.scopes
                     .last_mut()
                     .expect("scope stack empty")
                     .bindings
                     .insert(ident.name.clone(), binding);
-                Ok(zero)
+                // VarDecl itself produces no side effects; the LetBind wrapper
+                // is added by lower_code_block
+                Ok(ast_helpers::empty(
+                    EvmType::Base(EvmBaseType::UnitT),
+                    self.current_ctx.clone(),
+                ))
             }
 
             edge_ast::Stmt::VarAssign(lhs, rhs, _span) => {
@@ -455,6 +494,7 @@ impl AstToEgglog {
                     location: DataLocation::Stack,
                     storage_slot: None,
                     ty,
+                    let_bind_name: None,
                 };
                 self.scopes
                     .last_mut()
@@ -467,7 +507,15 @@ impl AstToEgglog {
             edge_ast::Stmt::FnAssign(fn_decl, body) => self.lower_function(fn_decl, body),
 
             edge_ast::Stmt::Return(maybe_expr, _span) => {
-                if let Some(expr) = maybe_expr {
+                if self.inline_depth > 0 {
+                    // Inside an inlined function — just produce the value, no RETURN opcode
+                    if let Some(expr) = maybe_expr {
+                        self.lower_expr(expr)
+                    } else {
+                        // Void return inside inlined function — produce empty/zero
+                        Ok(ast_helpers::const_int(0, self.current_ctx.clone()))
+                    }
+                } else if let Some(expr) = maybe_expr {
                     let val = self.lower_expr(expr)?;
                     // ABI-encode the return value to memory and RETURN
                     let offset = ast_helpers::const_int(0, self.current_ctx.clone());
@@ -487,8 +535,8 @@ impl AstToEgglog {
                     // Emit MStore first, then RETURN — the codegen ignores
                     // state parameters, so MStore must be a separate expression
                     Ok(ast_helpers::concat(
-                        ast_helpers::single(mstore_expr),
-                        ast_helpers::single(ret),
+                        mstore_expr,
+                        ret,
                     ))
                 } else {
                     let offset = ast_helpers::const_int(0, self.current_ctx.clone());
@@ -694,8 +742,13 @@ impl AstToEgglog {
                         Ok(ast_helpers::tload(slot, self.current_state.clone()))
                     }
                     _ => {
-                        // Stack/local variable: return the value directly
-                        Ok(binding.value.clone())
+                        if let Some(ref var_name) = binding.let_bind_name {
+                            // Memory-backed local: emit Var(name) to read from memory
+                            Ok(ast_helpers::var(var_name.clone()))
+                        } else {
+                            // Stack/compile-time variable: return the value directly
+                            Ok(binding.value.clone())
+                        }
                     }
                 };
             }
@@ -743,8 +796,14 @@ impl AstToEgglog {
                                 Ok(new_state)
                             }
                             _ => {
-                                binding.value = rhs_ir.clone();
-                                Ok(rhs_ir)
+                                if let Some(ref var_name) = binding.let_bind_name {
+                                    // Memory-backed local: emit VarStore to write to memory
+                                    Ok(ast_helpers::var_store(var_name.clone(), rhs_ir))
+                                } else {
+                                    // Compile-time variable (const/param): replace value
+                                    binding.value = rhs_ir.clone();
+                                    Ok(rhs_ir)
+                                }
                             }
                         };
                     }
@@ -779,8 +838,16 @@ impl AstToEgglog {
             edge_ast::BinOp::BitwiseAnd | edge_ast::BinOp::BitwiseAndAssign => EvmBinaryOp::And,
             edge_ast::BinOp::BitwiseOr | edge_ast::BinOp::BitwiseOrAssign => EvmBinaryOp::Or,
             edge_ast::BinOp::BitwiseXor | edge_ast::BinOp::BitwiseXorAssign => EvmBinaryOp::Xor,
-            edge_ast::BinOp::Shl | edge_ast::BinOp::ShlAssign => EvmBinaryOp::Shl,
-            edge_ast::BinOp::Shr | edge_ast::BinOp::ShrAssign => EvmBinaryOp::Shr,
+            edge_ast::BinOp::Shl | edge_ast::BinOp::ShlAssign => {
+                // IR convention: Bop(Shl, shift_amount, value)
+                // AST: value << shift → swap to (shift, value)
+                return Ok(ast_helpers::bop(EvmBinaryOp::Shl, rhs, lhs));
+            }
+            edge_ast::BinOp::Shr | edge_ast::BinOp::ShrAssign => {
+                // IR convention: Bop(Shr, shift_amount, value)
+                // AST: value >> shift → swap to (shift, value)
+                return Ok(ast_helpers::bop(EvmBinaryOp::Shr, rhs, lhs));
+            }
             edge_ast::BinOp::LogicalAnd => EvmBinaryOp::LogAnd,
             edge_ast::BinOp::LogicalOr => EvmBinaryOp::LogOr,
             edge_ast::BinOp::Eq => EvmBinaryOp::Eq,
@@ -869,6 +936,7 @@ impl AstToEgglog {
                     location: DataLocation::Stack,
                     storage_slot: None,
                     ty,
+                    let_bind_name: None,
                 };
                 self.scopes
                     .last_mut()
@@ -877,8 +945,10 @@ impl AstToEgglog {
                     .insert(param_name.clone(), binding);
             }
 
-            // Lower the function body inline
+            // Lower the function body inline (return should produce value, not RETURN opcode)
+            self.inline_depth += 1;
             let result = self.lower_code_block(&body)?;
+            self.inline_depth -= 1;
             self.scopes.pop();
             return Ok(result);
         }
@@ -894,11 +964,11 @@ impl AstToEgglog {
                 EvmType::Base(EvmBaseType::UnitT),
                 self.current_ctx.clone(),
             ),
-            1 => ast_helpers::single(args_ir.into_iter().next().expect("checked len")),
+            1 => args_ir.into_iter().next().expect("checked len"),
             _ => {
-                let mut result = ast_helpers::single(args_ir[0].clone());
+                let mut result = args_ir[0].clone();
                 for arg in &args_ir[1..] {
-                    result = ast_helpers::concat(result, ast_helpers::single(arg.clone()));
+                    result = ast_helpers::concat(result, arg.clone());
                 }
                 result
             }
@@ -989,10 +1059,11 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         let cond_ir = self.lower_expr(cond)?;
         let body_ir = self.lower_loop_block(loop_block)?;
-        // while(cond) { body } -> if(cond) { do { body } while(cond) }
+        // while(cond) { body } -> if(cond) { do { body; cond } while(top) }
+        // Body side effects (SSTORE) must run BEFORE condition is re-evaluated
         let pred_and_body = ast_helpers::concat(
-            ast_helpers::single(cond_ir.clone()),
-            ast_helpers::single(body_ir),
+            body_ir,
+            cond_ir.clone(),
         );
         let inputs = ast_helpers::empty(
             EvmType::Base(EvmBaseType::UnitT),
@@ -1039,13 +1110,14 @@ impl AstToEgglog {
             )
         };
 
-        // Combine: pred_and_body = (cond, body, update)
+        // Combine: pred_and_body = (body, update, cond)
+        // Body + update run BEFORE condition is re-evaluated
         let pred_and_body = ast_helpers::concat(
-            ast_helpers::single(cond_ir.clone()),
             ast_helpers::concat(
-                ast_helpers::single(body_ir),
-                ast_helpers::single(update_ir),
+                body_ir,
+                update_ir,
             ),
+            cond_ir.clone(),
         );
 
         let inputs = ast_helpers::empty(
@@ -1070,9 +1142,10 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         let body_ir = self.lower_loop_block(loop_block)?;
         let true_const = ast_helpers::const_bool(true, self.current_ctx.clone());
+        // Body runs first, then always-true condition
         let pred_and_body = ast_helpers::concat(
-            ast_helpers::single(true_const),
-            ast_helpers::single(body_ir),
+            body_ir,
+            true_const,
         );
         let inputs = ast_helpers::empty(
             EvmType::Base(EvmBaseType::UnitT),
@@ -1089,9 +1162,10 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         let body_ir = self.lower_loop_block(loop_block)?;
         let cond_ir = self.lower_expr(cond)?;
+        // Body runs first, then condition is evaluated
         let pred_and_body = ast_helpers::concat(
-            ast_helpers::single(cond_ir),
-            ast_helpers::single(body_ir),
+            body_ir,
+            cond_ir,
         );
         let inputs = ast_helpers::empty(
             EvmType::Base(EvmBaseType::UnitT),
@@ -1111,17 +1185,16 @@ impl AstToEgglog {
         );
 
         for item in &block.items {
-            match item {
-                edge_ast::LoopItem::Stmt(stmt) => {
-                    result = self.lower_stmt(stmt)?;
-                }
-                edge_ast::LoopItem::Expr(expr) => {
-                    result = self.lower_expr(expr)?;
-                }
+            let item_ir = match item {
+                edge_ast::LoopItem::Stmt(stmt) => self.lower_stmt(stmt)?,
+                edge_ast::LoopItem::Expr(expr) => self.lower_expr(expr)?,
                 edge_ast::LoopItem::Break(_) | edge_ast::LoopItem::Continue(_) => {
                     // TODO: handle break/continue with control flow markers
+                    continue;
                 }
-            }
+            };
+            // Concatenate all statements — intermediate ones have critical side effects
+            result = ast_helpers::concat(result, item_ir);
         }
 
         Ok(result)
@@ -1216,11 +1289,11 @@ impl AstToEgglog {
         if side_effects.is_empty() {
             Ok(log)
         } else {
-            let mut result = ast_helpers::single(side_effects[0].clone());
+            let mut result = side_effects[0].clone();
             for effect in &side_effects[1..] {
-                result = ast_helpers::concat(result, ast_helpers::single(effect.clone()));
+                result = ast_helpers::concat(result, effect.clone());
             }
-            Ok(ast_helpers::concat(result, ast_helpers::single(log)))
+            Ok(ast_helpers::concat(result, log))
         }
     }
 
@@ -1255,8 +1328,8 @@ impl AstToEgglog {
             self.current_state.clone(),
         );
         let side_effects = ast_helpers::concat(
-            ast_helpers::single(mstore_key),
-            ast_helpers::single(mstore_slot),
+            mstore_key,
+            mstore_slot,
         );
         (side_effects, computed_slot)
     }
@@ -1315,12 +1388,12 @@ impl AstToEgglog {
         );
         let side_effects = ast_helpers::concat(
             ast_helpers::concat(
-                ast_helpers::single(mstore_key1),
-                ast_helpers::single(mstore_slot1),
+                mstore_key1,
+                mstore_slot1,
             ),
             ast_helpers::concat(
-                ast_helpers::single(mstore_key2),
-                ast_helpers::single(mstore_slot2),
+                mstore_key2,
+                mstore_slot2,
             ),
         );
         (side_effects, computed_slot)
@@ -1352,7 +1425,7 @@ impl AstToEgglog {
                 DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
                 _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
             };
-            return Ok(ast_helpers::concat(side_effects, ast_helpers::single(load)));
+            return Ok(ast_helpers::concat(side_effects, load));
         }
 
         // Simple mapping: field[key]
@@ -1372,7 +1445,7 @@ impl AstToEgglog {
             DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
             _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
         };
-        Ok(ast_helpers::concat(side_effects, ast_helpers::single(load)))
+        Ok(ast_helpers::concat(side_effects, load))
     }
 
     /// Lower a mapping write: `field[key] = value` or `field[key1][key2] = value`.
@@ -1402,7 +1475,7 @@ impl AstToEgglog {
                 _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
             };
             self.current_state = store.clone();
-            return Ok(ast_helpers::concat(side_effects, ast_helpers::single(store)));
+            return Ok(ast_helpers::concat(side_effects, store));
         }
 
         // Simple mapping write
@@ -1423,7 +1496,7 @@ impl AstToEgglog {
             _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
         };
         self.current_state = store.clone();
-        Ok(ast_helpers::concat(side_effects, ast_helpers::single(store)))
+        Ok(ast_helpers::concat(side_effects, store))
     }
 
     /// Find the storage slot index and data location for a named field.
@@ -1509,6 +1582,7 @@ impl AstToEgglog {
             )),
         ));
         // Shift right by 224 bits to get top 4 bytes
+        // IR convention: Bop(Shr, shift_amount, value)
         let shifted = ast_helpers::bop(
             EvmBinaryOp::Shr,
             ast_helpers::const_int(224, ctx.clone()),

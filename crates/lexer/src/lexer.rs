@@ -215,7 +215,7 @@ impl<'a> Lexer<'a> {
                     end: suffix_end as usize,
                     file: None,
                 };
-                let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+                let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
                 return Ok(Token {
                     kind: TokenKind::Literal(literal),
                     span,
@@ -231,7 +231,7 @@ impl<'a> Lexer<'a> {
             end: end as usize,
             file: None,
         };
-        let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+        let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
         Ok(Token {
             kind: TokenKind::Literal(literal),
             span,
@@ -500,7 +500,19 @@ impl<'a> Lexer<'a> {
                 Ok(kind.into_span(start, end))
             }
 
-            // Decimal digits
+            // Hex/binary prefix: 0x, 0b
+            '0' => match self.peek() {
+                Some('x') | Some('X') => {
+                    // Don't consume 'x' here — eat_hex_digit's predicate includes 'x'
+                    self.eat_hex_digit('0')
+                }
+                Some('b') | Some('B') => {
+                    self.consume();
+                    self.eat_binary()
+                }
+                _ => self.eat_digit(ch),
+            },
+            // Decimal digits (non-zero start)
             ch if ch.is_ascii_digit() => self.eat_digit(ch),
             '{' => self.single_char_token(TokenKind::OpenBrace),
             '}' => self.single_char_token(TokenKind::CloseBrace),
@@ -794,19 +806,6 @@ impl<'a> Lexer<'a> {
             }
 
             '"' | '\'' => self.eat_string_literal(ch),
-
-            '0' => match self.peek() {
-                Some('x') | Some('X') => {
-                    self.consume();
-                    self.eat_hex_digit('0')
-                }
-                Some('b') | Some('B') => {
-                    self.consume();
-                    self.eat_binary()
-                }
-                Some(c) if c.is_ascii_digit() => self.eat_digit(ch),
-                _ => self.eat_digit(ch),
-            },
 
             ch if ch.is_ascii_whitespace() => {
                 let (_, start, end) = self.eat_whitespace();

@@ -39,7 +39,6 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             )
         }
         EvmExpr::Get(e, idx) => format!("(Get {} {})", expr_to_sexp(e), idx),
-        EvmExpr::Single(e) => format!("(Single {})", expr_to_sexp(e)),
         EvmExpr::Concat(a, b) => {
             format!("(Concat {} {})", expr_to_sexp(a), expr_to_sexp(b))
         }
@@ -101,6 +100,9 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             )
         }
         EvmExpr::Var(name) => format!("(Var \"{}\")", name),
+        EvmExpr::VarStore(name, value) => {
+            format!("(VarStore \"{}\" {})", name, expr_to_sexp(value))
+        }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             format!(
                 "(Function \"{}\" {} {} {})",
@@ -390,10 +392,6 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let idx = atom_i64(&items[2])? as usize;
                     Ok(Rc::new(EvmExpr::Get(e, idx)))
                 }
-                "Single" => {
-                    let e = sexp_to_evm_expr(&items[1])?;
-                    Ok(Rc::new(EvmExpr::Single(e)))
-                }
                 "Concat" => {
                     let a = sexp_to_evm_expr(&items[1])?;
                     let b = sexp_to_evm_expr(&items[2])?;
@@ -469,6 +467,11 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                 "Var" => {
                     let name = atom_string(&items[1])?;
                     Ok(Rc::new(EvmExpr::Var(name)))
+                }
+                "VarStore" => {
+                    let name = atom_string(&items[1])?;
+                    let value = sexp_to_evm_expr(&items[2])?;
+                    Ok(Rc::new(EvmExpr::VarStore(name, value)))
                 }
                 "Function" => {
                     let name = atom_string(&items[1])?;
@@ -754,6 +757,195 @@ fn atom_string(sexp: &Sexp) -> Result<String, IrError> {
         Ok(s[1..s.len() - 1].to_owned())
     } else {
         Ok(s)
+    }
+}
+
+// ============================================================
+// Pretty-printing
+// ============================================================
+
+/// Pretty-print an `EvmExpr` as an indented s-expression.
+pub fn expr_to_pretty(expr: &EvmExpr, indent: usize) -> String {
+    let flat = expr_to_sexp(expr);
+    pretty_sexp(&flat, indent)
+}
+
+/// Pretty-print a flat s-expression string with indentation.
+///
+/// Leaf forms (constants, types, operators, contexts) stay inline.
+/// Compound forms break arguments onto separate lines when the flat
+/// representation exceeds ~80 columns from the current indent.
+pub fn pretty_sexp(sexp: &str, indent: usize) -> String {
+    let tokens = tokenize_sexp(sexp);
+    let (tree, _) = parse_sexp_tokens(&tokens, 0);
+    format_tree(&tree, indent)
+}
+
+/// A simple s-expression tree for pretty-printing.
+#[derive(Debug)]
+enum STree {
+    Atom(String),
+    List(Vec<STree>),
+}
+
+fn tokenize_sexp(s: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'(' => {
+                tokens.push("(".to_string());
+                i += 1;
+            }
+            b')' => {
+                tokens.push(")".to_string());
+                i += 1;
+            }
+            b' ' | b'\t' | b'\n' | b'\r' => {
+                i += 1;
+            }
+            b'"' => {
+                // Quoted string — consume until closing quote
+                let start = i;
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    if bytes[i] == b'\\' {
+                        i += 1; // skip escaped char
+                    }
+                    i += 1;
+                }
+                i += 1; // closing quote
+                tokens.push(s[start..i].to_string());
+            }
+            _ => {
+                let start = i;
+                while i < bytes.len() && !matches!(bytes[i], b'(' | b')' | b' ' | b'\t' | b'\n' | b'\r') {
+                    i += 1;
+                }
+                tokens.push(s[start..i].to_string());
+            }
+        }
+    }
+    tokens
+}
+
+fn parse_sexp_tokens(tokens: &[String], pos: usize) -> (STree, usize) {
+    if pos >= tokens.len() {
+        return (STree::Atom("".to_string()), pos);
+    }
+    if tokens[pos] == "(" {
+        let mut children = Vec::new();
+        let mut i = pos + 1;
+        while i < tokens.len() && tokens[i] != ")" {
+            let (child, next) = parse_sexp_tokens(tokens, i);
+            children.push(child);
+            i = next;
+        }
+        (STree::List(children), i + 1) // skip ")"
+    } else {
+        (STree::Atom(tokens[pos].clone()), pos + 1)
+    }
+}
+
+fn flat_len(tree: &STree) -> usize {
+    match tree {
+        STree::Atom(s) => s.len(),
+        STree::List(children) => {
+            if children.is_empty() {
+                return 2; // "()"
+            }
+            // "(" + children joined by " " + ")"
+            2 + children.iter().map(flat_len).sum::<usize>() + children.len() - 1
+        }
+    }
+}
+
+fn flat_str(tree: &STree) -> String {
+    match tree {
+        STree::Atom(s) => s.clone(),
+        STree::List(children) => {
+            let inner: Vec<String> = children.iter().map(flat_str).collect();
+            format!("({})", inner.join(" "))
+        }
+    }
+}
+
+/// Returns true if this tree is a "leaf-like" form that should never be broken
+/// across lines: operators, types, constants, contexts, selectors, vars.
+fn is_leaf_form(tree: &STree) -> bool {
+    match tree {
+        STree::Atom(_) => true,
+        STree::List(children) => {
+            if children.is_empty() {
+                return true;
+            }
+            if let STree::Atom(head) = &children[0] {
+                matches!(
+                    head.as_str(),
+                    // Operators
+                    "OpAdd" | "OpSub" | "OpMul" | "OpDiv" | "OpSDiv" | "OpMod" | "OpSMod"
+                    | "OpExp" | "OpLt" | "OpGt" | "OpSLt" | "OpSGt" | "OpEq"
+                    | "OpAnd" | "OpOr" | "OpXor" | "OpShl" | "OpShr" | "OpSar" | "OpByte"
+                    | "OpLogAnd" | "OpLogOr" | "OpSLoad" | "OpTLoad" | "OpMLoad" | "OpCalldataLoad"
+                    | "OpIsZero" | "OpNot" | "OpNeg" | "OpSignExtend"
+                    | "OpSStore" | "OpTStore" | "OpMStore" | "OpMStore8" | "OpKeccak256" | "OpSelect"
+                    // Types
+                    | "UIntT" | "IntT" | "BytesT" | "AddrT" | "BoolT" | "UnitT" | "StateT"
+                    | "Base" | "TupleT" | "TLCons" | "TLNil"
+                    // Constants
+                    | "SmallInt" | "LargeInt" | "ConstBool" | "ConstAddr"
+                    // Context
+                    | "InFunction"
+                    // Leaves
+                    | "Selector" | "Var" | "VarStore" | "StorageField"
+                    // Empty/Arg (no sub-expressions)
+                    | "Arg" | "Empty" | "Const"
+                )
+            } else {
+                false
+            }
+        }
+    }
+}
+
+fn format_tree(tree: &STree, indent: usize) -> String {
+    match tree {
+        STree::Atom(s) => s.clone(),
+        STree::List(children) => {
+            if children.is_empty() {
+                return "()".to_string();
+            }
+
+            // Always inline leaf forms
+            if is_leaf_form(tree) {
+                return flat_str(tree);
+            }
+
+            // If the whole thing fits in ~80 cols, keep it inline
+            let total_flat = flat_len(tree);
+            if indent + total_flat <= 100 {
+                return flat_str(tree);
+            }
+
+            // Break: put head on first line, each arg on its own indented line
+            let head = flat_str(&children[0]);
+            if children.len() == 1 {
+                return format!("({})", head);
+            }
+
+            let child_indent = indent + 2;
+            let pad = " ".repeat(child_indent);
+            let mut out = format!("({}", head);
+            for child in &children[1..] {
+                let formatted = format_tree(child, child_indent);
+                out.push('\n');
+                out.push_str(&pad);
+                out.push_str(&formatted);
+            }
+            out.push(')');
+            out
+        }
     }
 }
 

@@ -141,9 +141,7 @@
 
 ;; Get element from tuple at static index
 (constructor Get (EvmExpr i64) EvmExpr)
-;; Single-element tuple
-(constructor Single (EvmExpr) EvmExpr)
-;; Concatenate two tuples
+;; Sequence two expressions (evaluate both, return second)
 (constructor Concat (EvmExpr EvmExpr) EvmExpr)
 
 ;; ============================================================
@@ -213,6 +211,8 @@
 (constructor LetBind (String EvmExpr EvmExpr) EvmExpr)
 ;; Variable reference to a LetBind
 (constructor Var (String) EvmExpr)
+;; Write to a LetBind variable's memory slot (mutates in place)
+(constructor VarStore (String EvmExpr) EvmExpr)
 
 ;; ============================================================
 ;; Top-Level Structures

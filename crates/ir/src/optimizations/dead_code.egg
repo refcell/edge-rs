@@ -8,8 +8,8 @@
 ;; So `a`'s VALUE is always discarded — it exists only for side effects.
 ;; If `a` is pure (no side effects), we can eliminate it entirely.
 ;;
-;; The code block lowering produces left-nested Concat chains:
-;;   Concat(Concat(Concat(Single(s0), Single(s1)), Single(s2)), ...)
+;; Code block lowering produces left-nested Concat chains:
+;;   Concat(Concat(Concat(s0, s1), s2), ...)
 ;; We peel off dead pure entries from the tail of the left side.
 
 ;; ---- Purity relation ----
@@ -71,15 +71,17 @@
 (rule ((= e (Var name)))                   ((IsPure e)) :ruleset dead-code)
 
 ;; ---- Dead statement elimination in Concat chains ----
+;;
+;; Concat(a, b) evaluates a for side effects then returns b.
+;; If a is pure, we can eliminate it entirely.
 
-;; Base case: Concat(Single(pure), rest) → rest
-;; The pure expression's value is discarded; it has no side effects.
-(rule ((= e (Concat (Single inner) rest)) (IsPure inner))
+;; Base case: Concat(pure, rest) → rest
+(rule ((= e (Concat inner rest)) (IsPure inner))
       ((union e rest))
       :ruleset dead-code)
 
-;; Recursive case: Concat(Concat(prev, Single(pure)), rest) → Concat(prev, rest)
+;; Recursive case: Concat(Concat(prev, pure), rest) → Concat(prev, rest)
 ;; Peels one dead pure entry from the tail of the left-nested chain.
-(rule ((= e (Concat (Concat prev (Single inner)) rest)) (IsPure inner))
+(rule ((= e (Concat (Concat prev inner) rest)) (IsPure inner))
       ((union e (Concat prev rest)))
       :ruleset dead-code)

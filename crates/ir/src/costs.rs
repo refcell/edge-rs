@@ -184,7 +184,6 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("Selector", 3);
     m.insert("Arg", 0);
     m.insert("Empty", 0);
-    m.insert("Single", 0);
     m.insert("Concat", 0);
     m.insert("Get", 0);
     m.insert("If", 10);
@@ -194,8 +193,9 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("ReturnOp", 0);
     m.insert("ExtCall", 100);
     m.insert("Call", 0);
-    m.insert("LetBind", 3); // MSTORE cost
-    m.insert("Var", 3);     // MLOAD cost
+    m.insert("LetBind", 3);    // MSTORE cost
+    m.insert("Var", 3);        // MLOAD cost
+    m.insert("VarStore", 6);   // PUSH offset + MSTORE
     m.insert("Function", 0);
     m.insert("StorageField", 0);
     m.insert("Contract", 0);

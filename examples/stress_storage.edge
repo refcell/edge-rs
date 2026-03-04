@@ -1,0 +1,88 @@
+// stress_storage.edge — heavy storage + mapping + local variable interaction
+//
+// Tests: memory layout pressure (mappings use [0..128], LetBind uses [0x80+]),
+//        interleaved storage reads and local variable bindings,
+//        multiple mapping accesses in single function.
+
+event Deposited(indexed user: addr, amount: u256);
+event Withdrawn(indexed user: addr, amount: u256);
+event Transferred(indexed from: addr, indexed to: addr, amount: u256);
+
+abi IStressStorage {
+    fn deposit();
+    fn withdraw(amount: u256);
+    fn transfer_to(to: addr, amount: u256);
+    fn balance_of(user: addr) -> (u256);
+    fn total_deposited() -> (u256);
+    fn swap_balances(other: addr);
+}
+
+contract StressStorage {
+    let total: &s u256;
+    let balances: &s u256;
+    let nonces: &s u256;
+
+    // Reads @caller, reads balance, writes balance, writes total, emits event.
+    // Tests: interleaved SLOAD, SSTORE, MSTORE for keccak, and LetBind variables.
+    pub fn deposit() {
+        let sender: addr;
+        let current: u256;
+        let val: u256;
+        sender = @caller();
+        val = @callvalue();
+        current = balances[sender];
+        balances[sender] = current + val;
+        total = total + val;
+        nonces[sender] = nonces[sender] + 1;
+        emit Deposited(sender, val);
+    }
+
+    // Multiple mapping reads/writes in sequence + guards.
+    pub fn withdraw(amount: u256) {
+        let sender: addr;
+        let current: u256;
+        sender = @caller();
+        current = balances[sender];
+        balances[sender] = current - amount;
+        total = total - amount;
+        nonces[sender] = nonces[sender] + 1;
+        emit Withdrawn(sender, amount);
+    }
+
+    // Two different mapping keys in the same function.
+    // Tests: memory layout for keccak256 — both use [0..64].
+    pub fn transfer_to(to: addr, amount: u256) {
+        let sender: addr;
+        let sender_bal: u256;
+        let to_bal: u256;
+        sender = @caller();
+        sender_bal = balances[sender];
+        to_bal = balances[to];
+        balances[sender] = sender_bal - amount;
+        balances[to] = to_bal + amount;
+        nonces[sender] = nonces[sender] + 1;
+        emit Transferred(sender, to, amount);
+    }
+
+    pub fn balance_of(user: addr) -> (u256) {
+        return balances[user];
+    }
+
+    pub fn total_deposited() -> (u256) {
+        return total;
+    }
+
+    // Reads TWO mapping entries, then writes both back swapped.
+    // Tests: maximum memory pressure — 4 mapping accesses in one function,
+    //        plus 4 local variables alive simultaneously.
+    pub fn swap_balances(other: addr) {
+        let sender: addr;
+        let my_bal: u256;
+        let their_bal: u256;
+        sender = @caller();
+        my_bal = balances[sender];
+        their_bal = balances[other];
+        balances[sender] = their_bal;
+        balances[other] = my_bal;
+    }
+}

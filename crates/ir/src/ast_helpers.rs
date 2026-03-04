@@ -143,12 +143,7 @@ pub fn get(expr: RcExpr, idx: usize) -> RcExpr {
     Rc::new(EvmExpr::Get(expr, idx))
 }
 
-/// Wrap in a single-element tuple.
-pub fn single(expr: RcExpr) -> RcExpr {
-    Rc::new(EvmExpr::Single(expr))
-}
-
-/// Concatenate two tuples.
+/// Sequence two expressions (evaluate both, return second).
 pub fn concat(a: RcExpr, b: RcExpr) -> RcExpr {
     Rc::new(EvmExpr::Concat(a, b))
 }
@@ -200,6 +195,11 @@ pub fn let_bind(name: String, value: RcExpr, body: RcExpr) -> RcExpr {
 /// Variable reference to a LetBind.
 pub fn var(name: String) -> RcExpr {
     Rc::new(EvmExpr::Var(name))
+}
+
+/// Write to a LetBind variable's memory slot. Pushes 0 values to stack.
+pub fn var_store(name: String, value: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::VarStore(name, value))
 }
 
 /// Storage field definition.

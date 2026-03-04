@@ -4,7 +4,7 @@
 //! Since the EVM is a stack machine, we compile in postorder: children
 //! first, then the operator.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use edge_ir::schema::{
     EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmUnaryOp, RcExpr,
@@ -27,8 +27,6 @@ pub struct ExprCompiler<'a> {
     let_bindings: HashMap<String, usize>,
     /// Next available memory offset for LetBind storage
     next_let_offset: usize,
-    /// Variables kept on stack (DUP instead of MLOAD)
-    stack_bound_vars: HashSet<String>,
 }
 
 impl<'a> ExprCompiler<'a> {
@@ -38,7 +36,6 @@ impl<'a> ExprCompiler<'a> {
             asm,
             let_bindings: HashMap::new(),
             next_let_offset: LET_BIND_BASE_OFFSET,
-            stack_bound_vars: HashSet::new(),
         }
     }
 
@@ -79,10 +76,6 @@ impl<'a> ExprCompiler<'a> {
                     }
                 }
                 // If n <= 1, the single value is already on top (no-op)
-            }
-
-            EvmExpr::Single(inner) => {
-                self.compile_expr(inner);
             }
 
             EvmExpr::Concat(a, b) => {
@@ -148,51 +141,37 @@ impl<'a> ExprCompiler<'a> {
             }
 
             EvmExpr::LetBind(name, value, body) => {
-                // Check if we can keep this value on the stack instead of
-                // spilling to memory. This is safe when the body is a
-                // terminating if-chain (each then-branch ends with
-                // RETURN/REVERT/STOP) — the value stays at TOS through
-                // the entire else-chain, and we just DUP1 before each use.
-                if Self::is_terminating_if_chain(body) {
-                    // Stack mode: compile value, leave on stack
-                    self.compile_expr(value);
-                    self.stack_bound_vars.insert(name.clone());
-                    self.compile_expr(body);
-                    self.stack_bound_vars.remove(name);
-                    // The last else-branch (revert/stop) terminates, so
-                    // we don't need to POP. But if somehow we fall through,
-                    // clean up:
-                    if !Self::is_terminating_expr(body) {
-                        self.asm.emit_op(Opcode::Pop);
-                    }
+                // Memory mode: compile value onto stack, spill to memory.
+                // NOTE: Stack mode (DUP1) is disabled — it doesn't track
+                // stack depth, so DUP1 duplicates the wrong value when
+                // sub-expressions push operands before the Var reference.
+                self.compile_expr(value);
+                let offset = self.next_let_offset;
+                self.next_let_offset += 32;
+                self.asm.emit_push_usize(offset);
+                self.asm.emit_op(Opcode::MStore);
+                let prev = self.let_bindings.insert(name.clone(), offset);
+                self.compile_expr(body);
+                if let Some(prev_offset) = prev {
+                    self.let_bindings.insert(name.clone(), prev_offset);
                 } else {
-                    // Memory mode: compile value onto stack, spill to memory
-                    self.compile_expr(value);
-                    let offset = self.next_let_offset;
-                    self.next_let_offset += 32;
-                    self.asm.emit_push_usize(offset);
-                    self.asm.emit_op(Opcode::MStore);
-                    let prev = self.let_bindings.insert(name.clone(), offset);
-                    self.compile_expr(body);
-                    if let Some(prev_offset) = prev {
-                        self.let_bindings.insert(name.clone(), prev_offset);
-                    } else {
-                        self.let_bindings.remove(name);
-                    }
-                    self.next_let_offset -= 32;
+                    self.let_bindings.remove(name);
                 }
+                self.next_let_offset -= 32;
             }
 
             EvmExpr::Var(name) => {
-                if self.stack_bound_vars.contains(name.as_str()) {
-                    // Stack mode: value is at TOS, duplicate it
-                    self.asm.emit_op(Opcode::Dup1);
-                } else {
-                    // Memory mode: load from the bound memory offset
-                    let offset = self.let_bindings[name];
-                    self.asm.emit_push_usize(offset);
-                    self.asm.emit_op(Opcode::MLoad);
-                }
+                let offset = self.let_bindings[name];
+                self.asm.emit_push_usize(offset);
+                self.asm.emit_op(Opcode::MLoad);
+            }
+
+            EvmExpr::VarStore(name, value) => {
+                // Write value to the LetBind variable's memory slot
+                self.compile_expr(value);
+                let offset = self.let_bindings[name];
+                self.asm.emit_push_usize(offset);
+                self.asm.emit_op(Opcode::MStore);
             }
 
             EvmExpr::Function(name, _in_ty, _out_ty, body) => {
@@ -345,17 +324,21 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit_op(Opcode::Xor);
             }
             EvmBinaryOp::Shl => {
-                // EVM SHL: shift, value -> result
-                self.compile_expr(rhs); // value
-                self.compile_expr(lhs); // shift amount
+                // IR convention: Bop(Shl, shift_amount, value)
+                // EVM SHL: (shift, value) -> value << shift, shift on TOS
+                // compile(rhs=value), compile(lhs=shift) -> stack [shift, value]
+                self.compile_expr(rhs);
+                self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Shl);
             }
             EvmBinaryOp::Shr => {
+                // IR convention: Bop(Shr, shift_amount, value)
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Shr);
             }
             EvmBinaryOp::Sar => {
+                // IR convention: Bop(Sar, shift_amount, value)
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Sar);
@@ -590,63 +573,17 @@ impl<'a> ExprCompiler<'a> {
         self.asm.emit_op(Opcode::log_n(topic_count as u8));
     }
 
-    /// Check if an expression is a chain of If nodes where every then-branch
-    /// terminates (RETURN/REVERT/STOP). This pattern is used by the dispatcher:
-    /// ```text
-    /// If(cond1, _, body1_terminates, If(cond2, _, body2_terminates, ... revert))
-    /// ```
-    /// When this is true, a LetBind value on the stack stays at TOS through
-    /// the entire else-chain — each then-branch pops it (or terminates before
-    /// needing to), so we can use DUP1 for each Var reference instead of
-    /// MSTORE/MLOAD.
-    fn is_terminating_if_chain(expr: &EvmExpr) -> bool {
-        match expr {
-            EvmExpr::If(_cond, _inputs, then_body, else_body) => {
-                // The then-branch must terminate (so we don't fall through
-                // with a dirty stack)
-                if !Self::is_terminating_expr(then_body) {
-                    return false;
-                }
-                // The else-branch must either be another terminating if-chain
-                // or itself terminate
-                Self::is_terminating_if_chain(else_body)
-                    || Self::is_terminating_expr(else_body)
-            }
-            // A single terminating expression (the final else: revert/stop)
-            _ => Self::is_terminating_expr(expr),
-        }
-    }
-
-    /// Check if an expression unconditionally terminates execution
-    /// (RETURN, REVERT, STOP, INVALID). These never fall through.
-    fn is_terminating_expr(expr: &EvmExpr) -> bool {
-        match expr {
-            EvmExpr::ReturnOp(_, _, _) => true,
-            EvmExpr::Revert(_, _, _) => true,
-            // Concat: check if the last expression terminates
-            // (common pattern: side effects concat'd with a terminator)
-            EvmExpr::Concat(_, b) => Self::is_terminating_expr(b),
-            // If both branches terminate, the whole thing terminates
-            EvmExpr::If(_, _, then_body, else_body) => {
-                Self::is_terminating_expr(then_body) && Self::is_terminating_expr(else_body)
-            }
-            // LetBind terminates if its body terminates
-            EvmExpr::LetBind(_, _, body) => Self::is_terminating_expr(body),
-            _ => false,
-        }
-    }
-
     /// Estimate how many stack values an expression pushes.
     ///
-    /// For `Single(x)` → 1, `Concat(a, b)` → count(a) + count(b),
-    /// and most other expressions push exactly 1 value.
+    /// For `Concat(a, b)` → count(a) + count(b),
+    /// most other expressions push exactly 1 value.
     fn count_stack_values(expr: &EvmExpr) -> usize {
         match expr {
             EvmExpr::Concat(a, b) => Self::count_stack_values(a) + Self::count_stack_values(b),
-            EvmExpr::Single(inner) => Self::count_stack_values(inner),
             EvmExpr::Empty(_, _) => 0,
             EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
             EvmExpr::Var(_) => 1,
+            EvmExpr::VarStore(_, _) => 0, // MSTORE consumes the value, pushes nothing
             _ => 1,
         }
     }

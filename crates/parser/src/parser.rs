@@ -753,6 +753,7 @@ impl Parser {
                 break;
             }
             self.advance(); // consume 'else'
+            self.skip_whitespace_and_comments();
 
             if self.check(&TokenKind::Keyword(Keyword::If)) {
                 // else if

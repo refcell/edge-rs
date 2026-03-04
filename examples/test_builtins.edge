@@ -1,0 +1,37 @@
+// test_builtins.edge — builtin function testing
+
+abi ITestBuiltins {
+    fn get_caller() -> (addr);
+    fn get_address() -> (addr);
+    fn is_caller(expected: addr) -> (u256);
+    fn check_no_value() -> (u256);
+}
+
+contract TestBuiltins {
+
+    pub fn get_caller() -> (addr) {
+        return @caller();
+    }
+
+    pub fn get_address() -> (addr) {
+        return @address();
+    }
+
+    // Returns 1 if caller matches expected, 0 otherwise
+    pub fn is_caller(expected: addr) -> (u256) {
+        if (@caller() == expected) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    // Returns 1 if callvalue is 0
+    pub fn check_no_value() -> (u256) {
+        if (@callvalue() == 0) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+}

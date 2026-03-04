@@ -322,8 +322,11 @@ fn lex_decimal_literal() {
     let mut lexer = Lexer::new("42");
     let tok = lexer.next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
-    // "42" in hex is "2a", so str_to_bytes32("42") pads it into [u8; 32]
-    assert_eq!(tok.kind, TokenKind::Literal(str_to_bytes32("42")));
+    // Decimal 42 = 0x2a
+    assert_eq!(
+        tok.kind,
+        TokenKind::Literal(edge_types::bytes::decimal_to_bytes32("42"))
+    );
 }
 
 // ─── Keywords ───────────────────────────────────────────────────────
