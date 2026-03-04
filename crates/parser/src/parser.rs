@@ -753,6 +753,8 @@ impl Parser {
             }
             self.advance(); // consume 'else'
 
+            self.skip_whitespace_and_comments();
+
             if self.check(&TokenKind::Keyword(Keyword::If)) {
                 // else if
                 self.advance(); // consume 'if'
@@ -913,6 +915,18 @@ impl Parser {
     /// Parse return statement
     fn parse_return(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Return))?;
+
+        if self.check(&TokenKind::Semicolon) {
+            self.advance();
+            let end_span = self.tokens[self.cursor - 1].span.clone();
+            let span = Span {
+                start: start_tok.span.start,
+                end: end_span.end,
+                file: start_tok.span.file,
+            };
+            return Ok(Stmt::Return(None, span));
+        }
+
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semicolon)?;
 

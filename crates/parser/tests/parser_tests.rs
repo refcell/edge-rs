@@ -174,6 +174,96 @@ fn parse_const_assignment() {
     assert!(matches!(program.stmts[0], edge_ast::Stmt::ConstAssign(..)));
 }
 
+// ─── If Else Chains ─────────────────────────────────────────────────
+
+#[test]
+fn parse_if_empty() {
+    let result = parse("if (thing) {}");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(&program.stmts[0], edge_ast::Stmt::IfElse(_, _)));
+    if let edge_ast::Stmt::IfElse(branches, else_block) = &program.stmts[0] {
+        assert_eq!(branches.len(), 1);
+        assert_eq!(else_block, &Option::None);
+    }
+}
+
+#[test]
+fn parse_if() {
+    let result = parse("if (thing) { let other_thing: u256; }");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(&program.stmts[0], edge_ast::Stmt::IfElse(_, _)));
+    if let edge_ast::Stmt::IfElse(branches, else_block) = &program.stmts[0] {
+        assert_eq!(branches.len(), 1);
+        assert_eq!(else_block, &Option::None);
+    }
+}
+
+#[test]
+fn parse_if_else() {
+    let result = parse("if (thing) {} else {}");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(&program.stmts[0], edge_ast::Stmt::IfElse(_, _)));
+    if let edge_ast::Stmt::IfElse(branches, else_block) = &program.stmts[0] {
+        assert_eq!(branches.len(), 1);
+        assert!(matches!(else_block, Option::Some(_)));
+    }
+}
+
+#[test]
+fn parse_if_else_if() {
+    let result = parse("if (thing) {} else if (other_thing) {}");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(&program.stmts[0], edge_ast::Stmt::IfElse(_, _)));
+    if let edge_ast::Stmt::IfElse(branches, else_block) = &program.stmts[0] {
+        assert_eq!(branches.len(), 2);
+        assert_eq!(else_block, &Option::None);
+    }
+}
+
+#[test]
+fn parse_if_else_if_else() {
+    let result = parse("if (thing) {} else if (other_thing) {} else {}");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(&program.stmts[0], edge_ast::Stmt::IfElse(_, _)));
+    if let edge_ast::Stmt::IfElse(branches, else_block) = &program.stmts[0] {
+        assert_eq!(branches.len(), 2);
+        assert!(matches!(else_block, Option::Some(_)));
+    }
+}
+// ─── Return Stmts ───────────────────────────────────────────────────
+
+#[test]
+fn test_empty_return() {
+    let result = parse("return;");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(program.stmts[0], edge_ast::Stmt::Return(_, _)));
+}
+
+#[test]
+fn test_return() {
+    let result = parse("return thing;");
+    assert!(result.is_ok(), "parse failed: {:?}", result.err());
+    let program = result.unwrap();
+    assert_eq!(program.stmts.len(), 1);
+    assert!(matches!(program.stmts[0], edge_ast::Stmt::Return(_, _)));
+
+    if let edge_ast::Stmt::Return(expr, _) = &program.stmts[0] {
+        assert!(expr.is_some());
+    }
+}
+
 // ─── Error Cases ────────────────────────────────────────────────────
 
 #[test]
