@@ -33,7 +33,7 @@ pub struct ConstValue {
 pub struct FnInfo {
     /// Function name
     pub name: String,
-    /// 4-byte ABI selector: keccak256("name(types...)")[0:4]
+    /// 4-byte ABI selector: keccak256("name(types...)")\[0:4\]
     pub selector: [u8; 4],
     /// Parameter types with names
     pub params: Vec<(String, TypeSig)>,
