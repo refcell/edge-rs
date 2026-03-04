@@ -438,16 +438,24 @@ impl Lowerer {
                 Ok(())
             }
             Expr::Assign(lhs, rhs, _) => {
-                // Lower rhs
+                // Lower rhs — value on stack
                 self.lower_expr(ctx, rhs)?;
 
-                // Store to lhs
+                // Assign-expressions return their RHS value (like C's `a = b`).
+                // DUP the value so one copy can be stored while one remains on stack
+                // for the caller (e.g. Stmt::Expr will Pop it).
                 match lhs.as_ref() {
                     Expr::Ident(id) => {
                         if let Some(&slot) = ctx.storage_slots.get(&id.name) {
+                            // Stack: [val] → DUP → [val, val] → PUSH slot → [slot, val, val]
+                            // SSTORE(key=slot, val) → [val]
+                            ctx.emit(IrInstruction::Dup(1));
                             ctx.emit_push_u32(slot);
                             ctx.emit(IrInstruction::SStore);
                         } else if let Some(&offset) = ctx.locals.get(&id.name) {
+                            // Stack: [val] → DUP → [val, val] → PUSH offset → [offset, val, val]
+                            // MSTORE(offset, val) → [val]
+                            ctx.emit(IrInstruction::Dup(1));
                             ctx.emit_push_u64(offset);
                             ctx.emit(IrInstruction::MStore);
                         } else {
@@ -457,9 +465,8 @@ impl Lowerer {
                     }
                     Expr::ArrayIndex(_, _, _, _) => {
                         // Map write: full keccak256 slot computation is future work.
-                        // For now discard the value so the stack stays balanced.
+                        // Pop the value and push dummy so the caller can always Pop.
                         ctx.emit(IrInstruction::Pop);
-                        // Assign-expressions must leave a value; push dummy.
                         ctx.emit(IrInstruction::Push(vec![0]));
                         Ok(())
                     }

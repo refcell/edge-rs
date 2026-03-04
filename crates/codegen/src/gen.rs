@@ -382,8 +382,8 @@ impl Assembler {
 
     /// Emit JUMPDEST and define the label
     fn emit_jumpdest(&mut self, label: &str) {
-        self.emit_opcode(Opcode::JumpDest);
         self.define_label(label);
+        self.emit_opcode(Opcode::JumpDest);
     }
 
     /// Finalize: patch all label references and return bytes

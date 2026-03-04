@@ -68,6 +68,14 @@ check-examples:
     done < <(find examples -name '*.edge' -print0 | sort -z)
     exit $failed
 
+# Run acceptance tests
+e2e:
+    cargo test -p edge-e2e
+
+# Run acceptance tests for CI
+e2e-ci:
+    cargo nextest run -p edge-e2e
+
 # Serve the book
 book:
     mdbook serve --open
