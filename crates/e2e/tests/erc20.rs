@@ -167,10 +167,7 @@ fn test_erc20_initial_supply() {
 
     let (ok, out) = evm.call(calldata);
     assert!(ok, "totalSupply() reverted on fresh contract");
-    assert_eq!(
-        decode_u256(&out), 0,
-        "initial totalSupply should be 0"
-    );
+    assert_eq!(decode_u256(&out), 0, "initial totalSupply should be 0");
 }
 
 #[test]
@@ -186,10 +183,8 @@ fn test_erc20_mint_and_balance() {
     // called. Depending on the implementation, this might require an internal call
     // or a public mint function. For now, we assume _mint exists as a public function.
     let mint_sel = selector("_mint(address,uint256)");
-    let mint_calldata = encode_call_with_args(
-        mint_sel,
-        &[encode_address(alice), encode_u256(1000)],
-    );
+    let mint_calldata =
+        encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
 
     let (ok, _) = evm.call(mint_calldata);
     assert!(ok, "_mint(alice, 1000) reverted");
@@ -201,7 +196,8 @@ fn test_erc20_mint_and_balance() {
     let (ok, out) = evm.call(bal_calldata);
     assert!(ok, "balanceOf(alice) reverted");
     assert_eq!(
-        decode_u256(&out), 1000,
+        decode_u256(&out),
+        1000,
         "alice balance should be 1000 after mint"
     );
 }
@@ -217,10 +213,8 @@ fn test_erc20_transfer() {
 
     // Mint 1000 tokens to alice
     let mint_sel = selector("_mint(address,uint256)");
-    let mint_calldata = encode_call_with_args(
-        mint_sel,
-        &[encode_address(alice), encode_u256(1000)],
-    );
+    let mint_calldata =
+        encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
     let (ok, _) = evm.call(mint_calldata);
     assert!(ok, "_mint(alice, 1000) reverted");
 
@@ -231,11 +225,7 @@ fn test_erc20_transfer() {
     let xfer_sel = selector("_transfer(address,address,uint256)");
     let xfer_calldata = encode_call_with_args(
         xfer_sel,
-        &[
-            encode_address(alice),
-            encode_address(bob),
-            encode_u256(300),
-        ],
+        &[encode_address(alice), encode_address(bob), encode_u256(300)],
     );
     let (ok, _) = evm.call(xfer_calldata);
     assert!(ok, "_transfer(alice, bob, 300) reverted");
@@ -246,7 +236,8 @@ fn test_erc20_transfer() {
     let (ok, out) = evm.call(alice_calldata);
     assert!(ok, "balanceOf(alice) reverted");
     assert_eq!(
-        decode_u256(&out), 700,
+        decode_u256(&out),
+        700,
         "alice balance should be 700 after transfer"
     );
 
@@ -256,7 +247,8 @@ fn test_erc20_transfer() {
     let (ok, out) = evm.call(bob_calldata);
     assert!(ok, "balanceOf(bob) reverted");
     assert_eq!(
-        decode_u256(&out), 300,
+        decode_u256(&out),
+        300,
         "bob balance should be 300 after transfer"
     );
 }
@@ -273,10 +265,8 @@ fn test_erc20_approve_and_transferfrom() {
 
     // Mint 1000 tokens to alice
     let mint_sel = selector("_mint(address,uint256)");
-    let mint_calldata = encode_call_with_args(
-        mint_sel,
-        &[encode_address(alice), encode_u256(1000)],
-    );
+    let mint_calldata =
+        encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
     let (ok, _) = evm.call(mint_calldata);
     assert!(ok, "_mint(alice, 1000) reverted");
 
@@ -293,14 +283,13 @@ fn test_erc20_approve_and_transferfrom() {
 
     // Check allowance: bob should be able to spend 500 from alice
     let allow_sel = selector("allowance(address,address)");
-    let allow_calldata = encode_call_with_args(
-        allow_sel,
-        &[encode_address(alice), encode_address(bob)],
-    );
+    let allow_calldata =
+        encode_call_with_args(allow_sel, &[encode_address(alice), encode_address(bob)]);
     let (ok, out) = evm.call(allow_calldata);
     assert!(ok, "allowance(alice, bob) reverted");
     assert_eq!(
-        decode_u256(&out), 500,
+        decode_u256(&out),
+        500,
         "bob should have 500 allowance from alice"
     );
 
@@ -320,14 +309,13 @@ fn test_erc20_approve_and_transferfrom() {
 
     // Check updated allowance: bob should have 200 left (500 - 300)
     let allow_sel = selector("allowance(address,address)");
-    let allow_calldata = encode_call_with_args(
-        allow_sel,
-        &[encode_address(alice), encode_address(bob)],
-    );
+    let allow_calldata =
+        encode_call_with_args(allow_sel, &[encode_address(alice), encode_address(bob)]);
     let (ok, out) = evm.call(allow_calldata);
     assert!(ok, "allowance(alice, bob) after transferFrom reverted");
     assert_eq!(
-        decode_u256(&out), 200,
+        decode_u256(&out),
+        200,
         "bob should have 200 allowance left after transferFrom"
     );
 
@@ -337,7 +325,8 @@ fn test_erc20_approve_and_transferfrom() {
     let (ok, out) = evm.call(charlie_calldata);
     assert!(ok, "balanceOf(charlie) reverted");
     assert_eq!(
-        decode_u256(&out), 300,
+        decode_u256(&out),
+        300,
         "charlie balance should be 300 after transferFrom"
     );
 }

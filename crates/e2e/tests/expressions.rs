@@ -142,7 +142,10 @@ impl EvmHandle {
 #[test]
 fn test_expressions_compiles() {
     let bytecode = compile_contract("examples/expressions.edge");
-    assert!(!bytecode.is_empty(), "expressions.edge produced empty bytecode");
+    assert!(
+        !bytecode.is_empty(),
+        "expressions.edge produced empty bytecode"
+    );
     assert!(bytecode.len() > 10, "bytecode too short to be valid");
 }
 
@@ -175,7 +178,8 @@ fn test_comparisons_eq() {
     assert!(ok, "comparisons(5, 5) reverted");
     // In Edge/Solidity, boolean true is represented as 1
     assert_eq!(
-        decode_u256(&out), 1,
+        decode_u256(&out),
+        1,
         "comparisons(5, 5) should return true (1)"
     );
 }
@@ -194,7 +198,8 @@ fn test_comparisons_neq() {
     assert!(ok, "comparisons(5, 6) reverted");
     // In Edge/Solidity, boolean false is represented as 0
     assert_eq!(
-        decode_u256(&out), 0,
+        decode_u256(&out),
+        0,
         "comparisons(5, 6) should return false (0)"
     );
 }
@@ -234,7 +239,8 @@ fn test_complex() {
     let (ok, out) = evm.call(calldata);
     assert!(ok, "complex(2, 3, 4) reverted");
     assert_eq!(
-        decode_u256(&out), 14,
+        decode_u256(&out),
+        14,
         "2 + 3 * 4 should equal 14 (order of operations)"
     );
 }

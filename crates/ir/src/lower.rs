@@ -162,7 +162,10 @@ impl Lowerer {
     }
 
     /// Lower top-level functions into a synthetic __module__ contract
-    fn lower_toplevel_functions(&self, program: &Program) -> Result<Option<IrContract>, LowerError> {
+    fn lower_toplevel_functions(
+        &self,
+        program: &Program,
+    ) -> Result<Option<IrContract>, LowerError> {
         let mut functions = Vec::new();
 
         for stmt in &program.stmts {
@@ -175,10 +178,18 @@ impl Lowerer {
                     .iter()
                     .find(|m| &m.name == fn_name)
                     .ok_or_else(|| {
-                        LowerError::UndefinedVariable(format!("function not in metadata: {fn_name}"))
+                        LowerError::UndefinedVariable(format!(
+                            "function not in metadata: {fn_name}"
+                        ))
                     })?;
 
-                let ir_fn = self.lower_fn_body_with_params(fn_name, meta.selector, meta.is_pub, body, &meta.params)?;
+                let ir_fn = self.lower_fn_body_with_params(
+                    fn_name,
+                    meta.selector,
+                    meta.is_pub,
+                    body,
+                    &meta.params,
+                )?;
                 functions.push(ir_fn);
             }
         }
@@ -208,7 +219,13 @@ impl Lowerer {
                     LowerError::UndefinedVariable(format!("function not in metadata: {fn_name}"))
                 })?;
 
-            let ir_fn = self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body, Some(fn_decl))?;
+            let ir_fn = self.lower_fn_body(
+                fn_name,
+                meta.selector,
+                meta.is_pub,
+                &fn_decl.body,
+                Some(fn_decl),
+            )?;
             functions.push(ir_fn);
         }
 

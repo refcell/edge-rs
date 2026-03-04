@@ -104,7 +104,6 @@ impl Compiler {
         // Lower to IR and generate bytecode for each contract
         let mut all_bytecode: Vec<u8> = Vec::new();
 
-
         for contract_info in &checked.contracts {
             // Build storage slots for lowerer
             let storage_slots = contract_info.storage.slots.clone();
