@@ -24,6 +24,8 @@ pub enum IrInstruction {
     Div,
     /// MOD
     Mod,
+    /// EXP (base, exponent → result)
+    Exp,
 
     // ── Comparison ────────────────────────────────────────
     /// LT

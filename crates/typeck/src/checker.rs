@@ -88,11 +88,59 @@ impl TypeChecker {
             }
         }
 
+        // If no contracts found, check for top-level functions and synthesize a virtual contract
         if contracts.is_empty() {
-            return Err(crate::TypeCheckError::NoContract);
+            let synthetic_contract = self.check_toplevel_functions(program)?;
+            if let Some(contract_info) = synthetic_contract {
+                contracts.push(contract_info);
+            } else {
+                return Err(crate::TypeCheckError::NoContract);
+            }
         }
 
         Ok(CheckedProgram { contracts })
+    }
+
+    /// Extract top-level functions and synthesize a virtual contract
+    fn check_toplevel_functions(&self, program: &Program) -> Result<Option<ContractInfo>, crate::TypeCheckError> {
+        let mut functions = Vec::new();
+
+        for stmt in &program.stmts {
+            if let Stmt::FnAssign(fn_decl, body) = stmt {
+                let name = fn_decl.name.name.clone();
+                let selector = Self::compute_selector(&name, &fn_decl.params);
+
+                let params = fn_decl
+                    .params
+                    .iter()
+                    .map(|(ident, ty)| (ident.name.clone(), ty.clone()))
+                    .collect();
+
+                let returns = fn_decl.returns.clone();
+                // Top-level functions are always publicly callable.
+                functions.push(FnInfo {
+                    name,
+                    selector,
+                    params,
+                    returns,
+                    is_pub: true,
+                    body: Some(body.clone()),
+                });
+            }
+        }
+
+        if functions.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(ContractInfo {
+            name: "__module__".to_string(),
+            storage: StorageLayout {
+                slots: IndexMap::new(),
+            },
+            functions,
+            consts: Vec::new(),
+        }))
     }
 
     /// Check a single contract declaration
@@ -245,5 +293,52 @@ mod tests {
             TypeChecker::primitive_to_abi_string(&PrimitiveType::Bool),
             "bool"
         );
+    }
+}
+
+#[cfg(test)]
+mod toplevel_tests {
+    use super::*;
+    use edge_ast::{Ident, Program, stmt::{Stmt, CodeBlock}, item::FnDecl, ty::TypeSig};
+    use edge_types::span::Span;
+
+    #[test]
+    fn test_toplevel_functions() {
+        // Create a simple top-level function: fn add(x: u256, y: u256) -> (u256) { return x; }
+        let fn_decl = FnDecl {
+            name: Ident { name: "add".to_string(), span: Span::EOF },
+            type_params: Vec::new(),
+            params: vec![
+                (Ident { name: "x".to_string(), span: Span::EOF }, TypeSig::Primitive(PrimitiveType::UInt(256))),
+                (Ident { name: "y".to_string(), span: Span::EOF }, TypeSig::Primitive(PrimitiveType::UInt(256))),
+            ],
+            returns: vec![TypeSig::Primitive(PrimitiveType::UInt(256))],
+            is_pub: true,
+            is_ext: false,
+            is_mut: false,
+            span: Span::EOF,
+        };
+
+        let body = CodeBlock {
+            stmts: Vec::new(),
+            span: Span::EOF,
+        };
+
+        let program = Program {
+            stmts: vec![
+                Stmt::FnAssign(fn_decl, body),
+            ],
+            span: Span::EOF,
+        };
+
+        let checker = TypeChecker::new();
+        let result = checker.check(&program);
+        assert!(result.is_ok(), "Typeck should succeed for top-level functions");
+
+        let checked = result.unwrap();
+        assert_eq!(checked.contracts.len(), 1, "Should have one synthetic contract");
+        assert_eq!(checked.contracts[0].name, "__module__");
+        assert_eq!(checked.contracts[0].functions.len(), 1);
+        assert_eq!(checked.contracts[0].functions[0].name, "add");
     }
 }

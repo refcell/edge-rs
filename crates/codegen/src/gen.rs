@@ -55,6 +55,8 @@ pub enum GenInstr {
     Div,
     /// MOD
     Mod,
+    /// EXP
+    Exp,
     /// LT
     Lt,
     /// GT
@@ -286,6 +288,7 @@ impl CodeGenerator {
             GenInstr::Mul => asm.emit_opcode(Opcode::Mul),
             GenInstr::Div => asm.emit_opcode(Opcode::Div),
             GenInstr::Mod => asm.emit_opcode(Opcode::Mod),
+            GenInstr::Exp => asm.emit_opcode(Opcode::Exp),
             GenInstr::Lt => asm.emit_opcode(Opcode::Lt),
             GenInstr::Gt => asm.emit_opcode(Opcode::Gt),
             GenInstr::Eq => asm.emit_opcode(Opcode::Eq),

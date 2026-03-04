@@ -45,6 +45,8 @@ pub struct FnMeta {
     pub selector: Selector,
     /// Whether function is publicly callable
     pub is_pub: bool,
+    /// Parameter names in order
+    pub params: Vec<String>,
 }
 
 /// Context for lowering a single function
@@ -149,7 +151,46 @@ impl Lowerer {
             }
         }
 
+        // If no contracts found, lower top-level functions into a synthetic contract
+        if contracts.is_empty() {
+            if let Some(synthetic_contract) = self.lower_toplevel_functions(program)? {
+                contracts.push(synthetic_contract);
+            }
+        }
+
         Ok(IrProgram { contracts })
+    }
+
+    /// Lower top-level functions into a synthetic __module__ contract
+    fn lower_toplevel_functions(&self, program: &Program) -> Result<Option<IrContract>, LowerError> {
+        let mut functions = Vec::new();
+
+        for stmt in &program.stmts {
+            if let Stmt::FnAssign(fn_decl, body) = stmt {
+                let fn_name = &fn_decl.name.name;
+
+                // Find metadata for this function
+                let meta = self
+                    .fn_metas
+                    .iter()
+                    .find(|m| &m.name == fn_name)
+                    .ok_or_else(|| {
+                        LowerError::UndefinedVariable(format!("function not in metadata: {fn_name}"))
+                    })?;
+
+                let ir_fn = self.lower_fn_body_with_params(fn_name, meta.selector, meta.is_pub, body, &meta.params)?;
+                functions.push(ir_fn);
+            }
+        }
+
+        if functions.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(IrContract {
+            name: "__module__".to_string(),
+            functions,
+        }))
     }
 
     fn lower_contract(&self, contract: &edge_ast::ContractDecl) -> Result<IrContract, LowerError> {
@@ -167,7 +208,7 @@ impl Lowerer {
                     LowerError::UndefinedVariable(format!("function not in metadata: {fn_name}"))
                 })?;
 
-            let ir_fn = self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body)?;
+            let ir_fn = self.lower_fn_body(fn_name, meta.selector, meta.is_pub, &fn_decl.body, Some(fn_decl))?;
             functions.push(ir_fn);
         }
 
@@ -183,8 +224,28 @@ impl Lowerer {
         _selector: Selector,
         _is_pub: bool,
         body: &CodeBlock,
+        fn_decl: Option<&edge_ast::ContractFnDecl>,
     ) -> Result<IrFunction, LowerError> {
         let mut ctx = FnContext::new(self.storage_slots.clone());
+
+        // Load function parameters from calldata at the start of the function.
+        // Calldata layout: [0:4] = selector, [4:36] = arg0, [36:68] = arg1, etc.
+        if let Some(fn_decl) = fn_decl {
+            for (i, (param_ident, _param_type)) in fn_decl.params.iter().enumerate() {
+                let param_name = &param_ident.name;
+                // Allocate memory slot for this parameter
+                let mem_offset = ctx.alloc_local(param_name);
+
+                // Load from calldata at offset 4 + 32*i
+                let calldata_offset = 4 + 32 * i as u32;
+                ctx.emit_push_u32(calldata_offset);
+                ctx.emit(IrInstruction::CallDataLoad);
+
+                // Store to memory
+                ctx.emit_push_u64(mem_offset);
+                ctx.emit(IrInstruction::MStore);
+            }
+        }
 
         for item in &body.stmts {
             self.lower_block_item(&mut ctx, item)?;
@@ -194,6 +255,39 @@ impl Lowerer {
             name: _fn_name.to_string(),
             selector: _selector,
             is_pub: _is_pub,
+            body: ctx.instructions,
+            local_mem_size: ctx.next_mem_offset,
+        })
+    }
+
+    /// Like `lower_fn_body` but takes param names directly (for top-level fns).
+    fn lower_fn_body_with_params(
+        &self,
+        fn_name: &str,
+        selector: Selector,
+        is_pub: bool,
+        body: &CodeBlock,
+        params: &[String],
+    ) -> Result<IrFunction, LowerError> {
+        let mut ctx = FnContext::new(self.storage_slots.clone());
+
+        for (i, param_name) in params.iter().enumerate() {
+            let mem_offset = ctx.alloc_local(param_name);
+            let calldata_offset = 4 + 32 * i as u32;
+            ctx.emit_push_u32(calldata_offset);
+            ctx.emit(IrInstruction::CallDataLoad);
+            ctx.emit_push_u64(mem_offset);
+            ctx.emit(IrInstruction::MStore);
+        }
+
+        for item in &body.stmts {
+            self.lower_block_item(&mut ctx, item)?;
+        }
+
+        Ok(IrFunction {
+            name: fn_name.to_string(),
+            selector,
+            is_pub,
             body: ctx.instructions,
             local_mem_size: ctx.next_mem_offset,
         })
@@ -407,10 +501,7 @@ impl Lowerer {
                     BinOp::BitwiseXor => ctx.emit(IrInstruction::Xor),
                     BinOp::Shl => ctx.emit(IrInstruction::Shl),
                     BinOp::Shr => ctx.emit(IrInstruction::Shr),
-                    BinOp::Exp => {
-                        // EXP not in our instruction set yet; emit placeholder
-                        ctx.emit(IrInstruction::Push(vec![0]));
-                    }
+                    BinOp::Exp => ctx.emit(IrInstruction::Exp),
                     _ => {
                         // Compound assignment operators handled elsewhere
                         return Err(LowerError::UnsupportedExpr(format!(
