@@ -1,5 +1,6 @@
 //! IR program structure
 
+use alloy_primitives::Selector;
 use crate::instruction::IrInstruction;
 
 /// A function in the IR
@@ -8,7 +9,7 @@ pub struct IrFunction {
     /// Function name
     pub name: String,
     /// 4-byte ABI selector
-    pub selector: [u8; 4],
+    pub selector: Selector,
     /// Whether publicly callable
     pub is_pub: bool,
     /// Instructions in the function body

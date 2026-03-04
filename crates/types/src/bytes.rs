@@ -3,13 +3,13 @@
 // use crate::{evm::Opcode, evm_version::EVMVersion};
 use std::num::ParseIntError;
 
+use alloy_primitives::B256;
 use tiny_keccak::{Hasher, Keccak};
 
-/// Convert a string slice to a `[u8; 32]`
-/// Pads zeros to the left of significant bytes in the `[u8; 32]` slice.
-/// i.e. 0xa57b becomes `[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-/// 0, 0, 0, 0, 0, 165, 123]`
-pub fn str_to_bytes32(s: &str) -> [u8; 32] {
+/// Convert a string slice to a [`B256`].
+/// Pads zeros to the left of significant bytes.
+/// i.e. 0xa57b becomes `[0, 0, ..., 0, 165, 123]`
+pub fn str_to_bytes32(s: &str) -> B256 {
     let s = format_even_bytes(String::from(s));
 
     let bytes: Vec<u8> = (0..s.len())
@@ -23,11 +23,11 @@ pub fn str_to_bytes32(s: &str) -> [u8; 32] {
         padded[i] = bytes[bytes.len() - (32 - i)];
     }
 
-    padded
+    B256::from(padded)
 }
 
-/// Convert a `[u8; 32]` to a bytes string.
-pub fn bytes32_to_string(bytes: &[u8; 32], prefixed: bool) -> String {
+/// Convert a [`B256`] to a bytes string.
+pub fn bytes32_to_string(bytes: &B256, prefixed: bool) -> String {
     let mut s = String::default();
     let start = bytes
         .iter()

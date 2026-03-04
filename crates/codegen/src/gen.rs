@@ -1,5 +1,6 @@
 //! EVM bytecode code generator
 
+use alloy_primitives::Selector;
 use indexmap::IndexMap;
 
 use crate::opcode::Opcode;
@@ -26,7 +27,7 @@ pub struct FunctionInput {
     /// Function name
     pub name: String,
     /// 4-byte ABI selector
-    pub selector: [u8; 4],
+    pub selector: Selector,
     /// Whether publicly callable
     pub is_pub: bool,
     /// IR instructions for the function body
@@ -193,7 +194,7 @@ impl CodeGenerator {
         for func in &pub_fns {
             let fn_label = format!("fn_{}", func.name);
             asm.emit_opcode(Opcode::Dup1); // dup selector
-            asm.emit_push(&func.selector); // push expected selector
+            asm.emit_push(func.selector.as_slice()); // push expected selector
             asm.emit_opcode(Opcode::Eq); // compare
             asm.emit_push_label(&fn_label); // push fn label dest
             asm.emit_opcode(Opcode::JumpI); // jump if match
