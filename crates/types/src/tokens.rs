@@ -4,6 +4,8 @@
 
 use std::{fmt, fmt::Write};
 
+use alloy_primitives::B256;
+
 use crate::span::Span;
 
 pub mod keywords;
@@ -15,8 +17,6 @@ pub use keywords::*;
 pub use locations::*;
 pub use operators::*;
 pub use types::*;
-
-type Literal = [u8; 32];
 
 /// An Edge Token
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -52,7 +52,7 @@ pub enum TokenKind {
     /// Whitespace
     Whitespace,
     /// A numeric literal
-    Literal(Literal),
+    Literal(B256),
     /// A string literal
     StringLiteral(String),
     /// An Identifier

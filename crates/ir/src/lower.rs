@@ -1,5 +1,6 @@
 //! AST to IR lowering
 
+use alloy_primitives::Selector;
 use edge_ast::{
     expr::Expr,
     lit::Lit,
@@ -41,7 +42,7 @@ pub struct FnMeta {
     /// Function name
     pub name: String,
     /// 4-byte EVM ABI selector
-    pub selector: [u8; 4],
+    pub selector: Selector,
     /// Whether function is publicly callable
     pub is_pub: bool,
 }
@@ -179,7 +180,7 @@ impl Lowerer {
     fn lower_fn_body(
         &self,
         _fn_name: &str,
-        _selector: [u8; 4],
+        _selector: Selector,
         _is_pub: bool,
         body: &CodeBlock,
     ) -> Result<IrFunction, LowerError> {

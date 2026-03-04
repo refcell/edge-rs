@@ -3,6 +3,7 @@
 //! This module implements the type checker that walks the AST, resolves type information,
 //! computes storage layouts, and generates function selectors for the compiler driver.
 
+use alloy_primitives::Selector;
 use edge_ast::{
     item::{ContractDecl, ContractFnDecl},
     stmt::Stmt,
@@ -34,7 +35,7 @@ pub struct FnInfo {
     /// Function name
     pub name: String,
     /// 4-byte ABI selector: keccak256("name(types...)")\[0:4\]
-    pub selector: [u8; 4],
+    pub selector: Selector,
     /// Parameter types with names
     pub params: Vec<(String, TypeSig)>,
     /// Return types
@@ -177,7 +178,7 @@ impl TypeChecker {
     }
 
     /// Compute the 4-byte ABI selector for a function
-    fn compute_selector(name: &str, params: &[(edge_ast::Ident, TypeSig)]) -> [u8; 4] {
+    fn compute_selector(name: &str, params: &[(edge_ast::Ident, TypeSig)]) -> Selector {
         let param_types = params
             .iter()
             .map(|(_, ty)| Self::type_to_abi_string(ty))
@@ -191,7 +192,7 @@ impl TypeChecker {
         let mut output = [0u8; 32];
         hasher.finalize(&mut output);
 
-        [output[0], output[1], output[2], output[3]]
+        Selector::from([output[0], output[1], output[2], output[3]])
     }
 
     /// Convert an Edge type to its ABI type string

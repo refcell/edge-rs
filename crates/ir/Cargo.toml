@@ -13,6 +13,7 @@ edge-types = { workspace = true }
 edge-ast = { workspace = true }
 thiserror = { workspace = true }
 indexmap = "2.0"
+alloy-primitives = { workspace = true }
 
 [lints]
 workspace = true

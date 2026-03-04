@@ -12,6 +12,7 @@ homepage = { workspace = true }
 [dependencies]
 thiserror = { workspace = true }
 indexmap = { workspace = true }
+alloy-primitives = { workspace = true }
 
 [lints]
 workspace = true

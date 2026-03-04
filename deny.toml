@@ -1,6 +1,10 @@
 [advisories]
 # Advisories are denied by default in cargo-deny 0.14+
-ignore = []
+ignore = [
+    # paste is a transitive dep of alloy-primitives; it is a proc-macro-only
+    # crate with no runtime impact and no known vulnerability.
+    "RUSTSEC-2024-0436",
+]
 
 [licenses]
 allow = [
