@@ -64,7 +64,11 @@ fn encode_address(addr: [u8; 20]) -> [u8; 32] {
 }
 
 fn decode_u256(output: &[u8]) -> u64 {
-    assert!(output.len() >= 32, "return value too short: {} bytes", output.len());
+    assert!(
+        output.len() >= 32,
+        "return value too short: {} bytes",
+        output.len()
+    );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -99,7 +103,10 @@ impl EvmHandle {
         // Fund Address::ZERO so it can send ETH value in deposit tests.
         db.insert_account_info(
             Address::ZERO,
-            AccountInfo { balance: U256::from(u64::MAX), ..Default::default() },
+            AccountInfo {
+                balance: U256::from(u64::MAX),
+                ..Default::default()
+            },
         );
         let evm = Context::mainnet().with_db(db).build_mainnet();
         Self { evm, nonce: 0 }
@@ -190,10 +197,7 @@ fn test_weth_deposit_increases_total_supply() {
 
     // deposit() — sends ETH value, mints WETH
     let deposit_amount: u64 = 1_000_000;
-    let (ok, _) = evm.call_with_value(
-        calldata(selector("deposit()"), &[]),
-        deposit_amount,
-    );
+    let (ok, _) = evm.call_with_value(calldata(selector("deposit()"), &[]), deposit_amount);
     assert!(ok, "deposit() reverted");
 
     let (ok, out) = evm.call(calldata(selector("totalSupply()"), &[]));
@@ -212,10 +216,7 @@ fn test_weth_deposit_increases_balance() {
 
     let deposit_amount: u64 = 500_000;
     // caller is Address::ZERO
-    let (ok, _) = evm.call_with_value(
-        calldata(selector("deposit()"), &[]),
-        deposit_amount,
-    );
+    let (ok, _) = evm.call_with_value(calldata(selector("deposit()"), &[]), deposit_amount);
     assert!(ok, "deposit() reverted");
 
     let (ok, out) = evm.call(calldata(

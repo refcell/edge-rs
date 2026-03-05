@@ -58,7 +58,11 @@ fn encode_u256(val: u64) -> [u8; 32] {
 }
 
 fn decode_u256(output: &[u8]) -> u64 {
-    assert!(output.len() >= 32, "return value too short: {} bytes", output.len());
+    assert!(
+        output.len() >= 32,
+        "return value too short: {} bytes",
+        output.len()
+    );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -119,7 +123,11 @@ fn test_comptime_load_initially_zero() {
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("load()"), &[]));
     assert!(ok, "load() reverted");
-    assert_eq!(decode_u256(&out), 0, "load() should return 0 before any store");
+    assert_eq!(
+        decode_u256(&out),
+        0,
+        "load() should return 0 before any store"
+    );
 }
 
 #[test]
@@ -132,7 +140,11 @@ fn test_comptime_store_and_load_roundtrip() {
 
     let (ok, out) = evm.call(calldata(selector("load()"), &[]));
     assert!(ok, "load() reverted after store");
-    assert_eq!(decode_u256(&out), 42, "load() should return 42 after store(42)");
+    assert_eq!(
+        decode_u256(&out),
+        42,
+        "load() should return 42 after store(42)"
+    );
 }
 
 #[test]
@@ -148,7 +160,11 @@ fn test_comptime_store_overwrites() {
 
     let (ok, out) = evm.call(calldata(selector("load()"), &[]));
     assert!(ok, "load() reverted");
-    assert_eq!(decode_u256(&out), 999, "load() should return most-recently stored value");
+    assert_eq!(
+        decode_u256(&out),
+        999,
+        "load() should return most-recently stored value"
+    );
 }
 
 #[test]

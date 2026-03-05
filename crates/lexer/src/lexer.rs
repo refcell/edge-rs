@@ -242,8 +242,8 @@ impl<'a> Lexer<'a> {
                     end: suffix_end as usize,
                     file: None,
                 };
-                let literal =
-                    decimal_str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+                let literal = decimal_str_to_bytes32(integer_str.replace('_', "").as_ref())
+                    .map_err(|e| {
                         LexicalError::new(
                             LexicalErrorKind::InvalidHexLiteral(e.to_string()),
                             span.clone(),
@@ -264,12 +264,13 @@ impl<'a> Lexer<'a> {
             end: end as usize,
             file: None,
         };
-        let literal = decimal_str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
-            LexicalError::new(
-                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
-                span.clone(),
-            )
-        })?;
+        let literal =
+            decimal_str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+                LexicalError::new(
+                    LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                    span.clone(),
+                )
+            })?;
         Ok(Token {
             kind: TokenKind::Literal(literal),
             span,

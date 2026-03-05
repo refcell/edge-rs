@@ -138,8 +138,7 @@ impl Compiler {
             // Lower AST to IR — only lower the target contract so each contract
             // gets its own storage slots rather than sharing one set across the
             // entire program (avoids cross-contamination in multi-contract files).
-            let lowerer =
-                edge_ir::Lowerer::new(storage_slots, fn_metas, event_metas.clone());
+            let lowerer = edge_ir::Lowerer::new(storage_slots, fn_metas, event_metas.clone());
             let ir_program = lowerer.lower_one(&ast, &contract_info.name).map_err(|e| {
                 self.session
                     .emit_error(Diagnostic::error(format!("IR lowering error: {e}")));

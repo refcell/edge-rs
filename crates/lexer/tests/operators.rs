@@ -323,7 +323,10 @@ fn lex_decimal_literal() {
     let tok = lexer.next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
     // "42" as a decimal integer: value 42 stored big-endian in 32 bytes.
-    assert_eq!(tok.kind, TokenKind::Literal(decimal_str_to_bytes32("42").unwrap()));
+    assert_eq!(
+        tok.kind,
+        TokenKind::Literal(decimal_str_to_bytes32("42").unwrap())
+    );
 }
 
 // ─── Keywords ───────────────────────────────────────────────────────

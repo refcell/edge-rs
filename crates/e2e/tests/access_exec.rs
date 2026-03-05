@@ -81,7 +81,11 @@ fn encode_address(addr: [u8; 20]) -> [u8; 32] {
 }
 
 fn decode_u256(output: &[u8]) -> u64 {
-    assert!(output.len() >= 32, "return value too short: {} bytes", output.len());
+    assert!(
+        output.len() >= 32,
+        "return value too short: {} bytes",
+        output.len()
+    );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -156,7 +160,11 @@ fn test_ownable_owner_initially_zero() {
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("owner()"), &[]));
     assert!(ok, "owner() reverted");
-    assert_eq!(decode_address(&out), [0u8; 20], "owner should start as zero");
+    assert_eq!(
+        decode_address(&out),
+        [0u8; 20],
+        "owner should start as zero"
+    );
 }
 
 #[test]
@@ -165,7 +173,11 @@ fn test_ownable_pending_owner_initially_zero() {
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("pendingOwner()"), &[]));
     assert!(ok, "pendingOwner() reverted");
-    assert_eq!(decode_address(&out), [0u8; 20], "pendingOwner should start as zero");
+    assert_eq!(
+        decode_address(&out),
+        [0u8; 20],
+        "pendingOwner should start as zero"
+    );
 }
 
 #[test]
@@ -277,7 +289,11 @@ fn test_pausable_guarded_transfer_succeeds_when_not_paused() {
         &[encode_address(ALICE_ADDR), encode_u256(100)],
     ));
     assert!(ok, "guardedTransfer reverted when not paused");
-    assert_eq!(decode_u256(&out), 1, "guardedTransfer should return true (1) when not paused");
+    assert_eq!(
+        decode_u256(&out),
+        1,
+        "guardedTransfer should return true (1) when not paused"
+    );
 }
 
 #[test]
@@ -298,7 +314,11 @@ fn test_auth_owned_get_owner_initially_zero() {
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getOwner()"), &[]));
     assert!(ok, "getOwner() reverted");
-    assert_eq!(decode_address(&out), [0u8; 20], "owner should start as zero");
+    assert_eq!(
+        decode_address(&out),
+        [0u8; 20],
+        "owner should start as zero"
+    );
 }
 
 #[test]
@@ -319,7 +339,11 @@ fn test_auth_owned_transfer_ownership() {
 
     let (ok, out) = evm.call(calldata(selector("getOwner()"), &[]));
     assert!(ok, "getOwner() reverted after acceptOwnership");
-    assert_eq!(decode_address(&out), ALICE_ADDR, "owner should be alice after acceptOwnership");
+    assert_eq!(
+        decode_address(&out),
+        ALICE_ADDR,
+        "owner should be alice after acceptOwnership"
+    );
 }
 
 #[test]
@@ -333,7 +357,11 @@ fn test_auth_isauthorized_zero_caller_with_zero_owner() {
         &[encode_address([0u8; 20])],
     ));
     assert!(ok, "isAuthorized reverted");
-    assert_eq!(decode_u256(&out), 1, "zero address should be authorized when owner is zero");
+    assert_eq!(
+        decode_u256(&out),
+        1,
+        "zero address should be authorized when owner is zero"
+    );
 }
 
 #[test]

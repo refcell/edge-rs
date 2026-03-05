@@ -79,7 +79,11 @@ fn encode_address(addr: [u8; 20]) -> [u8; 32] {
 }
 
 fn decode_u256(output: &[u8]) -> u64 {
-    assert!(output.len() >= 32, "return value too short: {} bytes", output.len());
+    assert!(
+        output.len() >= 32,
+        "return value too short: {} bytes",
+        output.len()
+    );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -145,10 +149,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_reentrancy_guard_protected_withdraw_succeeds() {
-    let bc = compile_named(
-        "examples/patterns/reentrancy_guard.edge",
-        "ReentrancyGuard",
-    );
+    let bc = compile_named("examples/patterns/reentrancy_guard.edge", "ReentrancyGuard");
     let mut evm = EvmHandle::new(bc);
 
     // protectedWithdraw calls _lock, _doWithdraw, _unlock — all internal stubs.
@@ -162,10 +163,7 @@ fn test_reentrancy_guard_protected_withdraw_succeeds() {
 
 #[test]
 fn test_reentrancy_guard_unknown_selector_reverts() {
-    let bc = compile_named(
-        "examples/patterns/reentrancy_guard.edge",
-        "ReentrancyGuard",
-    );
+    let bc = compile_named("examples/patterns/reentrancy_guard.edge", "ReentrancyGuard");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -216,7 +214,10 @@ fn test_timelock_is_ready_unscheduled_returns_false() {
         &[[0u8; 32], encode_u256(9999)],
     ));
     assert!(ok, "isReady reverted");
-    assert!(!decode_bool(&out), "isReady should return false for unscheduled op");
+    assert!(
+        !decode_bool(&out),
+        "isReady should return false for unscheduled op"
+    );
 }
 
 #[test]
@@ -249,7 +250,10 @@ fn test_timelock_schedule_and_is_ready() {
         &[id, encode_u256(delay)],
     ));
     assert!(ok, "isReady reverted after schedule");
-    assert!(decode_bool(&out), "isReady should be true after scheduling with current_time >= delay");
+    assert!(
+        decode_bool(&out),
+        "isReady should be true after scheduling with current_time >= delay"
+    );
 }
 
 #[test]

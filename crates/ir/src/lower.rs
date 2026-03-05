@@ -202,11 +202,7 @@ impl Lowerer {
     ///
     /// Use this instead of [`lower`] when each contract has its own storage
     /// slots and fn_metas — avoids cross-contamination in multi-contract files.
-    pub fn lower_one(
-        &self,
-        program: &Program,
-        target_name: &str,
-    ) -> Result<IrProgram, LowerError> {
+    pub fn lower_one(&self, program: &Program, target_name: &str) -> Result<IrProgram, LowerError> {
         let mut contracts = Vec::new();
 
         for stmt in &program.stmts {
@@ -287,7 +283,8 @@ impl Lowerer {
                 .map(|m| (m.selector, m.is_pub))
                 .unwrap_or((Selector::ZERO, false));
 
-            let ir_fn = self.lower_fn_body(fn_name, selector, is_pub, &fn_decl.body, Some(fn_decl))?;
+            let ir_fn =
+                self.lower_fn_body(fn_name, selector, is_pub, &fn_decl.body, Some(fn_decl))?;
             functions.push(ir_fn);
         }
 
@@ -417,9 +414,7 @@ impl Lowerer {
                 Ok(())
             }
             Stmt::ConstAssign(_, _, _) | Stmt::TypeAssign(_, _, _) => Ok(()),
-            Stmt::Emit(name, args, _span) => {
-                self.lower_emit(ctx, &name.name, args)
-            }
+            Stmt::Emit(name, args, _span) => self.lower_emit(ctx, &name.name, args),
             Stmt::IfElse(branches, else_block) => {
                 let end_label = ctx.fresh_label("if_end");
 
@@ -452,7 +447,8 @@ impl Lowerer {
                 let end_label = ctx.fresh_label("while_end");
 
                 ctx.emit(IrInstruction::JumpDest(start_label.clone()));
-                ctx.loop_stack.push((start_label.clone(), end_label.clone()));
+                ctx.loop_stack
+                    .push((start_label.clone(), end_label.clone()));
 
                 // Skip body if condition is false
                 self.lower_expr(ctx, cond)?;
@@ -481,7 +477,8 @@ impl Lowerer {
                 let end_label = ctx.fresh_label("for_end");
 
                 ctx.emit(IrInstruction::JumpDest(start_label.clone()));
-                ctx.loop_stack.push((start_label.clone(), end_label.clone()));
+                ctx.loop_stack
+                    .push((start_label.clone(), end_label.clone()));
 
                 // Condition
                 if let Some(cond_expr) = cond {
@@ -512,7 +509,8 @@ impl Lowerer {
                 let end_label = ctx.fresh_label("loop_end");
 
                 ctx.emit(IrInstruction::JumpDest(start_label.clone()));
-                ctx.loop_stack.push((start_label.clone(), end_label.clone()));
+                ctx.loop_stack
+                    .push((start_label.clone(), end_label.clone()));
 
                 for item in &body.items {
                     self.lower_loop_item(ctx, item)?;
@@ -529,7 +527,8 @@ impl Lowerer {
                 let end_label = ctx.fresh_label("dowhile_end");
 
                 ctx.emit(IrInstruction::JumpDest(start_label.clone()));
-                ctx.loop_stack.push((start_label.clone(), end_label.clone()));
+                ctx.loop_stack
+                    .push((start_label.clone(), end_label.clone()));
 
                 for item in &body.items {
                     self.lower_loop_item(ctx, item)?;
@@ -543,9 +542,7 @@ impl Lowerer {
                 ctx.loop_stack.pop();
                 Ok(())
             }
-            Stmt::Match(scrutinee, arms, _) => {
-                self.lower_match(ctx, scrutinee, arms)
-            }
+            Stmt::Match(scrutinee, arms, _) => self.lower_match(ctx, scrutinee, arms),
             Stmt::CodeBlock(block) => {
                 for item in &block.stmts {
                     self.lower_block_item(ctx, item)?;
@@ -690,7 +687,7 @@ impl Lowerer {
 
         // Size and offset go on top (offset is topmost = first popped by LOG)
         ctx.emit_push_u64(mem_offset); // data length (bytes of non-indexed args)
-        ctx.emit_push_u64(0);          // data memory offset
+        ctx.emit_push_u64(0); // data memory offset
 
         // Total topics = sig_hash (1) + indexed args
         let n_topics = (1 + indexed_count).min(4) as u8;
@@ -760,7 +757,7 @@ impl Lowerer {
                     // Each member of the union gets an integer tag equal to its position.
                     // For now we use the arm index as the discriminant value.
                     ctx.emit(IrInstruction::Dup(1)); // dup discriminant
-                    ctx.emit_push_u32(i as u32);     // expected tag
+                    ctx.emit_push_u32(i as u32); // expected tag
                     ctx.emit(IrInstruction::Eq);
                     ctx.emit(IrInstruction::PushLabel(arm_labels[i].clone()));
                     ctx.emit(IrInstruction::JumpI);
@@ -809,33 +806,31 @@ impl Lowerer {
 
     fn lower_expr(&self, ctx: &mut FnContext, expr: &Expr) -> Result<(), LowerError> {
         match expr {
-            Expr::Literal(lit) => {
-                match lit.as_ref() {
-                    Lit::Int(n, _, _) => {
-                        let bytes = if *n == 0 {
-                            vec![0u8]
-                        } else {
-                            let b = n.to_be_bytes();
-                            let skip = b.iter().position(|&x| x != 0).unwrap_or(7);
-                            b[skip..].to_vec()
-                        };
-                        ctx.emit(IrInstruction::Push(bytes));
-                        Ok(())
-                    }
-                    Lit::Bool(b, _) => {
-                        ctx.emit(IrInstruction::Push(vec![if *b { 1 } else { 0 }]));
-                        Ok(())
-                    }
-                    Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
-                        ctx.emit(IrInstruction::Push(bytes.clone()));
-                        Ok(())
-                    }
-                    Lit::Str(_, _) => {
-                        ctx.emit(IrInstruction::Push(vec![0]));
-                        Ok(())
-                    }
+            Expr::Literal(lit) => match lit.as_ref() {
+                Lit::Int(n, _, _) => {
+                    let bytes = if *n == 0 {
+                        vec![0u8]
+                    } else {
+                        let b = n.to_be_bytes();
+                        let skip = b.iter().position(|&x| x != 0).unwrap_or(7);
+                        b[skip..].to_vec()
+                    };
+                    ctx.emit(IrInstruction::Push(bytes));
+                    Ok(())
                 }
-            }
+                Lit::Bool(b, _) => {
+                    ctx.emit(IrInstruction::Push(vec![if *b { 1 } else { 0 }]));
+                    Ok(())
+                }
+                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
+                    ctx.emit(IrInstruction::Push(bytes.clone()));
+                    Ok(())
+                }
+                Lit::Str(_, _) => {
+                    ctx.emit(IrInstruction::Push(vec![0]));
+                    Ok(())
+                }
+            },
             Expr::Ident(id) => {
                 if let Some(&slot) = ctx.storage_slots.get(&id.name) {
                     ctx.emit_push_u32(slot);

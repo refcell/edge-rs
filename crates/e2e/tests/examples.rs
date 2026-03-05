@@ -105,7 +105,10 @@ fn test_factory_compiles() {
 #[test]
 fn test_reentrancy_guard_compiles() {
     let bc = compile_contract("examples/patterns/reentrancy_guard.edge");
-    assert!(!bc.is_empty(), "reentrancy_guard.edge produced empty bytecode");
+    assert!(
+        !bc.is_empty(),
+        "reentrancy_guard.edge produced empty bytecode"
+    );
 }
 
 #[test]
@@ -127,7 +130,10 @@ fn test_tokens_erc20_compiles() {
 #[test]
 fn test_tokens_erc4626_compiles() {
     let bc = compile_contract("examples/tokens/erc4626.edge");
-    assert!(!bc.is_empty(), "tokens/erc4626.edge produced empty bytecode");
+    assert!(
+        !bc.is_empty(),
+        "tokens/erc4626.edge produced empty bytecode"
+    );
 }
 
 #[test]
@@ -161,7 +167,10 @@ fn test_types_arrays_compiles() {
 #[test]
 fn test_types_comptime_compiles() {
     let bc = compile_contract("examples/types/comptime.edge");
-    assert!(!bc.is_empty(), "types/comptime.edge produced empty bytecode");
+    assert!(
+        !bc.is_empty(),
+        "types/comptime.edge produced empty bytecode"
+    );
 }
 
 #[test]
@@ -173,7 +182,10 @@ fn test_types_enums_compiles() {
 #[test]
 fn test_types_generics_compiles() {
     let bc = compile_contract("examples/types/generics.edge");
-    assert!(!bc.is_empty(), "types/generics.edge produced empty bytecode");
+    assert!(
+        !bc.is_empty(),
+        "types/generics.edge produced empty bytecode"
+    );
 }
 
 #[test]

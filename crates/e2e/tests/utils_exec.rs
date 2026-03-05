@@ -59,7 +59,11 @@ fn encode_u256(val: u64) -> [u8; 32] {
 }
 
 fn decode_u256(output: &[u8]) -> u64 {
-    assert!(output.len() >= 32, "return value too short: {} bytes", output.len());
+    assert!(
+        output.len() >= 32,
+        "return value too short: {} bytes",
+        output.len()
+    );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -152,7 +156,11 @@ fn test_math_saturating_sub_underflow() {
         &[encode_u256(5), encode_u256(10)],
     ));
     assert!(ok, "saturating_sub reverted");
-    assert_eq!(decode_u256(&out), 0, "saturating_sub(5, 10) should return 0");
+    assert_eq!(
+        decode_u256(&out),
+        0,
+        "saturating_sub(5, 10) should return 0"
+    );
 }
 
 #[test]
@@ -164,7 +172,11 @@ fn test_math_saturating_sub_no_underflow() {
         &[encode_u256(10), encode_u256(5)],
     ));
     assert!(ok, "saturating_sub reverted");
-    assert_eq!(decode_u256(&out), 5, "saturating_sub(10, 5) should return 5");
+    assert_eq!(
+        decode_u256(&out),
+        5,
+        "saturating_sub(10, 5) should return 5"
+    );
 }
 
 #[test]
@@ -224,7 +236,11 @@ fn test_math_clamp_below_lo() {
         &[encode_u256(5), encode_u256(10), encode_u256(20)],
     ));
     assert!(ok, "clamp reverted");
-    assert_eq!(decode_u256(&out), 10, "clamp(5, 10, 20) should clamp to lo=10");
+    assert_eq!(
+        decode_u256(&out),
+        10,
+        "clamp(5, 10, 20) should clamp to lo=10"
+    );
 }
 
 #[test]
@@ -236,7 +252,11 @@ fn test_math_clamp_above_hi() {
         &[encode_u256(25), encode_u256(10), encode_u256(20)],
     ));
     assert!(ok, "clamp reverted");
-    assert_eq!(decode_u256(&out), 20, "clamp(25, 10, 20) should clamp to hi=20");
+    assert_eq!(
+        decode_u256(&out),
+        20,
+        "clamp(25, 10, 20) should clamp to hi=20"
+    );
 }
 
 #[test]
@@ -249,7 +269,11 @@ fn test_math_mul_div_down_exact() {
         &[encode_u256(6), encode_u256(4), encode_u256(3)],
     ));
     assert!(ok, "mul_div_down reverted");
-    assert_eq!(decode_u256(&out), 8, "mul_div_down(6, 4, 3) should return 8");
+    assert_eq!(
+        decode_u256(&out),
+        8,
+        "mul_div_down(6, 4, 3) should return 8"
+    );
 }
 
 #[test]
@@ -262,7 +286,11 @@ fn test_math_mul_div_down_truncates() {
         &[encode_u256(10), encode_u256(3), encode_u256(4)],
     ));
     assert!(ok, "mul_div_down reverted");
-    assert_eq!(decode_u256(&out), 7, "mul_div_down(10, 3, 4) should truncate to 7");
+    assert_eq!(
+        decode_u256(&out),
+        7,
+        "mul_div_down(10, 3, 4) should truncate to 7"
+    );
 }
 
 #[test]
@@ -288,7 +316,11 @@ fn test_math_mul_div_up_rounds_up() {
         &[encode_u256(10), encode_u256(3), encode_u256(4)],
     ));
     assert!(ok, "mul_div_up reverted");
-    assert_eq!(decode_u256(&out), 8, "mul_div_up(10, 3, 4) should round up to 8");
+    assert_eq!(
+        decode_u256(&out),
+        8,
+        "mul_div_up(10, 3, 4) should round up to 8"
+    );
 }
 
 #[test]
@@ -362,8 +394,10 @@ fn test_bits_popcount_values() {
     let mut evm = EvmHandle::new(bc);
 
     for (input, expected) in [(1u64, 1u64), (3, 2), (7, 3), (255, 8)] {
-        let (ok, out) =
-            evm.call(calldata(selector("popcount(uint256)"), &[encode_u256(input)]));
+        let (ok, out) = evm.call(calldata(
+            selector("popcount(uint256)"),
+            &[encode_u256(input)],
+        ));
         assert!(ok, "popcount({input}) reverted");
         assert_eq!(
             decode_u256(&out),
@@ -399,7 +433,10 @@ fn test_bits_is_power_of_two_false() {
             &[encode_u256(input)],
         ));
         assert!(ok, "is_power_of_two({input}) reverted");
-        assert!(!decode_bool(&out), "is_power_of_two({input}) should be false");
+        assert!(
+            !decode_bool(&out),
+            "is_power_of_two({input}) should be false"
+        );
     }
 }
 
@@ -476,7 +513,11 @@ fn test_bits_least_significant_bit_zero() {
         &[encode_u256(0)],
     ));
     assert!(ok, "least_significant_bit(0) reverted");
-    assert_eq!(decode_u256(&out), 256, "lsb(0) should return 256 (sentinel)");
+    assert_eq!(
+        decode_u256(&out),
+        256,
+        "lsb(0) should return 256 (sentinel)"
+    );
 }
 
 #[test]
@@ -497,8 +538,7 @@ fn test_bits_unknown_selector_reverts() {
 fn test_bytes_is_zero_true() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
-    let (ok, out) =
-        evm.call(calldata(selector("is_zero(bytes32)"), &[[0u8; 32]]));
+    let (ok, out) = evm.call(calldata(selector("is_zero(bytes32)"), &[[0u8; 32]]));
     assert!(ok, "is_zero reverted");
     assert!(decode_bool(&out), "is_zero(0) should return true");
 }
@@ -507,8 +547,7 @@ fn test_bytes_is_zero_true() {
 fn test_bytes_is_zero_false() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
-    let (ok, out) =
-        evm.call(calldata(selector("is_zero(bytes32)"), &[encode_u256(1)]));
+    let (ok, out) = evm.call(calldata(selector("is_zero(bytes32)"), &[encode_u256(1)]));
     assert!(ok, "is_zero reverted");
     assert!(!decode_bool(&out), "is_zero(1) should return false");
 }
@@ -523,7 +562,11 @@ fn test_bytes_left_pad_zero_shift() {
         &[encode_u256(0xff), encode_u256(0)],
     ));
     assert!(ok, "left_pad reverted");
-    assert_eq!(decode_u256(&out), 0xff, "left_pad(0xff, 0) should return 0xff");
+    assert_eq!(
+        decode_u256(&out),
+        0xff,
+        "left_pad(0xff, 0) should return 0xff"
+    );
 }
 
 #[test]
@@ -536,7 +579,11 @@ fn test_bytes_left_pad_one_byte() {
         &[encode_u256(1), encode_u256(1)],
     ));
     assert!(ok, "left_pad reverted");
-    assert_eq!(decode_u256(&out), 0x100, "left_pad(1, 1) should return 0x100");
+    assert_eq!(
+        decode_u256(&out),
+        0x100,
+        "left_pad(1, 1) should return 0x100"
+    );
 }
 
 #[test]

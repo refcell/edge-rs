@@ -76,7 +76,7 @@ impl Parser {
     /// list. Returns true when `(` is followed by `ident, ident, ..., ) =>` or just `) =>`.
     fn is_arrow_function_params(&self) -> bool {
         let mut i = self.cursor; // cursor is already past the '('
-        // Skip whitespace
+                                 // Skip whitespace
         while i < self.tokens.len()
             && matches!(
                 self.tokens[i].kind,
@@ -142,8 +142,7 @@ impl Parser {
                     {
                         i += 1;
                     }
-                    return i < self.tokens.len()
-                        && self.tokens[i].kind == TokenKind::FatArrow;
+                    return i < self.tokens.len() && self.tokens[i].kind == TokenKind::FatArrow;
                 }
                 _ => return false,
             }
@@ -668,9 +667,11 @@ impl Parser {
                 }
                 self.expect(TokenKind::CloseBrace)?;
                 Some(edge_ast::ImportPath::Nested(nested))
-            } else if self.check(&TokenKind::Operator(edge_types::tokens::Operator::Arithmetic(
-                edge_types::tokens::ArithmeticOperator::Mul,
-            ))) {
+            } else if self.check(&TokenKind::Operator(
+                edge_types::tokens::Operator::Arithmetic(
+                    edge_types::tokens::ArithmeticOperator::Mul,
+                ),
+            )) {
                 // Glob import: `use root::*`
                 self.advance();
                 Some(edge_ast::ImportPath::All)
@@ -1105,13 +1106,12 @@ impl Parser {
                     let start_tok = self.advance();
                     self.skip_whitespace_and_comments();
                     // Check if the return has a value (not immediately followed by , or })
-                    let expr = if self.check(&TokenKind::Comma)
-                        || self.check(&TokenKind::CloseBrace)
-                    {
-                        None
-                    } else {
-                        Some(self.parse_expr()?)
-                    };
+                    let expr =
+                        if self.check(&TokenKind::Comma) || self.check(&TokenKind::CloseBrace) {
+                            None
+                        } else {
+                            Some(self.parse_expr()?)
+                        };
                     let span = Span {
                         start: start_tok.span.start,
                         end: self.tokens[self.cursor - 1].span.end,
@@ -2018,13 +2018,9 @@ impl Parser {
                 Ok(TypeSig::Tuple(types))
             }
             // Struct type: { field: T, ... }
-            TokenKind::OpenBrace => {
-                self.parse_struct_type_sig(false)
-            }
+            TokenKind::OpenBrace => self.parse_struct_type_sig(false),
             // Array type: [T; N]
-            TokenKind::OpenBracket => {
-                self.parse_array_type_sig(false)
-            }
+            TokenKind::OpenBracket => self.parse_array_type_sig(false),
             // Packed struct/tuple/array: packed { ... } or packed (...) or packed [...]
             TokenKind::Keyword(Keyword::Packed) => {
                 self.advance();
@@ -2047,7 +2043,10 @@ impl Parser {
                     _ => {
                         let token = self.peek().clone();
                         Err(ParseError::InvalidTypeSig {
-                            message: format!("Expected '{{', '(' or '[' after 'packed', got: {:?}", token.kind),
+                            message: format!(
+                                "Expected '{{', '(' or '[' after 'packed', got: {:?}",
+                                token.kind
+                            ),
                             span: token.span,
                         })
                     }
@@ -2135,11 +2134,9 @@ impl Parser {
             if self.check(&TokenKind::Colon) {
                 self.advance();
                 constraints.push(self.parse_ident()?);
-                while self.check(&TokenKind::Operator(
-                    edge_types::tokens::Operator::Bitwise(
-                        edge_types::tokens::BitwiseOperator::And,
-                    ),
-                )) {
+                while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::And,
+                ))) {
                     self.advance();
                     constraints.push(self.parse_ident()?);
                 }
@@ -2164,9 +2161,7 @@ impl Parser {
     ///
     /// Used for impl blocks where the content can be either type parameters
     /// (like `T`) or concrete type arguments (like `u256`).
-    fn parse_optional_type_params_or_args(
-        &mut self,
-    ) -> ParseResult<Vec<edge_ast::ty::TypeParam>> {
+    fn parse_optional_type_params_or_args(&mut self) -> ParseResult<Vec<edge_ast::ty::TypeParam>> {
         self.skip_whitespace_and_comments();
         if !self.check(&TokenKind::Operator(
             edge_types::tokens::Operator::Comparison(
@@ -2239,19 +2234,15 @@ impl Parser {
 
             // If `|` follows (or we had a leading pipe), it's definitely a union
             let is_union = has_leading_pipe
-                || self.check(&TokenKind::Operator(
-                    edge_types::tokens::Operator::Bitwise(
-                        edge_types::tokens::BitwiseOperator::Or,
-                    ),
-                ));
+                || self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::Or,
+                )));
 
             if is_union {
                 let mut members = vec![first_member];
-                while self.check(&TokenKind::Operator(
-                    edge_types::tokens::Operator::Bitwise(
-                        edge_types::tokens::BitwiseOperator::Or,
-                    ),
-                )) {
+                while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::Or,
+                ))) {
                     self.advance(); // consume |
                     self.skip_whitespace_and_comments();
                     members.push(self.parse_union_member()?);
