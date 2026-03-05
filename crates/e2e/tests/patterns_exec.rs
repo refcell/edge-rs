@@ -2,7 +2,7 @@
 
 //! Execution-level acceptance tests for pattern contracts.
 //!
-//! Tests compile reentrancy_guard.edge and timelock.edge to bytecode, deploy
+//! Tests compile `reentrancy_guard.edge` and `timelock.edge` to bytecode, deploy
 //! on an in-memory revm EVM, and verify stateful behaviour.
 //!
 //! ## Compiler caveats
@@ -54,7 +54,7 @@ fn compile_named(relative_path: &str, contract_name: &str) -> Vec<u8> {
         .bytecodes
         .expect("no bytecodes map")
         .get(contract_name)
-        .unwrap_or_else(|| panic!("contract {} not found", contract_name))
+        .unwrap_or_else(|| panic!("contract {contract_name} not found"))
         .clone()
 }
 

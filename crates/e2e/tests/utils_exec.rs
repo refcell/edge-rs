@@ -6,8 +6,8 @@
 //! in-memory revm EVM, and verify pure-function output correctness.
 //!
 //! ## Compiler caveats
-//! Top-level constants (WAD, ADDR_MASK, etc.) resolve to 0 when referenced
-//! by name in function bodies, so WAD-based helpers (wad_mul, wad_div) are
+//! Top-level constants (`WAD`, `ADDR_MASK`, etc.) resolve to 0 when referenced
+//! by name in function bodies, so WAD-based helpers (`wad_mul`, `wad_div`) are
 //! not tested here. Functions that only use parameters and integer literals
 //! work correctly.
 

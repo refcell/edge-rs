@@ -78,7 +78,7 @@ struct FnContext {
     label_counter: u32,
     /// Function name prefix used to namespace labels across functions
     fn_name: String,
-    /// Stack of (loop_start_label, loop_end_label) for break/continue resolution
+    /// Stack of (`loop_start_label`, `loop_end_label`) for break/continue resolution
     loop_stack: Vec<(String, String)>,
 }
 
@@ -157,7 +157,7 @@ pub struct Lowerer {
 
 impl Lowerer {
     /// Create a new lowerer
-    pub fn new(
+    pub const fn new(
         storage_slots: IndexMap<String, u32>,
         fn_metas: Vec<FnMeta>,
         event_metas: Vec<EventMeta>,
@@ -200,8 +200,8 @@ impl Lowerer {
 
     /// Lower only a single named contract from the program to IR.
     ///
-    /// Use this instead of [`lower`] when each contract has its own storage
-    /// slots and fn_metas — avoids cross-contamination in multi-contract files.
+    /// Use this instead of [`Self::lower`] when each contract has its own storage
+    /// slots and `fn_metas` — avoids cross-contamination in multi-contract files.
     pub fn lower_one(&self, program: &Program, target_name: &str) -> Result<IrProgram, LowerError> {
         let mut contracts = Vec::new();
 
@@ -413,7 +413,20 @@ impl Lowerer {
                 ctx.emit(IrInstruction::Pop);
                 Ok(())
             }
-            Stmt::ConstAssign(_, _, _) | Stmt::TypeAssign(_, _, _) => Ok(()),
+            Stmt::ConstAssign(_, _, _)
+            | Stmt::TypeAssign(_, _, _)
+            | Stmt::EventDecl(_)
+            | Stmt::TraitDecl(_, _)
+            | Stmt::ImplBlock(_)
+            | Stmt::AbiDecl(_)
+            | Stmt::ModuleDecl(_)
+            | Stmt::ModuleImport(_)
+            | Stmt::ComptimeBranch(_)
+            | Stmt::ComptimeFn(_, _)
+            // ContractDecl / ContractImpl / FnAssign are handled at program level
+            | Stmt::ContractDecl(_)
+            | Stmt::ContractImpl(_)
+            | Stmt::FnAssign(_, _) => Ok(()),
             Stmt::Emit(name, args, _span) => self.lower_emit(ctx, &name.name, args),
             Stmt::IfElse(branches, else_block) => {
                 let end_label = ctx.fresh_label("if_end");
@@ -549,17 +562,6 @@ impl Lowerer {
                 }
                 Ok(())
             }
-            // Declarations that produce no runtime code
-            Stmt::EventDecl(_)
-            | Stmt::TraitDecl(_, _)
-            | Stmt::ImplBlock(_)
-            | Stmt::AbiDecl(_)
-            | Stmt::ModuleDecl(_)
-            | Stmt::ModuleImport(_)
-            | Stmt::ComptimeBranch(_)
-            | Stmt::ComptimeFn(_, _) => Ok(()),
-            // ContractDecl / ContractImpl / FnAssign are handled at program level
-            Stmt::ContractDecl(_) | Stmt::ContractImpl(_) | Stmt::FnAssign(_, _) => Ok(()),
             Stmt::IfMatch(_, _, _) => {
                 // if-matches: simplified — always fall through for now
                 Ok(())
@@ -609,7 +611,7 @@ impl Lowerer {
         }
     }
 
-    /// Emit keccak256(abi.encode(key, base_slot)) and leave the storage slot on the stack.
+    /// Emit keccak256(abi.encode(key, `base_slot`)) and leave the storage slot on the stack.
     fn emit_mapping_slot(
         &self,
         ctx: &mut FnContext,
@@ -650,13 +652,14 @@ impl Lowerer {
         // Look up event metadata
         let meta = self.event_metas.iter().find(|e| e.name == event_name);
 
-        let (sig_hash, indexed_count) = if let Some(m) = meta {
-            (m.sig_hash, m.indexed_count as usize)
-        } else {
-            // Unknown event: compute sig hash from name alone, treat all args as non-indexed
-            let hash = Self::keccak256(event_name.as_bytes());
-            (hash, 0usize)
-        };
+        let (sig_hash, indexed_count) = meta.map_or_else(
+            || {
+                // Unknown event: compute sig hash from name alone, treat all args as non-indexed
+                let hash = Self::keccak256(event_name.as_bytes());
+                (hash, 0usize)
+            },
+            |m| (m.sig_hash, m.indexed_count as usize),
+        );
 
         // Separate indexed and non-indexed args
         let indexed_args = &args[..indexed_count.min(args.len())];
@@ -1062,7 +1065,7 @@ impl Lowerer {
                 ctx.emit(IrInstruction::Push(vec![0]));
                 Ok(())
             }
-            Expr::Paren(inner, _) => self.lower_expr(ctx, inner),
+            Expr::Paren(inner, _) | Expr::Comptime(inner, _) => self.lower_expr(ctx, inner),
             Expr::Path(_, _) | Expr::UnionInstantiation(_, _, _, _) => {
                 // Union/path expressions in value position push their discriminant tag.
                 ctx.emit(IrInstruction::Push(vec![0]));
@@ -1090,7 +1093,6 @@ impl Lowerer {
                 ctx.emit(IrInstruction::Push(vec![0]));
                 Ok(())
             }
-            Expr::Comptime(inner, _) => self.lower_expr(ctx, inner),
             Expr::PatternMatch(scrutinee, _pattern, _) => {
                 // `if expr matches Pattern` — evaluate the scrutinee, push 1 (always matches for MVP)
                 self.lower_expr(ctx, scrutinee)?;

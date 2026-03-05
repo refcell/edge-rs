@@ -298,13 +298,13 @@ impl Parser {
             let span = Span {
                 start: start_tok.span.start,
                 end: end_span.end,
-                file: start_tok.span.file.clone(),
+                file: start_tok.span.file,
             };
 
             // Return a code block with the declaration and assignment
             let decl = Stmt::VarDecl(name.clone(), ty, span.clone());
             let assign = Stmt::Expr(Expr::Assign(
-                Box::new(Expr::Ident(name.clone())),
+                Box::new(Expr::Ident(name)),
                 Box::new(init_expr),
                 span.clone(),
             ));
@@ -1489,7 +1489,7 @@ impl Parser {
             let span = Span {
                 start: cond.span().start,
                 end: else_expr.span().end,
-                file: cond.span().file.clone(),
+                file: cond.span().file,
             };
             return Ok(Expr::Ternary(
                 Box::new(cond),
@@ -2534,13 +2534,11 @@ impl Parser {
                     let expr = self.parse_expr()?;
                     // If '}' follows, this is a tail expression
                     self.skip_whitespace_and_comments();
-                    if self.check(&TokenKind::CloseBrace) {
-                        stmts.push(BlockItem::Stmt(Box::new(Stmt::Expr(expr))));
-                    } else {
+                    if !self.check(&TokenKind::CloseBrace) {
                         // Not a tail expression, need semicolon
                         self.expect(TokenKind::Semicolon)?;
-                        stmts.push(BlockItem::Stmt(Box::new(Stmt::Expr(expr))));
                     }
+                    stmts.push(BlockItem::Stmt(Box::new(Stmt::Expr(expr))));
                 }
             }
         }

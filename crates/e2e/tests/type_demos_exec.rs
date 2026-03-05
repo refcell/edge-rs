@@ -39,7 +39,7 @@ fn compile_named(relative_path: &str, contract_name: &str) -> Vec<u8> {
         .bytecodes
         .expect("no bytecodes map")
         .get(contract_name)
-        .unwrap_or_else(|| panic!("contract {} not found", contract_name))
+        .unwrap_or_else(|| panic!("contract {contract_name} not found"))
         .clone()
 }
 
