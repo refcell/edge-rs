@@ -52,13 +52,6 @@ fn encode_u256(val: u64) -> [u8; 32] {
     encoded
 }
 
-/// Encode an address as a 32-byte left-padded word.
-fn encode_address(addr: [u8; 20]) -> [u8; 32] {
-    let mut encoded = [0u8; 32];
-    encoded[12..32].copy_from_slice(&addr);
-    encoded
-}
-
 /// Build calldata: 4-byte selector followed by encoded arguments (32 bytes each).
 fn encode_call_with_args(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
     let mut calldata = sel.to_vec();

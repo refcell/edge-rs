@@ -139,7 +139,7 @@ impl EvmHandle {
 // =============================================================================
 
 /// Create a test address from a single byte suffix.
-fn test_address(suffix: u8) -> [u8; 20] {
+const fn test_address(suffix: u8) -> [u8; 20] {
     let mut addr = [0u8; 20];
     addr[19] = suffix;
     addr

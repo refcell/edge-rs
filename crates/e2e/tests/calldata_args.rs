@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-use std::path::PathBuf;
-
 use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind},
@@ -9,7 +7,7 @@ use edge_driver::{
 use revm::{
     context::{Context, TxEnv},
     database::{CacheDB, EmptyDB},
-    handler::{MainBuilder, MainnetContext},
+    handler::MainBuilder,
     primitives::{Address, Bytes, TxKind},
     state::{AccountInfo, Bytecode},
     ExecuteCommitEvm, MainContext, MainnetEvm,
@@ -39,21 +37,6 @@ fn decode_u256(output: &[u8]) -> u64 {
     );
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
-}
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn compile_contract(code: &str) -> Vec<u8> {
-    let tmp_path = "/tmp/edge_test.edge";
-    std::fs::write(tmp_path, code).expect("failed to write test file");
-    let path = PathBuf::from(tmp_path);
-    let mut config = CompilerConfig::new(path);
-    config.emit = EmitKind::Bytecode;
-    let mut compiler = Compiler::new(config).expect("compiler init failed");
-    let output = compiler.compile().expect("compile failed");
-    output.bytecode.expect("no bytecode produced")
 }
 
 const CONTRACT_ADDR: Address = Address::new([
