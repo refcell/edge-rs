@@ -6,11 +6,12 @@
 //!
 //! Only runs at optimization level >= 2.
 
-use std::collections::HashMap;
-use std::hash::{Hash, Hasher};
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 
-use crate::assembler::AsmInstruction;
-use crate::opcode::Opcode;
+use crate::{assembler::AsmInstruction, opcode::Opcode};
 
 /// Minimum number of instructions in an extractable sequence.
 const MIN_SEQ_LEN: usize = 5;
@@ -91,7 +92,10 @@ fn find_straight_line_regions(instructions: &[AsmInstruction]) -> Vec<Region> {
             _ => {
                 if let Some(s) = start.take() {
                     if i - s >= MIN_SEQ_LEN {
-                        regions.push(Region { start: s, len: i - s });
+                        regions.push(Region {
+                            start: s,
+                            len: i - s,
+                        });
                     }
                 }
             }
@@ -205,10 +209,7 @@ fn is_halting(inst: &AsmInstruction) -> bool {
 }
 
 /// Find all candidate repeated subsequences.
-fn find_candidates(
-    instructions: &[AsmInstruction],
-    regions: &[Region],
-) -> Vec<Candidate> {
+fn find_candidates(instructions: &[AsmInstruction], regions: &[Region]) -> Vec<Candidate> {
     // Hash all subsequences within regions, keyed by (hash, length)
     let mut hash_groups: HashMap<(u64, usize), Vec<usize>> = HashMap::new();
 
@@ -348,10 +349,7 @@ fn select_candidates(mut candidates: Vec<Candidate>) -> Vec<Candidate> {
 }
 
 /// Rewrite instructions: replace inline occurrences with call stubs, append subroutines.
-fn rewrite(
-    instructions: Vec<AsmInstruction>,
-    candidates: Vec<Candidate>,
-) -> Vec<AsmInstruction> {
+fn rewrite(instructions: Vec<AsmInstruction>, candidates: Vec<Candidate>) -> Vec<AsmInstruction> {
     // Build map: position -> (candidate_index, occurrence_index)
     let mut replacement_map: HashMap<usize, (usize, usize)> = HashMap::new();
     for (ci, candidate) in candidates.iter().enumerate() {
@@ -533,15 +531,15 @@ mod tests {
     fn test_extraction_with_three_occurrences() {
         // Build a sequence that's long enough (>15 bytes) and repeat 3 times
         let seq: Vec<AsmInstruction> = vec![
-            AsmInstruction::Push(vec![0x00]),                     // 2 bytes
-            AsmInstruction::Push(vec![0x00]),                     // 2 bytes
-            AsmInstruction::Op(Opcode::MStore),                   // 1 byte
-            AsmInstruction::Push(vec![0x01]),                     // 2 bytes
-            AsmInstruction::Push(vec![0x20]),                     // 2 bytes
-            AsmInstruction::Op(Opcode::MStore),                   // 1 byte
-            AsmInstruction::Push(vec![0x40]),                     // 2 bytes
-            AsmInstruction::Push(vec![0x00]),                     // 2 bytes
-            AsmInstruction::Op(Opcode::Keccak256),                // 1 byte = 15 bytes
+            AsmInstruction::Push(vec![0x00]),      // 2 bytes
+            AsmInstruction::Push(vec![0x00]),      // 2 bytes
+            AsmInstruction::Op(Opcode::MStore),    // 1 byte
+            AsmInstruction::Push(vec![0x01]),      // 2 bytes
+            AsmInstruction::Push(vec![0x20]),      // 2 bytes
+            AsmInstruction::Op(Opcode::MStore),    // 1 byte
+            AsmInstruction::Push(vec![0x40]),      // 2 bytes
+            AsmInstruction::Push(vec![0x00]),      // 2 bytes
+            AsmInstruction::Op(Opcode::Keccak256), // 1 byte = 15 bytes
         ];
 
         let mut instrs = Vec::new();
@@ -554,11 +552,18 @@ mod tests {
         let result = extract_subroutines(instrs.clone());
 
         // Should have subroutine labels
-        let has_sub_label = result.iter().any(|i| matches!(i, AsmInstruction::Label(l) if l.starts_with("__sub_")));
-        assert!(has_sub_label, "Should have subroutine labels after extraction");
+        let has_sub_label = result
+            .iter()
+            .any(|i| matches!(i, AsmInstruction::Label(l) if l.starts_with("__sub_")));
+        assert!(
+            has_sub_label,
+            "Should have subroutine labels after extraction"
+        );
 
         // Should have PushLabel for return addresses
-        let has_push_label = result.iter().any(|i| matches!(i, AsmInstruction::PushLabel(_)));
+        let has_push_label = result
+            .iter()
+            .any(|i| matches!(i, AsmInstruction::PushLabel(_)));
         assert!(has_push_label, "Should have PushLabel for return addresses");
     }
 }

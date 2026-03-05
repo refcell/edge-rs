@@ -131,7 +131,11 @@ pub fn lower_and_optimize(
             .last()
             .ok_or_else(|| IrError::Extraction("no output from extract".to_owned()))?;
 
-        tracing::info!("Optimized contract {} at -O{}", contract.name, optimization_level);
+        tracing::info!(
+            "Optimized contract {} at -O{}",
+            contract.name,
+            optimization_level
+        );
 
         let optimized_runtime = sexp::sexp_to_expr(extracted_sexp)?;
         optimized_contracts.push(EvmContract {
@@ -216,7 +220,10 @@ mod tests {
         let contract = &ir_program.contracts[0];
         let runtime_sexp = sexp::expr_to_sexp(&contract.runtime);
         eprintln!("sexp length: {}", runtime_sexp.len());
-        eprintln!("sexp (first 500): {}", &runtime_sexp[..runtime_sexp.len().min(500)]);
+        eprintln!(
+            "sexp (first 500): {}",
+            &runtime_sexp[..runtime_sexp.len().min(500)]
+        );
 
         let schedule = schedule::make_schedule(1);
         let egglog_program = format!(

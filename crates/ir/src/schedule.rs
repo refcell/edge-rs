@@ -22,7 +22,8 @@ pub fn make_schedule(optimization_level: u8) -> String {
             // Fast, safe optimizations only
             "(run-schedule
                 (repeat 3
-                    (run peepholes)))".to_owned()
+                    (run peepholes)))"
+                .to_owned()
         }
         2 => {
             // Full optimization suite
@@ -34,7 +35,8 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run storage-opt)
                         (run memory-opt)
                         (run dead-code)
-                        (run cse-rules))))".to_owned()
+                        (run cse-rules))))"
+                .to_owned()
         }
         _ => {
             // Aggressive: more iterations
@@ -46,7 +48,8 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run storage-opt)
                         (run memory-opt)
                         (run dead-code)
-                        (run cse-rules))))".to_owned()
+                        (run cse-rules))))"
+                .to_owned()
         }
     }
 }

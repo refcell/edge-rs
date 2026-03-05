@@ -4,21 +4,36 @@
 
 use alloy_primitives::{Address, U256};
 use edge_evm_tests::{
-    abi_decode_bool, abi_decode_u256, abi_encode_address, abi_encode_u256, fn_selector,
-    EvmTestHost,
+    abi_decode_bool, abi_decode_u256, abi_encode_address, abi_encode_u256, fn_selector, EvmTestHost,
 };
 
 const ERC20_PATH: &str = "../../examples/test_erc20.edge";
 
-fn sel_total_supply() -> [u8; 4] { fn_selector("totalSupply()") }
-fn sel_balance_of() -> [u8; 4] { fn_selector("balanceOf(address)") }
-fn sel_transfer() -> [u8; 4] { fn_selector("transfer(address,uint256)") }
-fn sel_allowance() -> [u8; 4] { fn_selector("allowance(address,address)") }
-fn sel_approve() -> [u8; 4] { fn_selector("approve(address,uint256)") }
-fn sel_transfer_from() -> [u8; 4] { fn_selector("transferFrom(address,address,uint256)") }
-fn sel_mint() -> [u8; 4] { fn_selector("mint(address,uint256)") }
+fn sel_total_supply() -> [u8; 4] {
+    fn_selector("totalSupply()")
+}
+fn sel_balance_of() -> [u8; 4] {
+    fn_selector("balanceOf(address)")
+}
+fn sel_transfer() -> [u8; 4] {
+    fn_selector("transfer(address,uint256)")
+}
+fn sel_allowance() -> [u8; 4] {
+    fn_selector("allowance(address,address)")
+}
+fn sel_approve() -> [u8; 4] {
+    fn_selector("approve(address,uint256)")
+}
+fn sel_transfer_from() -> [u8; 4] {
+    fn_selector("transferFrom(address,address,uint256)")
+}
+fn sel_mint() -> [u8; 4] {
+    fn_selector("mint(address,uint256)")
+}
 
-fn addr(n: u8) -> Address { Address::from([n; 20]) }
+fn addr(n: u8) -> Address {
+    Address::from([n; 20])
+}
 
 fn args_addr_u256(a: Address, v: U256) -> Vec<u8> {
     let mut args = abi_encode_address(a);

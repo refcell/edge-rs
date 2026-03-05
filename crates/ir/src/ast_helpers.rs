@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use crate::schema::{
-    EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType,
-    EvmUnaryOp, RcExpr,
+    EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, EvmUnaryOp,
+    RcExpr,
 };
 
 // ---- Constants ----

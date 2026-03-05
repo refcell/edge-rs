@@ -7,10 +7,18 @@ use edge_evm_tests::{abi_decode_u256, fn_selector, EvmTestHost};
 
 const COUNTER_PATH: &str = "../../examples/counter.edge";
 
-fn sel_get() -> [u8; 4] { fn_selector("get()") }
-fn sel_increment() -> [u8; 4] { fn_selector("increment()") }
-fn sel_decrement() -> [u8; 4] { fn_selector("decrement()") }
-fn sel_reset() -> [u8; 4] { fn_selector("reset()") }
+fn sel_get() -> [u8; 4] {
+    fn_selector("get()")
+}
+fn sel_increment() -> [u8; 4] {
+    fn_selector("increment()")
+}
+fn sel_decrement() -> [u8; 4] {
+    fn_selector("decrement()")
+}
+fn sel_reset() -> [u8; 4] {
+    fn_selector("reset()")
+}
 
 #[test]
 fn counter_deploy() {
@@ -83,23 +91,38 @@ fn counter_full_sequence() {
     let mut host = EvmTestHost::deploy_edge(COUNTER_PATH, 0);
 
     // Start at 0
-    assert_eq!(abi_decode_u256(&host.call(sel_get(), &[]).output), U256::ZERO);
+    assert_eq!(
+        abi_decode_u256(&host.call(sel_get(), &[]).output),
+        U256::ZERO
+    );
 
     // Increment to 1
     host.call(sel_increment(), &[]);
-    assert_eq!(abi_decode_u256(&host.call(sel_get(), &[]).output), U256::from(1));
+    assert_eq!(
+        abi_decode_u256(&host.call(sel_get(), &[]).output),
+        U256::from(1)
+    );
 
     // Increment to 2
     host.call(sel_increment(), &[]);
-    assert_eq!(abi_decode_u256(&host.call(sel_get(), &[]).output), U256::from(2));
+    assert_eq!(
+        abi_decode_u256(&host.call(sel_get(), &[]).output),
+        U256::from(2)
+    );
 
     // Decrement to 1
     host.call(sel_decrement(), &[]);
-    assert_eq!(abi_decode_u256(&host.call(sel_get(), &[]).output), U256::from(1));
+    assert_eq!(
+        abi_decode_u256(&host.call(sel_get(), &[]).output),
+        U256::from(1)
+    );
 
     // Reset to 0
     host.call(sel_reset(), &[]);
-    assert_eq!(abi_decode_u256(&host.call(sel_get(), &[]).output), U256::ZERO);
+    assert_eq!(
+        abi_decode_u256(&host.call(sel_get(), &[]).output),
+        U256::ZERO
+    );
 }
 
 #[test]

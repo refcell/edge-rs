@@ -63,7 +63,11 @@ pub struct AstToEgglog {
     storage_fields: Vec<RcExpr>,
     /// Internal functions available for inlining in the current contract
     /// Maps function name -> (fn_decl ref data, body)
-    contract_functions: Vec<(String, Vec<(String, edge_ast::ty::TypeSig)>, edge_ast::CodeBlock)>,
+    contract_functions: Vec<(
+        String,
+        Vec<(String, edge_ast::ty::TypeSig)>,
+        edge_ast::CodeBlock,
+    )>,
     /// Events declared in the program (name -> (params with indexed info and type))
     events: IndexMap<String, Vec<(String, bool, edge_ast::ty::TypeSig)>>,
 }
@@ -185,11 +189,8 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                self.contract_functions.push((
-                    fn_decl.name.name.clone(),
-                    params,
-                    body.clone(),
-                ));
+                self.contract_functions
+                    .push((fn_decl.name.name.clone(), params, body.clone()));
             }
         }
 
@@ -197,8 +198,7 @@ impl AstToEgglog {
         let mut fn_bodies: Vec<(&edge_ast::ContractFnDecl, Option<RcExpr>)> = Vec::new();
         for fn_decl in &contract.functions {
             if let Some(body) = &fn_decl.body {
-                let body_ir =
-                    self.lower_contract_fn_body(&contract_name, fn_decl, body)?;
+                let body_ir = self.lower_contract_fn_body(&contract_name, fn_decl, body)?;
                 fn_bodies.push((fn_decl, Some(body_ir)));
             } else {
                 fn_bodies.push((fn_decl, None));
@@ -228,10 +228,7 @@ impl AstToEgglog {
             })
             .collect();
         let constructor = if persistent_slots.is_empty() {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                constructor_ctx,
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx)
         } else {
             let mut sstores: Vec<RcExpr> = Vec::new();
             let init_state = Rc::new(EvmExpr::Arg(
@@ -474,17 +471,10 @@ impl AstToEgglog {
                     let offset = ast_helpers::const_int(0, self.current_ctx.clone());
                     let size = ast_helpers::const_int(32, self.current_ctx.clone());
                     // Store value at memory offset 0 (as a separate compiled expression)
-                    let mstore_expr = ast_helpers::mstore(
-                        offset.clone(),
-                        val,
-                        self.current_state.clone(),
-                    );
+                    let mstore_expr =
+                        ast_helpers::mstore(offset.clone(), val, self.current_state.clone());
                     self.current_state = mstore_expr.clone();
-                    let ret = ast_helpers::return_op(
-                        offset,
-                        size,
-                        self.current_state.clone(),
-                    );
+                    let ret = ast_helpers::return_op(offset, size, self.current_state.clone());
                     // Emit MStore first, then RETURN — the codegen ignores
                     // state parameters, so MStore must be a separate expression
                     Ok(ast_helpers::concat(
@@ -506,25 +496,20 @@ impl AstToEgglog {
                 self.lower_if_else(branches, else_block.as_ref())
             }
 
-            edge_ast::Stmt::WhileLoop(cond, loop_block) => {
-                self.lower_while_loop(cond, loop_block)
-            }
+            edge_ast::Stmt::WhileLoop(cond, loop_block) => self.lower_while_loop(cond, loop_block),
 
-            edge_ast::Stmt::ForLoop(init, cond, update, loop_block) => {
-                self.lower_for_loop(init.as_deref(), cond.as_ref(), update.as_deref(), loop_block)
-            }
+            edge_ast::Stmt::ForLoop(init, cond, update, loop_block) => self.lower_for_loop(
+                init.as_deref(),
+                cond.as_ref(),
+                update.as_deref(),
+                loop_block,
+            ),
 
-            edge_ast::Stmt::Loop(loop_block) => {
-                self.lower_infinite_loop(loop_block)
-            }
+            edge_ast::Stmt::Loop(loop_block) => self.lower_infinite_loop(loop_block),
 
-            edge_ast::Stmt::DoWhile(loop_block, cond) => {
-                self.lower_do_while(loop_block, cond)
-            }
+            edge_ast::Stmt::DoWhile(loop_block, cond) => self.lower_do_while(loop_block, cond),
 
-            edge_ast::Stmt::Emit(event_name, args, _span) => {
-                self.lower_emit(event_name, args)
-            }
+            edge_ast::Stmt::Emit(event_name, args, _span) => self.lower_emit(event_name, args),
 
             edge_ast::Stmt::Expr(expr) => self.lower_expr(expr),
 
@@ -636,38 +621,26 @@ impl AstToEgglog {
                     self.current_ctx.clone(),
                 )))
             }
-            edge_ast::Lit::Bool(val, _span) => Ok(ast_helpers::const_bool(
-                *val,
-                self.current_ctx.clone(),
-            )),
+            edge_ast::Lit::Bool(val, _span) => {
+                Ok(ast_helpers::const_bool(*val, self.current_ctx.clone()))
+            }
             edge_ast::Lit::Hex(bytes, _span) => {
-                let hex_str = bytes
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
             edge_ast::Lit::Bin(bytes, _span) => {
-                let hex_str = bytes
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
             edge_ast::Lit::Str(s, _span) => {
                 // Strings become their keccak256 hash in most EVM contexts
                 // For now, store as BigInt of the raw bytes
-                let hex_str = s.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = s
+                    .as_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
         }
     }
@@ -807,11 +780,7 @@ impl AstToEgglog {
     }
 
     /// Lower a unary operator.
-    fn lower_unary_op(
-        &self,
-        op: &edge_ast::UnaryOp,
-        expr: RcExpr,
-    ) -> Result<RcExpr, IrError> {
+    fn lower_unary_op(&self, op: &edge_ast::UnaryOp, expr: RcExpr) -> Result<RcExpr, IrError> {
         let ir_op = match op {
             edge_ast::UnaryOp::Neg => EvmUnaryOp::Neg,
             edge_ast::UnaryOp::BitwiseNot => EvmUnaryOp::Not,
@@ -862,9 +831,10 @@ impl AstToEgglog {
             self.scopes.push(Scope::new());
             for (i, (param_name, param_ty)) in params.iter().enumerate() {
                 let ty = self.lower_type_sig(param_ty);
-                let val = args_ir.get(i).cloned().unwrap_or_else(|| {
-                    ast_helpers::const_int(0, self.current_ctx.clone())
-                });
+                let val = args_ir
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
                 let binding = VarBinding {
                     value: val,
                     location: DataLocation::Stack,
@@ -891,10 +861,7 @@ impl AstToEgglog {
             .collect::<Result<_, _>>()?;
 
         let arg_tuple = match args_ir.len() {
-            0 => ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            ),
+            0 => ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone()),
             1 => ast_helpers::single(args_ir.into_iter().next().expect("checked len")),
             _ => {
                 let mut result = ast_helpers::single(args_ir[0].clone());
@@ -909,11 +876,7 @@ impl AstToEgglog {
     }
 
     /// Lower a builtin call (@caller, @callvalue, etc.).
-    fn lower_builtin(
-        &mut self,
-        name: &str,
-        _args: &[edge_ast::Expr],
-    ) -> Result<RcExpr, IrError> {
+    fn lower_builtin(&mut self, name: &str, _args: &[edge_ast::Expr]) -> Result<RcExpr, IrError> {
         let env_op = match name {
             "caller" => EvmEnvOp::Caller,
             "callvalue" | "value" => EvmEnvOp::CallValue,
@@ -932,9 +895,7 @@ impl AstToEgglog {
             "codesize" => EvmEnvOp::CodeSize,
             "returndatasize" => EvmEnvOp::ReturnDataSize,
             _ => {
-                return Err(IrError::Unsupported(format!(
-                    "unknown builtin: @{name}"
-                )));
+                return Err(IrError::Unsupported(format!("unknown builtin: @{name}")));
             }
         };
         Ok(Rc::new(EvmExpr::EnvRead(
@@ -969,16 +930,11 @@ impl AstToEgglog {
         } else if let Some(block) = else_block {
             self.lower_code_block(block)?
         } else {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone())
         };
 
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::if_then_else(cond_ir, inputs, then_ir, else_ir))
     }
 
@@ -995,15 +951,10 @@ impl AstToEgglog {
             ast_helpers::single(cond_ir.clone()),
             ast_helpers::single(body_ir),
         );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         let loop_ir = ast_helpers::do_while(inputs.clone(), pred_and_body);
-        let empty = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::if_then_else(cond_ir, inputs, loop_ir, empty))
     }
 
@@ -1034,30 +985,19 @@ impl AstToEgglog {
         let update_ir = if let Some(update_stmt) = update {
             self.lower_stmt(update_stmt)?
         } else {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone())
         };
 
         // Combine: pred_and_body = (cond, body, update)
         let pred_and_body = ast_helpers::concat(
             ast_helpers::single(cond_ir.clone()),
-            ast_helpers::concat(
-                ast_helpers::single(body_ir),
-                ast_helpers::single(update_ir),
-            ),
+            ast_helpers::concat(ast_helpers::single(body_ir), ast_helpers::single(update_ir)),
         );
 
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         let loop_ir = ast_helpers::do_while(inputs.clone(), pred_and_body);
-        let empty = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
 
         self.scopes.pop();
 
@@ -1065,20 +1005,15 @@ impl AstToEgglog {
     }
 
     /// Lower an infinite loop.
-    fn lower_infinite_loop(
-        &mut self,
-        loop_block: &edge_ast::LoopBlock,
-    ) -> Result<RcExpr, IrError> {
+    fn lower_infinite_loop(&mut self, loop_block: &edge_ast::LoopBlock) -> Result<RcExpr, IrError> {
         let body_ir = self.lower_loop_block(loop_block)?;
         let true_const = ast_helpers::const_bool(true, self.current_ctx.clone());
         let pred_and_body = ast_helpers::concat(
             ast_helpers::single(true_const),
             ast_helpers::single(body_ir),
         );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::do_while(inputs, pred_and_body))
     }
 
@@ -1090,26 +1025,17 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         let body_ir = self.lower_loop_block(loop_block)?;
         let cond_ir = self.lower_expr(cond)?;
-        let pred_and_body = ast_helpers::concat(
-            ast_helpers::single(cond_ir),
-            ast_helpers::single(body_ir),
-        );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let pred_and_body =
+            ast_helpers::concat(ast_helpers::single(cond_ir), ast_helpers::single(body_ir));
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::do_while(inputs, pred_and_body))
     }
 
     /// Lower a loop block.
-    fn lower_loop_block(
-        &mut self,
-        block: &edge_ast::LoopBlock,
-    ) -> Result<RcExpr, IrError> {
-        let mut result = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+    fn lower_loop_block(&mut self, block: &edge_ast::LoopBlock) -> Result<RcExpr, IrError> {
+        let mut result =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
 
         for item in &block.items {
             match item {
@@ -1350,7 +1276,9 @@ impl AstToEgglog {
             let (side_effects, computed_slot) =
                 self.compute_nested_mapping_slot(outer_key, inner_key, base_slot as i64);
             let load = match location {
-                DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
+                DataLocation::Transient => {
+                    ast_helpers::tload(computed_slot, self.current_state.clone())
+                }
                 _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
             };
             return Ok(ast_helpers::concat(side_effects, ast_helpers::single(load)));
@@ -1367,10 +1295,11 @@ impl AstToEgglog {
         };
         let (base_slot, location) = self.find_storage_slot(field_name)?;
         let key = self.lower_expr(index)?;
-        let (side_effects, computed_slot) =
-            self.compute_mapping_slot(key, base_slot as i64);
+        let (side_effects, computed_slot) = self.compute_mapping_slot(key, base_slot as i64);
         let load = match location {
-            DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
+            DataLocation::Transient => {
+                ast_helpers::tload(computed_slot, self.current_state.clone())
+            }
             _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
         };
         Ok(ast_helpers::concat(side_effects, ast_helpers::single(load)))
@@ -1399,11 +1328,16 @@ impl AstToEgglog {
             let (side_effects, computed_slot) =
                 self.compute_nested_mapping_slot(outer_key, inner_key, base_slot as i64);
             let store = match location {
-                DataLocation::Transient => ast_helpers::tstore(computed_slot, value, self.current_state.clone()),
+                DataLocation::Transient => {
+                    ast_helpers::tstore(computed_slot, value, self.current_state.clone())
+                }
                 _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
             };
             self.current_state = store.clone();
-            return Ok(ast_helpers::concat(side_effects, ast_helpers::single(store)));
+            return Ok(ast_helpers::concat(
+                side_effects,
+                ast_helpers::single(store),
+            ));
         }
 
         // Simple mapping write
@@ -1417,14 +1351,18 @@ impl AstToEgglog {
         };
         let (base_slot, location) = self.find_storage_slot(field_name)?;
         let key = self.lower_expr(index)?;
-        let (side_effects, computed_slot) =
-            self.compute_mapping_slot(key, base_slot as i64);
+        let (side_effects, computed_slot) = self.compute_mapping_slot(key, base_slot as i64);
         let store = match location {
-            DataLocation::Transient => ast_helpers::tstore(computed_slot, value, self.current_state.clone()),
+            DataLocation::Transient => {
+                ast_helpers::tstore(computed_slot, value, self.current_state.clone())
+            }
             _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
         };
         self.current_state = store.clone();
-        Ok(ast_helpers::concat(side_effects, ast_helpers::single(store)))
+        Ok(ast_helpers::concat(
+            side_effects,
+            ast_helpers::single(store),
+        ))
     }
 
     /// Find the storage slot index and data location for a named field.
@@ -1516,7 +1454,11 @@ impl AstToEgglog {
             calldataload,
         );
 
-        Ok(ast_helpers::let_bind("__selector".to_string(), shifted, result))
+        Ok(ast_helpers::let_bind(
+            "__selector".to_string(),
+            shifted,
+            result,
+        ))
     }
 
     /// Compute the numeric 4-byte selector value for a function signature.
@@ -1569,8 +1511,7 @@ impl AstToEgglog {
                     let (_, sig, body) = &entries[1];
                     let selector_expr = ast_helpers::selector(sig.clone());
                     let cond = ast_helpers::eq(selector_var.clone(), selector_expr);
-                    let inputs =
-                        ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
+                    let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
                     ast_helpers::if_then_else(cond, inputs, body.clone(), fallback.clone())
                 };
                 let (_, sig, body) = &entries[0];
@@ -1590,11 +1531,7 @@ impl AstToEgglog {
 
                 // GT comparison for branching
                 let pivot_const = ast_helpers::const_int(*pivot_val as i64, ctx.clone());
-                let gt_cond = ast_helpers::bop(
-                    EvmBinaryOp::Gt,
-                    selector_var.clone(),
-                    pivot_const,
-                );
+                let gt_cond = ast_helpers::bop(EvmBinaryOp::Gt, selector_var.clone(), pivot_const);
 
                 let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
 
@@ -1605,12 +1542,8 @@ impl AstToEgglog {
                     Self::build_bst_dispatch(&entries[mid + 1..], selector_var, fallback, ctx);
 
                 // If GT(sel, pivot) then right_tree else left_tree
-                let gt_branch = ast_helpers::if_then_else(
-                    gt_cond,
-                    inputs.clone(),
-                    right_tree,
-                    left_tree,
-                );
+                let gt_branch =
+                    ast_helpers::if_then_else(gt_cond, inputs.clone(), right_tree, left_tree);
 
                 // If EQ(sel, pivot) then pivot_body else gt_branch
                 ast_helpers::if_then_else(eq_cond, inputs, pivot_body.clone(), gt_branch)
@@ -1670,11 +1603,13 @@ impl AstToEgglog {
             }
             edge_ast::ty::TypeSig::Pointer(_, inner) => self.lower_type_sig(inner),
             edge_ast::ty::TypeSig::Tuple(types) => {
-                let base_types: Vec<EvmBaseType> =
-                    types.iter().map(|t| match self.lower_type_sig(t) {
+                let base_types: Vec<EvmBaseType> = types
+                    .iter()
+                    .map(|t| match self.lower_type_sig(t) {
                         EvmType::Base(b) => b,
                         EvmType::TupleT(_) => EvmBaseType::UIntT(256), // flatten nested tuples
-                    }).collect();
+                    })
+                    .collect();
                 EvmType::TupleT(base_types)
             }
             _ => EvmType::Base(EvmBaseType::UIntT(256)), // fallback for unhandled types

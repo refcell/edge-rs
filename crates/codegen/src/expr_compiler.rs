@@ -249,7 +249,8 @@ impl<'a> ExprCompiler<'a> {
                 let bytes = hex_string_to_bytes(hex_str);
                 // Addresses are 20 bytes
                 if bytes.len() > 20 {
-                    self.asm.emit(AsmInstruction::Push(bytes[bytes.len() - 20..].to_vec()));
+                    self.asm
+                        .emit(AsmInstruction::Push(bytes[bytes.len() - 20..].to_vec()));
                 } else {
                     self.asm.emit(AsmInstruction::Push(bytes));
                 }
@@ -430,13 +431,7 @@ impl<'a> ExprCompiler<'a> {
     }
 
     /// Compile a ternary operation.
-    fn compile_ternary_op(
-        &mut self,
-        op: &EvmTernaryOp,
-        a: &RcExpr,
-        b: &RcExpr,
-        c: &RcExpr,
-    ) {
+    fn compile_ternary_op(&mut self, op: &EvmTernaryOp, a: &RcExpr, b: &RcExpr, c: &RcExpr) {
         match op {
             EvmTernaryOp::SStore => {
                 // SSTORE: key, value
@@ -609,8 +604,7 @@ impl<'a> ExprCompiler<'a> {
                 }
                 // The else-branch must either be another terminating if-chain
                 // or itself terminate
-                Self::is_terminating_if_chain(else_body)
-                    || Self::is_terminating_expr(else_body)
+                Self::is_terminating_if_chain(else_body) || Self::is_terminating_expr(else_body)
             }
             // A single terminating expression (the final else: revert/stop)
             _ => Self::is_terminating_expr(expr),

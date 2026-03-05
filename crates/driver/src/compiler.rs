@@ -124,10 +124,10 @@ impl Compiler {
             &ir_program,
             self.session.config.optimization_level,
             self.session.config.optimize_for,
-        ).map_err(|e| {
-            self.session.emit_error(
-                Diagnostic::error(format!("codegen error: {e}")),
-            );
+        )
+        .map_err(|e| {
+            self.session
+                .emit_error(Diagnostic::error(format!("codegen error: {e}")));
             CompileError::Aborted
         })?;
 

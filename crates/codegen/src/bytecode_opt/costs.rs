@@ -13,19 +13,15 @@ pub(crate) fn inst_gas_cost(name: &str) -> u32 {
         "IStop" | "IReturn" | "IRevert" => 0,
 
         // Gbase (2)
-        "IPop" | "IAddress" | "IOrigin" | "ICaller" | "ICallValue"
-        | "ICallDataSize" | "ICodeSize" | "IGasPrice"
-        | "ICoinbase" | "ITimestamp" | "INumber" | "IPrevrandao"
-        | "IGasLimit" | "IChainId" | "ISelfBalance" | "IBaseFee"
-        | "IReturnDataSize" | "IPc" | "IMSize" | "IGas" => 2,
+        "IPop" | "IAddress" | "IOrigin" | "ICaller" | "ICallValue" | "ICallDataSize"
+        | "ICodeSize" | "IGasPrice" | "ICoinbase" | "ITimestamp" | "INumber" | "IPrevrandao"
+        | "IGasLimit" | "IChainId" | "ISelfBalance" | "IBaseFee" | "IReturnDataSize" | "IPc"
+        | "IMSize" | "IGas" => 2,
 
         // Gverylow (3) — arithmetic, comparison, bitwise, memory, stack
-        "IAdd" | "ISub" | "ILt" | "IGt" | "ISLt" | "ISGt" | "IEq"
-        | "IIsZero" | "IAnd" | "IOr" | "IXor" | "INot" | "IByte"
-        | "IShl" | "IShr" | "ISar"
-        | "ICallDataLoad" | "IPush0"
-        | "IMLoad" | "IMStore" | "IMStore8"
-        | "IDup" | "ISwap" => 3,
+        "IAdd" | "ISub" | "ILt" | "IGt" | "ISLt" | "ISGt" | "IEq" | "IIsZero" | "IAnd" | "IOr"
+        | "IXor" | "INot" | "IByte" | "IShl" | "IShr" | "ISar" | "ICallDataLoad" | "IPush0"
+        | "IMLoad" | "IMStore" | "IMStore8" | "IDup" | "ISwap" => 3,
 
         // Glow (5) — mul, div, mod, signextend
         "IMul" | "IDiv" | "ISDiv" | "IMod" | "ISMod" | "ISignExtend" => 5,

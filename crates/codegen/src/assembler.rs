@@ -34,10 +34,28 @@ impl AsmInstruction {
         match self {
             Self::Op(_) => 1,
             Self::Push(data) => 1 + data.len(), // PUSHn + n bytes
-            Self::Label(_) => 1,                 // JUMPDEST
-            Self::JumpTo(_) => if short_jumps { 3 } else { 4 },  // PUSH1/PUSH2 + JUMP
-            Self::JumpITo(_) => if short_jumps { 3 } else { 4 }, // PUSH1/PUSH2 + JUMPI
-            Self::PushLabel(_) => if short_jumps { 2 } else { 3 }, // PUSH1/PUSH2 (no JUMP)
+            Self::Label(_) => 1,                // JUMPDEST
+            Self::JumpTo(_) => {
+                if short_jumps {
+                    3
+                } else {
+                    4
+                }
+            } // PUSH1/PUSH2 + JUMP
+            Self::JumpITo(_) => {
+                if short_jumps {
+                    3
+                } else {
+                    4
+                }
+            } // PUSH1/PUSH2 + JUMPI
+            Self::PushLabel(_) => {
+                if short_jumps {
+                    2
+                } else {
+                    3
+                }
+            } // PUSH1/PUSH2 (no JUMP)
         }
     }
 }
@@ -85,13 +103,19 @@ impl Assembler {
         }
         let bytes = value.to_be_bytes();
         // Find first non-zero byte
-        let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+        let start = bytes
+            .iter()
+            .position(|&b| b != 0)
+            .unwrap_or(bytes.len() - 1);
         self.emit(AsmInstruction::Push(bytes[start..].to_vec()));
     }
 
     /// Emit PUSH with raw bytes (1-32 bytes).
     pub fn emit_push_bytes(&mut self, data: Vec<u8>) {
-        assert!(!data.is_empty() && data.len() <= 32, "PUSH data must be 1-32 bytes");
+        assert!(
+            !data.is_empty() && data.len() <= 32,
+            "PUSH data must be 1-32 bytes"
+        );
         self.emit(AsmInstruction::Push(data));
     }
 
@@ -254,17 +278,17 @@ mod tests {
     #[test]
     fn test_push_values() {
         let mut asm = Assembler::new();
-        asm.emit_push_usize(0);     // PUSH0
-        asm.emit_push_usize(1);     // PUSH1 0x01
-        asm.emit_push_usize(255);   // PUSH1 0xFF
-        asm.emit_push_usize(256);   // PUSH2 0x01 0x00
+        asm.emit_push_usize(0); // PUSH0
+        asm.emit_push_usize(1); // PUSH1 0x01
+        asm.emit_push_usize(255); // PUSH1 0xFF
+        asm.emit_push_usize(256); // PUSH2 0x01 0x00
         let bytecode = asm.assemble();
         assert_eq!(
             bytecode,
             vec![
-                0x5F,             // PUSH0
-                0x60, 0x01,       // PUSH1 1
-                0x60, 0xFF,       // PUSH1 255
+                0x5F, // PUSH0
+                0x60, 0x01, // PUSH1 1
+                0x60, 0xFF, // PUSH1 255
                 0x61, 0x01, 0x00, // PUSH2 256
             ]
         );
@@ -289,10 +313,10 @@ mod tests {
             bytecode,
             vec![
                 0x60, 0x04, // PUSH1 4
-                0x56,       // JUMP
-                0x00,       // STOP
-                0x5B,       // JUMPDEST
-                0x00,       // STOP
+                0x56, // JUMP
+                0x00, // STOP
+                0x5B, // JUMPDEST
+                0x00, // STOP
             ]
         );
     }
@@ -300,7 +324,7 @@ mod tests {
     #[test]
     fn test_conditional_jump() {
         let mut asm = Assembler::new();
-        asm.emit_push_usize(1);  // push condition (true)
+        asm.emit_push_usize(1); // push condition (true)
         asm.emit(AsmInstruction::JumpITo("target".to_owned()));
         asm.emit_op(Opcode::Stop);
         asm.emit(AsmInstruction::Label("target".to_owned()));
@@ -317,10 +341,10 @@ mod tests {
             vec![
                 0x60, 0x01, // PUSH1 1
                 0x60, 0x06, // PUSH1 6
-                0x57,       // JUMPI
-                0x00,       // STOP
-                0x5B,       // JUMPDEST
-                0x00,       // STOP
+                0x57, // JUMPI
+                0x00, // STOP
+                0x5B, // JUMPDEST
+                0x00, // STOP
             ]
         );
     }

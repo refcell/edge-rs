@@ -6,8 +6,8 @@
 mod convert;
 mod costs;
 mod rules;
-mod schema;
 mod schedule;
+mod schema;
 
 use edge_ir::OptimizeFor;
 
@@ -67,7 +67,9 @@ pub fn optimize(
                 Ok(optimized) => result.extend(optimized),
                 Err(_) => {
                     // Fall back to unoptimized block on egglog errors
-                    tracing::warn!("bytecode optimizer: egglog error, falling back to unoptimized block");
+                    tracing::warn!(
+                        "bytecode optimizer: egglog error, falling back to unoptimized block"
+                    );
                     result.extend(block.body);
                 }
             }
@@ -223,8 +225,7 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
                     terminator: Some(inst),
                 });
             }
-            AsmInstruction::Op(_) | AsmInstruction::Push(_)
-            | AsmInstruction::PushLabel(_) => {
+            AsmInstruction::Op(_) | AsmInstruction::Push(_) | AsmInstruction::PushLabel(_) => {
                 current_body.push(inst);
             }
         }
@@ -344,8 +345,14 @@ mod tests {
         let outputs = egraph.parse_and_run_program(None, program).unwrap();
         let extracted = outputs.last().unwrap().to_string();
         eprintln!("Extracted: {extracted}");
-        assert!(extracted.contains("IStop"), "Expected rewrite to fire, got: {extracted}");
-        assert!(!extracted.contains("PushSmall"), "PushSmall 42 should be eliminated, got: {extracted}");
+        assert!(
+            extracted.contains("IStop"),
+            "Expected rewrite to fire, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("PushSmall"),
+            "PushSmall 42 should be eliminated, got: {extracted}"
+        );
     }
 
     #[test]
@@ -370,7 +377,10 @@ mod tests {
             AsmInstruction::Op(Opcode::Dup1),
             AsmInstruction::Op(Opcode::Add),
         ];
-        assert!(result == alt1 || result == alt2, "Expected one of the equivalent forms, got: {result:?}");
+        assert!(
+            result == alt1 || result == alt2,
+            "Expected one of the equivalent forms, got: {result:?}"
+        );
     }
 
     #[test]
@@ -431,9 +441,14 @@ mod tests {
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
         // Labels and jumps preserved
         assert_eq!(result[0], AsmInstruction::Label("start".into()));
-        assert!(matches!(result.last(), Some(AsmInstruction::Op(Opcode::Stop))));
+        assert!(matches!(
+            result.last(),
+            Some(AsmInstruction::Op(Opcode::Stop))
+        ));
         // The jump should still be there
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::JumpTo(_))));
+        assert!(result
+            .iter()
+            .any(|i| matches!(i, AsmInstruction::JumpTo(_))));
     }
 
     #[test]
@@ -467,7 +482,8 @@ mod tests {
         // Verify the gas-mode schema is valid egglog
         let schema = crate::bytecode_opt::schema::generate_schema(OptimizeFor::Gas);
         let mut egraph = egglog::EGraph::default();
-        egraph.parse_and_run_program(None, &schema)
+        egraph
+            .parse_and_run_program(None, &schema)
             .expect("Gas schema should parse");
     }
 
@@ -476,7 +492,8 @@ mod tests {
         // Verify the size-mode schema is valid egglog
         let schema = crate::bytecode_opt::schema::generate_schema(OptimizeFor::Size);
         let mut egraph = egglog::EGraph::default();
-        egraph.parse_and_run_program(None, &schema)
+        egraph
+            .parse_and_run_program(None, &schema)
             .expect("Size schema should parse");
     }
 
@@ -568,7 +585,9 @@ mod tests {
         let result = optimize(instrs.clone(), 2, OptimizeFor::Gas).unwrap();
         // SStore should still be present (no rule removes it)
         assert!(
-            result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::SStore))),
+            result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::SStore))),
             "SStore must be preserved, got: {result:?}"
         );
     }
@@ -750,12 +769,22 @@ mod tests {
         ];
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
         // Dead code should be removed; label and stop preserved
-        assert!(!result.iter().any(|i| matches!(i, AsmInstruction::Push(d) if d == &[0xFF])),
-            "Dead push after RETURN should be removed, got: {result:?}");
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::Return))),
-            "RETURN should be preserved");
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::Label(_))),
-            "Label should be preserved");
+        assert!(
+            !result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Push(d) if d == &[0xFF])),
+            "Dead push after RETURN should be removed, got: {result:?}"
+        );
+        assert!(
+            result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::Return))),
+            "RETURN should be preserved"
+        );
+        assert!(
+            result.iter().any(|i| matches!(i, AsmInstruction::Label(_))),
+            "Label should be preserved"
+        );
     }
 
     #[test]
@@ -769,8 +798,12 @@ mod tests {
             AsmInstruction::Op(Opcode::Stop),
         ];
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
-        assert!(!result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::Add))),
-            "Dead ADD after REVERT should be removed");
+        assert!(
+            !result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::Add))),
+            "Dead ADD after REVERT should be removed"
+        );
     }
 
     #[test]

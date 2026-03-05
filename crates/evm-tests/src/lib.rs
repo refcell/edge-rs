@@ -5,14 +5,15 @@
 
 #![allow(missing_docs)]
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use alloy_primitives::{Address, Bytes, Log, U256};
 use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind},
 };
+// ContextTr needed for .db() / .db_mut() on Context
+use revm::context_interface::ContextTr;
 use revm::{
     context::{Context, TxEnv},
     database::{CacheDB, EmptyDB},
@@ -21,8 +22,6 @@ use revm::{
     state::{AccountInfo, Bytecode},
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
-// ContextTr needed for .db() / .db_mut() on Context
-use revm::context_interface::ContextTr;
 
 /// Result of a contract call.
 #[derive(Debug)]
@@ -78,7 +77,11 @@ impl EvmTestHost {
         let bytecode = compile_edge(path, opt_level);
         let init_code_size = bytecode.len();
         let host = Self::deploy_bytecode(&bytecode);
-        DeployResult { host, init_code_size, deploy_gas: 0 }
+        DeployResult {
+            host,
+            init_code_size,
+            deploy_gas: 0,
+        }
     }
 
     /// Compile an `.edge` file optimized for size and deploy.
@@ -92,7 +95,11 @@ impl EvmTestHost {
         let bytecode = compile_edge_for_size(path, opt_level);
         let init_code_size = bytecode.len();
         let host = Self::deploy_bytecode(&bytecode);
-        DeployResult { host, init_code_size, deploy_gas: 0 }
+        DeployResult {
+            host,
+            init_code_size,
+            deploy_gas: 0,
+        }
     }
 
     /// Deploy raw init-code bytecode via a CREATE transaction and return a test host.
@@ -125,7 +132,9 @@ impl EvmTestHost {
             .build()
             .unwrap();
 
-        let result = evm.transact_commit(tx).expect("deployment transaction failed");
+        let result = evm
+            .transact_commit(tx)
+            .expect("deployment transaction failed");
         let contract = result
             .created_address()
             .expect("deployment should create a contract");
@@ -149,7 +158,9 @@ impl EvmTestHost {
 
     /// Size of the deployed runtime bytecode in bytes.
     pub fn runtime_code_size(&self) -> usize {
-        self.evm.ctx.db()
+        self.evm
+            .ctx
+            .db()
             .cache
             .accounts
             .get(&self.contract)
@@ -183,7 +194,10 @@ impl EvmTestHost {
             .build()
             .unwrap();
 
-        let result = self.evm.transact_commit(tx).expect("call transaction failed");
+        let result = self
+            .evm
+            .transact_commit(tx)
+            .expect("call transaction failed");
         *self.nonces.entry(self.caller).or_insert(0) += 1;
 
         let success = result.is_success();
@@ -224,7 +238,10 @@ impl EvmTestHost {
                 nonce: 0,
                 ..Default::default()
             };
-            self.evm.ctx.db_mut().insert_account_info(caller, caller_info);
+            self.evm
+                .ctx
+                .db_mut()
+                .insert_account_info(caller, caller_info);
         }
         self.caller = caller;
     }
@@ -264,8 +281,7 @@ pub fn compile_edge_split(
     let ast = parser.parse().expect("parse failed");
     let ir_program = edge_ir::lower_and_optimize(&ast, ir_opt_level, optimize_for)
         .expect("IR optimization failed");
-    edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for)
-        .expect("codegen failed")
+    edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for).expect("codegen failed")
 }
 
 /// Compute the 4-byte function selector from a signature like "transfer(address,uint256)".

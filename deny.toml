@@ -4,6 +4,8 @@ ignore = [
     # paste is a transitive dep of alloy-primitives; it is a proc-macro-only
     # crate with no runtime impact and no known vulnerability.
     "RUSTSEC-2024-0436",
+    # instant is a transitive dep of egglog; unmaintained but no vulnerability.
+    "RUSTSEC-2024-0384",
 ]
 
 [licenses]
@@ -33,3 +35,7 @@ deny = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+    # egglog is not yet published to crates.io; pinned to a specific rev.
+    "https://github.com/egraphs-good/egglog",
+]

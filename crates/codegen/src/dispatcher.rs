@@ -5,10 +5,7 @@
 
 use edge_ir::schema::EvmContract;
 
-use crate::{
-    assembler::Assembler,
-    expr_compiler::ExprCompiler,
-};
+use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 
 /// Generate the function dispatcher for a contract.
 ///
@@ -50,10 +47,7 @@ mod tests {
             compute_selector("approve(address,uint256)"),
             [0x09, 0x5e, 0xa7, 0xb3]
         );
-        assert_eq!(
-            compute_selector("totalSupply()"),
-            [0x18, 0x16, 0x0d, 0xdd]
-        );
+        assert_eq!(compute_selector("totalSupply()"), [0x18, 0x16, 0x0d, 0xdd]);
     }
 
     #[test]
