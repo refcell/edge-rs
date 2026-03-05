@@ -39,9 +39,7 @@ fn bench_parse(c: &mut Criterion) {
 
     for (name, src) in INPUTS {
         group.bench_with_input(BenchmarkId::from_parameter(name), src, |b, src| {
-            b.iter(|| {
-                edge_parser::parse(black_box(src)).unwrap()
-            });
+            b.iter(|| edge_parser::parse(black_box(src)).unwrap());
         });
     }
 
@@ -55,9 +53,7 @@ fn bench_typeck(c: &mut Criterion) {
     for (name, src) in INPUTS {
         let ast = edge_parser::parse(src).unwrap();
         group.bench_with_input(BenchmarkId::from_parameter(name), &ast, |b, ast| {
-            b.iter(|| {
-                TypeChecker::new().check(black_box(ast)).unwrap()
-            });
+            b.iter(|| TypeChecker::new().check(black_box(ast)).unwrap());
         });
     }
 
@@ -80,5 +76,11 @@ fn bench_pipeline(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_lex, bench_parse, bench_typeck, bench_pipeline);
+criterion_group!(
+    benches,
+    bench_lex,
+    bench_parse,
+    bench_typeck,
+    bench_pipeline
+);
 criterion_main!(benches);
