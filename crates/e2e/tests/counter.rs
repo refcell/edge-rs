@@ -67,17 +67,10 @@ fn decode_u256(output: &[u8]) -> u64 {
 // EVM test harness
 // =============================================================================
 
-/// Fixed address where the contract is deployed for tests.
-///
-/// Must be > 0x09 to avoid Ethereum precompile addresses (0x01–0x09).
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
-]);
-
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-/// In-memory EVM with a single contract deployed at [`CONTRACT_ADDR`].
+/// In-memory EVM with a single contract deployed via CREATE.
 ///
 /// Storage changes are committed after each [`call`][EvmHandle::call], so
 /// calls are stateful: `increment()` followed by `get()` returns 1.
@@ -85,24 +78,47 @@ struct EvmHandle {
     evm: TestEvm,
     /// Tracks caller nonce; `transact_commit` increments it in the DB each call.
     nonce: u64,
+    /// Address where the contract was deployed.
+    deployed: Address,
 }
 
 impl EvmHandle {
-    /// Deploy `bytecode` at [`CONTRACT_ADDR`] and return a ready handle.
+    /// Deploy `bytecode` via a CREATE transaction and return a ready handle.
     fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+        let caller = Address::ZERO;
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        // Give the caller account enough balance and nonce 0
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(caller, caller_info);
+        let mut evm: TestEvm = Context::mainnet().with_db(db).build_mainnet();
+
+        // Issue a CREATE transaction with the init code
+        let tx = TxEnv::builder()
+            .caller(caller)
+            .kind(TxKind::Create)
+            .data(Bytes::from(bytecode))
+            .nonce(0)
+            .gas_limit(10_000_000)
+            .gas_price(0u128)
+            .value(revm::primitives::U256::ZERO)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).expect("deployment failed");
+        assert!(result.is_success(), "deployment should succeed");
+        let addr = result.created_address().expect("no contract created");
+        Self { evm, nonce: 1, deployed: addr }
     }
 
     /// Call the contract with `calldata`. Returns `(success, return_data)`.
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
             .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .kind(TxKind::Call(self.deployed))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
             .build()

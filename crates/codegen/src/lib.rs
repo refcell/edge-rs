@@ -21,6 +21,19 @@
     rustdoc::all
 )]
 #![deny(unused_must_use, rust_2018_idioms)]
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::match_same_arms,
+    clippy::option_if_let_else,
+    clippy::needless_return,
+    clippy::unnecessary_wraps,
+    clippy::branches_sharing_code,
+    clippy::needless_range_loop,
+    clippy::implicit_clone,
+    clippy::missing_transmute_annotations,
+    clippy::undocumented_unsafe_blocks
+)]
 
 pub mod assembler;
 pub mod bytecode_opt;

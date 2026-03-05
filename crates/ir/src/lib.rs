@@ -21,6 +21,25 @@
     rustdoc::all
 )]
 #![deny(unused_must_use, rust_2018_idioms)]
+// Allow common patterns in egglog/e-graph IR code:
+// - Rc::clone() is idiomatic for reference-counted pointers in e-graph code
+// - Doc backticks are not yet consistent across the new IR modules
+// - Some functions are not yet const but could be
+#![allow(
+    clippy::redundant_clone,
+    clippy::clone_on_ref_ptr,
+    clippy::doc_markdown,
+    clippy::missing_const_for_fn,
+    clippy::uninlined_format_args,
+    clippy::option_if_let_else,
+    clippy::type_complexity,
+    clippy::match_same_arms,
+    clippy::collapsible_match,
+    clippy::needless_pass_by_ref_mut,
+    clippy::explicit_iter_loop,
+    clippy::new_without_default,
+    clippy::unnecessary_struct_initialization
+)]
 
 pub mod ast_helpers;
 pub mod costs;

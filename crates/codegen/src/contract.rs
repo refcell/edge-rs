@@ -31,7 +31,7 @@ pub fn generate_contract_bytecode(
     let runtime_bytecode = generate_runtime_bytecode(contract, optimization_level, optimize_for)?;
 
     // 2. Generate constructor that deploys the runtime
-    Ok(generate_constructor(contract, &runtime_bytecode, optimization_level, optimize_for)?)
+    generate_constructor(contract, &runtime_bytecode, optimization_level, optimize_for)
 }
 
 /// Generate the constructor (init code) that deploys the runtime.

@@ -249,7 +249,7 @@ fn list_to_sexp(exprs: &[RcExpr]) -> String {
 #[derive(Debug, Clone, PartialEq)]
 enum Sexp {
     Atom(String),
-    List(Vec<Sexp>),
+    List(Vec<Self>),
 }
 
 /// Tokenize and parse an s-expression string.
@@ -319,7 +319,7 @@ fn tokenize(input: &str) -> Result<Vec<String>, IrError> {
     Ok(tokens)
 }
 
-fn parse_tokens<'a>(tokens: &'a [String]) -> Result<(Sexp, &'a [String]), IrError> {
+fn parse_tokens(tokens: &[String]) -> Result<(Sexp, &[String]), IrError> {
     if tokens.is_empty() {
         return Err(IrError::Extraction("unexpected end of input".to_owned()));
     }
