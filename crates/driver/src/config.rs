@@ -15,6 +15,8 @@ pub enum EmitKind {
     Ir,
     /// Emit IR in pretty-printed format
     PrettyIr,
+    /// Emit post-optimization assembly (disassembly with labeled blocks)
+    Asm,
     /// Emit EVM bytecode (default)
     #[default]
     Bytecode,

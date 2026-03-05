@@ -479,6 +479,217 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
     }
 }
 
+/// Print an expression inline, always producing a single line.
+/// Unlike `pp_inline`, this is fully self-contained and handles every node,
+/// recursively calling itself (never `pp` or `pp_inline`) to guarantee no newlines.
+fn pp_oneline(expr: &RcExpr, buf: &mut String) {
+    match expr.as_ref() {
+        EvmExpr::Arg(ty, _) => buf.push_str(&format!("arg:{}", fmt_type(ty))),
+        EvmExpr::Const(c, ty, _) => {
+            let val = match c {
+                EvmConstant::SmallInt(n) => format!("{n}"),
+                EvmConstant::LargeInt(s) => format!("0x{s}"),
+                EvmConstant::Bool(b) => format!("{b}"),
+                EvmConstant::Addr(a) => format!("@{a}"),
+            };
+            buf.push_str(&format!("{val}:{}", fmt_type(ty)));
+        }
+        EvmExpr::Empty(_, _) => buf.push_str("empty"),
+        EvmExpr::Var(name) => buf.push_str(&format!("${name}")),
+        EvmExpr::Drop(name) => buf.push_str(&format!("drop ${name}")),
+        EvmExpr::Selector(sig) => buf.push_str(&format!("selector(\"{sig}\")")),
+        EvmExpr::EnvRead(op, _) => buf.push_str(&format!("{op}()")),
+        EvmExpr::EnvRead1(op, arg, _) => {
+            buf.push_str(&format!("{op}("));
+            pp_oneline(arg, buf);
+            buf.push(')');
+        }
+        EvmExpr::Bop(op, lhs, rhs) => {
+            buf.push_str(&format!("{op}("));
+            pp_oneline(lhs, buf);
+            if op.has_state() {
+                buf.push_str(", state)");
+            } else {
+                buf.push_str(", ");
+                pp_oneline(rhs, buf);
+                buf.push(')');
+            }
+        }
+        EvmExpr::Uop(op, inner) => {
+            buf.push_str(&format!("{op}("));
+            pp_oneline(inner, buf);
+            buf.push(')');
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let has_state = matches!(
+                op,
+                EvmTernaryOp::SStore
+                    | EvmTernaryOp::TStore
+                    | EvmTernaryOp::MStore
+                    | EvmTernaryOp::MStore8
+                    | EvmTernaryOp::Keccak256
+            );
+            buf.push_str(&format!("{op}("));
+            pp_oneline(a, buf);
+            buf.push_str(", ");
+            pp_oneline(b, buf);
+            if has_state {
+                buf.push_str(", state)");
+            } else {
+                buf.push_str(", ");
+                pp_oneline(c, buf);
+                buf.push(')');
+            }
+        }
+        EvmExpr::Get(inner, idx) => {
+            pp_oneline(inner, buf);
+            buf.push_str(&format!(".{idx}"));
+        }
+        // Compound/control-flow nodes — abbreviate
+        EvmExpr::If(cond, _, _, _) => {
+            buf.push_str("if ");
+            pp_oneline(cond, buf);
+            buf.push_str(" { ... } else { ... }");
+        }
+        EvmExpr::DoWhile(..) => buf.push_str("do { ... } while(...)"),
+        EvmExpr::Concat(..) => {
+            let mut stmts = Vec::new();
+            flatten_concat(expr, &mut stmts);
+            buf.push_str(&format!("<{} stmts>", stmts.len()));
+        }
+        EvmExpr::LetBind(name, init, _) => {
+            buf.push_str(&format!("let ${name} = "));
+            pp_oneline(init, buf);
+        }
+        EvmExpr::VarStore(name, val) => {
+            buf.push_str(&format!("${name} = "));
+            pp_oneline(val, buf);
+        }
+        EvmExpr::Log(n, _, _, _) => buf.push_str(&format!("LOG{n}(...)")),
+        EvmExpr::Revert(off, size, _) => {
+            buf.push_str("revert(");
+            pp_oneline(off, buf);
+            buf.push_str(", ");
+            pp_oneline(size, buf);
+            buf.push(')');
+        }
+        EvmExpr::ReturnOp(off, size, _) => {
+            buf.push_str("return(");
+            pp_oneline(off, buf);
+            buf.push_str(", ");
+            pp_oneline(size, buf);
+            buf.push(')');
+        }
+        EvmExpr::ExtCall(..) => buf.push_str("CALL(...)"),
+        EvmExpr::Call(name, args) => {
+            buf.push_str(&format!("call {name}("));
+            pp_oneline(args, buf);
+            buf.push(')');
+        }
+        EvmExpr::Function(name, _, _, _) => buf.push_str(&format!("fn {name}()")),
+        EvmExpr::StorageField(name, slot, ty) => {
+            buf.push_str(&format!("storage {name} @ slot {slot} : {}", fmt_type(ty)));
+        }
+    }
+}
+
+/// Produce a compact one-line IR summary for **statement-level** nodes.
+///
+/// Returns `None` for leaf/value expressions (Const, Var, Bop, Uop, etc.)
+/// that don't merit their own comment in assembly output.
+pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
+    let mut buf = String::new();
+    match expr {
+        EvmExpr::LetBind(name, init, _) => {
+            buf.push_str(&format!("let ${name} = "));
+            pp_oneline(init, &mut buf);
+        }
+        EvmExpr::VarStore(name, val) => {
+            buf.push_str(&format!("${name} = "));
+            pp_oneline(val, &mut buf);
+        }
+        EvmExpr::Drop(name) => {
+            buf.push_str(&format!("drop ${name}"));
+        }
+        EvmExpr::If(cond, _, _, _) => {
+            buf.push_str("if ");
+            pp_oneline(cond, &mut buf);
+            buf.push_str(" { ... } else { ... }");
+        }
+        EvmExpr::DoWhile(..) => {
+            buf.push_str("do { ... } while(...)");
+        }
+        EvmExpr::ReturnOp(off, size, _) => {
+            buf.push_str("return(");
+            pp_oneline(off, &mut buf);
+            buf.push_str(", ");
+            pp_oneline(size, &mut buf);
+            buf.push(')');
+        }
+        EvmExpr::Revert(off, size, _) => {
+            buf.push_str("revert(");
+            pp_oneline(off, &mut buf);
+            buf.push_str(", ");
+            pp_oneline(size, &mut buf);
+            buf.push(')');
+        }
+        EvmExpr::Log(n, topics, data, _) => {
+            buf.push_str(&format!("LOG{n}("));
+            for (i, t) in topics.iter().enumerate() {
+                pp_oneline(t, &mut buf);
+                if i + 1 < topics.len() {
+                    buf.push_str(", ");
+                }
+            }
+            buf.push_str(", data=");
+            pp_oneline(data, &mut buf);
+            buf.push(')');
+        }
+        EvmExpr::ExtCall(target, value, args_off, args_len, _ret_off, _ret_len, _) => {
+            buf.push_str("CALL(target=");
+            pp_oneline(target, &mut buf);
+            buf.push_str(", value=");
+            pp_oneline(value, &mut buf);
+            buf.push_str(", args_off=");
+            pp_oneline(args_off, &mut buf);
+            buf.push_str(", args_len=");
+            pp_oneline(args_len, &mut buf);
+            buf.push_str(", ...)");
+        }
+        EvmExpr::Call(name, args) => {
+            buf.push_str(&format!("call {name}("));
+            pp_oneline(args, &mut buf);
+            buf.push(')');
+        }
+        EvmExpr::Function(name, _, _, _) => {
+            buf.push_str(&format!("fn {name}()"));
+        }
+        EvmExpr::Top(op, a, b, _c) => {
+            match op {
+                EvmTernaryOp::SStore | EvmTernaryOp::TStore | EvmTernaryOp::MStore
+                | EvmTernaryOp::MStore8 | EvmTernaryOp::Keccak256 => {
+                    buf.push_str(&format!("{op}("));
+                    pp_oneline(a, &mut buf);
+                    buf.push_str(", ");
+                    pp_oneline(b, &mut buf);
+                    buf.push(')');
+                }
+                _ => return None,
+            }
+        }
+        // Non-statement nodes: no comment
+        _ => return None,
+    }
+
+    // Truncate at 120 chars
+    if buf.len() > 120 {
+        buf.truncate(117);
+        buf.push_str("...");
+    }
+
+    Some(buf)
+}
+
 fn flatten_concat<'a>(expr: &'a RcExpr, out: &mut Vec<&'a RcExpr>) {
     if let EvmExpr::Concat(a, b) = expr.as_ref() {
         flatten_concat(a, out);

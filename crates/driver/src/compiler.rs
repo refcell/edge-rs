@@ -27,6 +27,8 @@ pub struct CompileOutput {
     pub bytecode: Option<Vec<u8>>,
     /// Emitted bytecodes for all contracts, keyed by contract name
     pub bytecodes: Option<IndexMap<String, Vec<u8>>>,
+    /// Emitted assembly (if emit=asm), keyed by contract name
+    pub asm: Option<Vec<(String, edge_codegen::AsmOutput)>>,
 }
 
 /// Compiler errors
@@ -96,6 +98,7 @@ impl Compiler {
                 ir: None,
                 bytecode: None,
                 bytecodes: None,
+                asm: None,
             });
         }
 
@@ -109,6 +112,7 @@ impl Compiler {
                 ir: None,
                 bytecode: None,
                 bytecodes: None,
+                asm: None,
             });
         }
 
@@ -140,6 +144,37 @@ impl Compiler {
                 ir: Some(ir_program),
                 bytecode: None,
                 bytecodes: None,
+                asm: None,
+            });
+        }
+
+        // Assembly output (pre-final-assembly)
+        if emit == EmitKind::Asm {
+            let mut asm_outputs = Vec::new();
+            for contract in &ir_program.contracts {
+                let asm_out = edge_codegen::compile_to_asm(
+                    &edge_ir::EvmProgram {
+                        contracts: vec![contract.clone()],
+                        free_functions: Vec::new(),
+                    },
+                    self.session.config.optimization_level,
+                    self.session.config.optimize_for,
+                )
+                .map_err(|e| {
+                    self.session.emit_error(
+                        Diagnostic::error(format!("codegen error: {e}")),
+                    );
+                    CompileError::Aborted
+                })?;
+                asm_outputs.push((contract.name.clone(), asm_out));
+            }
+            return Ok(CompileOutput {
+                tokens: None,
+                ast: None,
+                ir: None,
+                bytecode: None,
+                bytecodes: None,
+                asm: Some(asm_outputs),
             });
         }
 
@@ -161,6 +196,7 @@ impl Compiler {
             ir: None,
             bytecode: Some(bytecode),
             bytecodes: None,
+            asm: None,
         })
     }
 

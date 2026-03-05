@@ -28,8 +28,10 @@ pub mod contract;
 pub mod dispatcher;
 pub mod expr_compiler;
 pub mod opcode;
+pub mod pretty_asm;
 pub mod subroutine_extract;
 
+use assembler::AsmInstruction;
 use edge_ir::schema::EvmProgram;
 use edge_ir::OptimizeFor;
 
@@ -84,6 +86,43 @@ pub fn compile(
         let optimized = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
         let asm = assembler::Assembler::from_instructions(optimized);
         Ok(asm.assemble())
+    } else {
+        Err(CodegenError::NoContracts)
+    }
+}
+
+/// Compile result containing both constructor and runtime assembly.
+#[derive(Debug, Clone)]
+pub struct AsmOutput {
+    /// Constructor instructions (pre-optimization body only, no deploy sequence)
+    pub constructor: Vec<AsmInstruction>,
+    /// Runtime instructions (post-optimization, post-subroutine-extraction)
+    pub runtime: Vec<AsmInstruction>,
+}
+
+/// Compile an IR program to assembly instructions (pre-final-assembly).
+///
+/// Returns the post-optimization `AsmInstruction` lists for both constructor
+/// and runtime, suitable for pretty-printing / disassembly.
+pub fn compile_to_asm(
+    program: &EvmProgram,
+    optimization_level: u8,
+    optimize_for: OptimizeFor,
+) -> Result<AsmOutput, CodegenError> {
+    if let Some(contract) = program.contracts.first() {
+        contract::generate_contract_asm(contract, optimization_level, optimize_for)
+    } else if !program.free_functions.is_empty() {
+        let mut asm = assembler::Assembler::new();
+        let mut compiler = expr_compiler::ExprCompiler::new(&mut asm);
+        for func in &program.free_functions {
+            compiler.compile_expr(func);
+        }
+        let instructions = asm.take_instructions();
+        let optimized = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
+        Ok(AsmOutput {
+            constructor: Vec::new(),
+            runtime: optimized,
+        })
     } else {
         Err(CodegenError::NoContracts)
     }

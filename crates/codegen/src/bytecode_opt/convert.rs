@@ -46,9 +46,10 @@ pub(crate) fn instructions_to_sexp(instrs: &[AsmInstruction]) -> String {
                     sexp = format!("(IPushCons (PushHex \"{hex}\") {sexp})");
                 }
             }
-            // Labels and jumps should not appear in basic block bodies
+            // Labels, jumps, and comments should not appear in egglog optimization
             AsmInstruction::Label(_) | AsmInstruction::JumpTo(_)
-            | AsmInstruction::JumpITo(_) | AsmInstruction::PushLabel(_) => {}
+            | AsmInstruction::JumpITo(_) | AsmInstruction::PushLabel(_)
+            | AsmInstruction::Comment(_) => {}
         }
     }
     sexp

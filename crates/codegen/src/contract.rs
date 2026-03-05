@@ -146,6 +146,38 @@ fn generate_runtime_bytecode(
     Ok(asm.assemble())
 }
 
+/// Generate assembly instructions for both constructor and runtime.
+///
+/// Returns post-optimization instruction lists (no final bytecode assembly).
+pub fn generate_contract_asm(
+    contract: &EvmContract,
+    optimization_level: u8,
+    optimize_for: OptimizeFor,
+) -> Result<crate::AsmOutput, CodegenError> {
+    // Constructor body
+    let mut asm = Assembler::new();
+    let allocations = var_opt::analyze_allocations(&contract.constructor);
+    let mut compiler = ExprCompiler::with_allocations(&mut asm, allocations);
+    compiler.compile_expr(&contract.constructor);
+    compiler.emit_overflow_revert_trampoline();
+    let instructions = asm.take_instructions();
+    let constructor = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
+
+    // Runtime
+    let mut asm = Assembler::new();
+    dispatcher::generate_dispatcher(&mut asm, contract);
+    let instructions = asm.take_instructions();
+    let mut runtime = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
+    if optimize_for == OptimizeFor::Size {
+        runtime = crate::subroutine_extract::extract_subroutines(runtime);
+    }
+
+    Ok(crate::AsmOutput {
+        constructor,
+        runtime,
+    })
+}
+
 /// Estimate the byte size of the deploy sequence.
 fn estimate_deploy_sequence_size(runtime_size: usize, prefix_size: usize) -> usize {
     let size_bytes = minimal_byte_count(runtime_size);

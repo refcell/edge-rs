@@ -73,6 +73,11 @@ impl<'a> ExprCompiler<'a> {
 
     /// Compile an IR expression, pushing its result onto the stack.
     pub fn compile_expr(&mut self, expr: &EvmExpr) {
+        // Emit pretty-IR comment for statement-level nodes
+        if let Some(summary) = edge_ir::pretty::pretty_summary(expr) {
+            self.asm.emit_comment(summary);
+        }
+
         match expr {
             EvmExpr::Const(c, _, _) => {
                 self.compile_const(c);
@@ -90,9 +95,13 @@ impl<'a> ExprCompiler<'a> {
                 // Empty tuple / unit — no value on stack
             }
 
-            EvmExpr::Bop(op, lhs, rhs) => self.compile_binary_op(op, lhs, rhs),
+            EvmExpr::Bop(op, lhs, rhs) => {
+                self.compile_binary_op(op, lhs, rhs);
+            }
             EvmExpr::Uop(op, expr) => self.compile_unary_op(op, expr),
-            EvmExpr::Top(op, a, b, c) => self.compile_ternary_op(op, a, b, c),
+            EvmExpr::Top(op, a, b, c) => {
+                self.compile_ternary_op(op, a, b, c);
+            }
 
             EvmExpr::Get(tuple, idx) => {
                 self.compile_expr(tuple);

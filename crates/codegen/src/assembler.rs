@@ -23,6 +23,8 @@ pub enum AsmInstruction {
     /// Push a label's address onto the stack (emits PUSH addr, no JUMP).
     /// Used by subroutine extraction for return addresses.
     PushLabel(String),
+    /// A comment (zero-width, no bytecode emitted). Used for IR provenance.
+    Comment(String),
 }
 
 impl AsmInstruction {
@@ -38,6 +40,7 @@ impl AsmInstruction {
             Self::JumpTo(_) => if short_jumps { 3 } else { 4 },  // PUSH1/PUSH2 + JUMP
             Self::JumpITo(_) => if short_jumps { 3 } else { 4 }, // PUSH1/PUSH2 + JUMPI
             Self::PushLabel(_) => if short_jumps { 2 } else { 3 }, // PUSH1/PUSH2 (no JUMP)
+            Self::Comment(_) => 0,
         }
     }
 }
@@ -70,6 +73,11 @@ impl Assembler {
     /// Emit an instruction.
     pub fn emit(&mut self, inst: AsmInstruction) {
         self.instructions.push(inst);
+    }
+
+    /// Emit a comment (zero-width, for IR provenance in asm output).
+    pub fn emit_comment(&mut self, msg: impl Into<String>) {
+        self.emit(AsmInstruction::Comment(msg.into()));
     }
 
     /// Emit a raw opcode.
@@ -201,6 +209,9 @@ impl Assembler {
                         bytecode.push(Opcode::Push2.byte());
                         bytecode.extend_from_slice(&addr_bytes);
                     }
+                }
+                AsmInstruction::Comment(_) => {
+                    // Comments are zero-width; no bytecode emitted.
                 }
             }
         }

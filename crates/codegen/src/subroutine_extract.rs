@@ -83,7 +83,7 @@ fn find_straight_line_regions(instructions: &[AsmInstruction]) -> Vec<Region> {
 
     for (i, inst) in instructions.iter().enumerate() {
         match inst {
-            AsmInstruction::Op(_) | AsmInstruction::Push(_) => {
+            AsmInstruction::Op(_) | AsmInstruction::Push(_) | AsmInstruction::Comment(_) => {
                 if start.is_none() {
                     start = Some(i);
                 }

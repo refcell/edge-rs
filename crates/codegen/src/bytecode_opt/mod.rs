@@ -20,6 +20,8 @@ const MIN_BLOCK_SIZE: usize = 3;
 struct BasicBlock {
     /// Entry label (if any).
     label: Option<AsmInstruction>,
+    /// Comments preceding/within the block body (stripped before egglog optimization).
+    comments: Vec<AsmInstruction>,
     /// Instructions in the block body (Op and Push only).
     body: Vec<AsmInstruction>,
     /// Terminator instruction (JumpTo/JumpITo, or None for fallthrough/end).
@@ -61,6 +63,8 @@ pub fn optimize(
         if let Some(label) = block.label {
             result.push(label);
         }
+
+        result.extend(block.comments);
 
         if block.body.len() >= MIN_BLOCK_SIZE {
             match optimize_block(&block.body, &schema, &schedule) {
@@ -145,24 +149,30 @@ fn remove_consecutive_labels(instructions: Vec<AsmInstruction>) -> Vec<AsmInstru
     let mut aliases: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut i = 0;
     while i < instructions.len() {
-        if let AsmInstruction::Label(a) = &instructions[i] {
-            // Find the end of a chain of consecutive labels
+        if let AsmInstruction::Label(_a) = &instructions[i] {
+            // Find the end of a chain of consecutive labels (skipping comments)
             let mut j = i + 1;
             while j < instructions.len() {
-                if let AsmInstruction::Label(_) = &instructions[j] {
-                    j += 1;
-                } else {
-                    break;
+                match &instructions[j] {
+                    AsmInstruction::Label(_) | AsmInstruction::Comment(_) => j += 1,
+                    _ => break,
                 }
             }
-            // If there are multiple labels in a row, alias all but the last
-            if j > i + 1 {
-                let last_label = if let AsmInstruction::Label(last) = &instructions[j - 1] {
+            // Find the last Label in the chain (skipping comments)
+            let mut last_label_idx = i;
+            for k in (i + 1)..j {
+                if matches!(&instructions[k], AsmInstruction::Label(_)) {
+                    last_label_idx = k;
+                }
+            }
+            // If there are multiple labels, alias all but the last
+            if last_label_idx > i {
+                let last_label = if let AsmInstruction::Label(last) = &instructions[last_label_idx] {
                     last.clone()
                 } else {
                     unreachable!()
                 };
-                for k in i..j - 1 {
+                for k in i..last_label_idx {
                     if let AsmInstruction::Label(label) = &instructions[k] {
                         aliases.insert(label.clone(), last_label.clone());
                     }
@@ -200,15 +210,17 @@ fn remove_consecutive_labels(instructions: Vec<AsmInstruction>) -> Vec<AsmInstru
 fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock> {
     let mut blocks = Vec::new();
     let mut current_label: Option<AsmInstruction> = None;
+    let mut current_comments: Vec<AsmInstruction> = Vec::new();
     let mut current_body: Vec<AsmInstruction> = Vec::new();
 
     for inst in instructions {
         match &inst {
             AsmInstruction::Label(_) => {
                 // A label starts a new block. Flush the current block first.
-                if current_label.is_some() || !current_body.is_empty() {
+                if current_label.is_some() || !current_body.is_empty() || !current_comments.is_empty() {
                     blocks.push(BasicBlock {
                         label: current_label.take(),
+                        comments: std::mem::take(&mut current_comments),
                         body: std::mem::take(&mut current_body),
                         terminator: None,
                     });
@@ -219,9 +231,13 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
                 // Jump terminates the current block.
                 blocks.push(BasicBlock {
                     label: current_label.take(),
+                    comments: std::mem::take(&mut current_comments),
                     body: std::mem::take(&mut current_body),
                     terminator: Some(inst),
                 });
+            }
+            AsmInstruction::Comment(_) => {
+                current_comments.push(inst);
             }
             AsmInstruction::Op(_) | AsmInstruction::Push(_)
             | AsmInstruction::PushLabel(_) => {
@@ -231,9 +247,10 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
     }
 
     // Flush remaining instructions
-    if current_label.is_some() || !current_body.is_empty() {
+    if current_label.is_some() || !current_body.is_empty() || !current_comments.is_empty() {
         blocks.push(BasicBlock {
             label: current_label,
+            comments: current_comments,
             body: current_body,
             terminator: None,
         });
