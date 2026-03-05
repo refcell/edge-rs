@@ -23,6 +23,7 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 
 pub mod ast_helpers;
+pub mod pretty;
 pub mod cleanup;
 pub mod costs;
 pub mod optimizations;

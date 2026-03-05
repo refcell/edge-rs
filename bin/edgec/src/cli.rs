@@ -23,8 +23,8 @@ pub struct Cli {
     #[arg(short, long, requires = "file")]
     pub output: Option<PathBuf>,
 
-    /// What to emit: tokens, ast, ir, bytecode
-    #[arg(long, value_parser = ["tokens", "ast", "ir", "bytecode"], default_value = "bytecode")]
+    /// What to emit: tokens, ast, ir, pretty-ir, bytecode
+    #[arg(long, value_parser = ["tokens", "ast", "ir", "pretty-ir", "bytecode"], default_value = "bytecode")]
     pub emit: String,
 
     /// Optimization level (0-3)
@@ -89,6 +89,7 @@ impl Cli {
             "tokens" => EmitKind::Tokens,
             "ast" => EmitKind::Ast,
             "ir" => EmitKind::Ir,
+            "pretty-ir" => EmitKind::PrettyIr,
             "bytecode" => EmitKind::Bytecode,
             _ => EmitKind::Bytecode,
         };
@@ -136,6 +137,16 @@ impl Cli {
                     for func in &ir.free_functions {
                         println!();
                         println!("{}", edge_ir::sexp::expr_to_pretty(func, 0));
+                    }
+                }
+            }
+            EmitKind::PrettyIr => {
+                if let Some(ref ir) = result.ir {
+                    for contract in &ir.contracts {
+                        print!("{}", edge_ir::pretty::pretty_print_contract(contract));
+                    }
+                    for func in &ir.free_functions {
+                        println!("{}", edge_ir::pretty::pretty_print(func));
                     }
                 }
             }

@@ -11,8 +11,10 @@ pub enum EmitKind {
     Tokens,
     /// Emit AST only (debugging)
     Ast,
-    /// Emit IR only (debugging)
+    /// Emit IR only (s-expression format)
     Ir,
+    /// Emit IR in pretty-printed format
+    PrettyIr,
     /// Emit EVM bytecode (default)
     #[default]
     Bytecode,

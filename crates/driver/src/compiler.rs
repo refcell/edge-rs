@@ -133,7 +133,7 @@ impl Compiler {
             CompileError::Aborted
         })?;
 
-        if emit == EmitKind::Ir {
+        if emit == EmitKind::Ir || emit == EmitKind::PrettyIr {
             return Ok(CompileOutput {
                 tokens: None,
                 ast: Some(ast),
