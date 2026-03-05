@@ -76,6 +76,14 @@ e2e:
 e2e-ci:
     cargo nextest run -p edge-e2e
 
+# Run benchmarks
+bench:
+    cargo bench -p edge-bench
+
+# Run benchmarks with a specific filter (e.g., just bench-filter parse)
+bench-filter filter:
+    cargo bench -p edge-bench -- {{filter}}
+
 # Serve the book
 book:
     mdbook serve --open
