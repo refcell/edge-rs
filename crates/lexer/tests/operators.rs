@@ -136,7 +136,10 @@ fn lex_arithmetic_operator(#[case] input: &str, #[case] op: ArithmeticOperator) 
 #[case("<<=", CompoundAssignmentOperator::ShlAssign)]
 fn lex_compound_assignment(#[case] input: &str, #[case] op: CompoundAssignmentOperator) {
     let tok = Lexer::new(input).next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Operator(Operator::CompoundAssignment(op)));
+    assert_eq!(
+        tok.kind,
+        TokenKind::Operator(Operator::CompoundAssignment(op))
+    );
 }
 
 #[test]
@@ -315,7 +318,10 @@ fn lex_double_colon() {
 #[case("//! inner doc", "//! inner doc")]
 fn lex_doc_comment(#[case] input: &str, #[case] expected_content: &str) {
     let tok = Lexer::new(input).next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::DocComment(expected_content.to_string()));
+    assert_eq!(
+        tok.kind,
+        TokenKind::DocComment(expected_content.to_string())
+    );
 }
 
 #[test]

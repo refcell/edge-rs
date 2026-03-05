@@ -109,9 +109,8 @@ impl<'a> Lexer<'a> {
     /// pure hex digits are accepted — strings like `0x56x34` are rejected by
     /// `str_to_bytes32` and surfaced as `InvalidHexLiteral`.
     pub fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
-        let (integer_str, mut start, end) = self.eat_while(Some(initial_char), |ch| {
-            ch.is_ascii_hexdigit()
-        });
+        let (integer_str, mut start, end) =
+            self.eat_while(Some(initial_char), |ch| ch.is_ascii_hexdigit());
 
         start += 2;
         let span = Span {
@@ -379,8 +378,7 @@ impl<'a> Lexer<'a> {
                             // Regular line comment: //
                             _ => {
                                 let (body, _, end) = self.eat_while(None, |c| c != '\n');
-                                Ok(TokenKind::Comment(format!("//{body}"))
-                                    .into_span(start, end))
+                                Ok(TokenKind::Comment(format!("//{body}")).into_span(start, end))
                             }
                         }
                     }
