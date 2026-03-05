@@ -77,6 +77,114 @@ impl Parser {
         self.peek().kind == TokenKind::Eof
     }
 
+    /// Look ahead past the current `(` to decide if this is an arrow-function parameter
+    /// list. Returns true when `(` is followed by `ident, ident, ..., ) =>` or just `) =>`.
+    fn is_arrow_function_params(&self) -> bool {
+        let mut i = self.cursor; // cursor is already past the '('
+                                 // Skip whitespace
+        while i < self.tokens.len()
+            && matches!(
+                self.tokens[i].kind,
+                TokenKind::Whitespace | TokenKind::Comment(_)
+            )
+        {
+            i += 1;
+        }
+        // Empty parens: check for `) =>`
+        if i < self.tokens.len() && self.tokens[i].kind == TokenKind::CloseParen {
+            i += 1;
+            // skip whitespace
+            while i < self.tokens.len()
+                && matches!(
+                    self.tokens[i].kind,
+                    TokenKind::Whitespace | TokenKind::Comment(_)
+                )
+            {
+                i += 1;
+            }
+            return i < self.tokens.len() && self.tokens[i].kind == TokenKind::FatArrow;
+        }
+        // Collect tokens until CloseParen to check `ident (,ident)* ) =>`
+        loop {
+            // skip whitespace
+            while i < self.tokens.len()
+                && matches!(
+                    self.tokens[i].kind,
+                    TokenKind::Whitespace | TokenKind::Comment(_)
+                )
+            {
+                i += 1;
+            }
+            if i >= self.tokens.len() {
+                return false;
+            }
+            match &self.tokens[i].kind {
+                TokenKind::Ident(_) => i += 1,
+                _ => return false,
+            }
+            // skip whitespace
+            while i < self.tokens.len()
+                && matches!(
+                    self.tokens[i].kind,
+                    TokenKind::Whitespace | TokenKind::Comment(_)
+                )
+            {
+                i += 1;
+            }
+            if i >= self.tokens.len() {
+                return false;
+            }
+            match &self.tokens[i].kind {
+                TokenKind::Comma => i += 1,
+                TokenKind::CloseParen => {
+                    i += 1;
+                    // skip whitespace
+                    while i < self.tokens.len()
+                        && matches!(
+                            self.tokens[i].kind,
+                            TokenKind::Whitespace | TokenKind::Comment(_)
+                        )
+                    {
+                        i += 1;
+                    }
+                    return i < self.tokens.len() && self.tokens[i].kind == TokenKind::FatArrow;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Look ahead to check if the tokens after `{` form a struct instantiation
+    /// pattern: `{ ident : expr, ... }`. Distinguishes from code blocks.
+    fn is_struct_instantiation(&self) -> bool {
+        // Look ahead past `{` for `ident :`
+        let mut i = self.cursor + 1;
+        // Skip whitespace/comments
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::Whitespace | TokenKind::Comment(_) => i += 1,
+                _ => break,
+            }
+        }
+        if i >= self.tokens.len() {
+            return false;
+        }
+        // Check for `ident`
+        if !matches!(self.tokens[i].kind, TokenKind::Ident(_)) {
+            return false;
+        }
+        i += 1;
+        // Skip whitespace
+        while i < self.tokens.len() {
+            match &self.tokens[i].kind {
+                TokenKind::Whitespace | TokenKind::Comment(_) => i += 1,
+                _ => break,
+            }
+        }
+        // Check for `:`
+        i < self.tokens.len() && matches!(self.tokens[i].kind, TokenKind::Colon)
+    }
+
     /// Peek at the current token
     fn peek(&self) -> &Token {
         &self.tokens[self.cursor]
@@ -160,9 +268,16 @@ impl Parser {
         }
     }
 
-    /// Parse variable declaration
+    /// Parse variable declaration, with optional `mut` and initialization
     fn parse_var_decl(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Let))?;
+
+        // Optional `mut` keyword
+        self.skip_whitespace_and_comments();
+        if self.check(&TokenKind::Keyword(Keyword::Mut)) {
+            self.advance(); // consume `mut` (tracked in future AST changes)
+        }
+
         let name = self.parse_ident()?;
 
         let ty = if self.check(&TokenKind::Colon) {
@@ -172,22 +287,59 @@ impl Parser {
             None
         };
 
-        self.expect(TokenKind::Semicolon)?;
-        let span = Span {
-            start: start_tok.span.start,
-            end: self.tokens[self.cursor - 1].span.end,
-            file: start_tok.span.file,
-        };
+        // Check for initialization: let x: T = expr;
+        self.skip_whitespace_and_comments();
+        if self.check(&TokenKind::Operator(Operator::Assignment)) {
+            self.advance();
+            let init_expr = self.parse_expr()?;
+            self.expect(TokenKind::Semicolon)?;
 
-        Ok(Stmt::VarDecl(name, ty, span))
+            let end_span = self.tokens[self.cursor - 1].span.clone();
+            let span = Span {
+                start: start_tok.span.start,
+                end: end_span.end,
+                file: start_tok.span.file,
+            };
+
+            // Return a code block with the declaration and assignment
+            let decl = Stmt::VarDecl(name.clone(), ty, span.clone());
+            let assign = Stmt::Expr(Expr::Assign(
+                Box::new(Expr::Ident(name)),
+                Box::new(init_expr),
+                span.clone(),
+            ));
+            Ok(Stmt::CodeBlock(CodeBlock {
+                stmts: vec![
+                    BlockItem::Stmt(Box::new(decl)),
+                    BlockItem::Stmt(Box::new(assign)),
+                ],
+                span,
+            }))
+        } else {
+            self.expect(TokenKind::Semicolon)?;
+            let span = Span {
+                start: start_tok.span.start,
+                end: self.tokens[self.cursor - 1].span.end,
+                file: start_tok.span.file,
+            };
+
+            Ok(Stmt::VarDecl(name, ty, span))
+        }
     }
 
     /// Parse constant assignment
     fn parse_const_assign(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Const))?;
         let name = self.parse_ident()?;
-        self.expect(TokenKind::Colon)?;
-        let ty = Some(self.parse_type_sig()?);
+
+        // Optional type annotation: const X: u8 = ... or const X = ...
+        let ty = if self.check(&TokenKind::Colon) {
+            self.advance();
+            Some(self.parse_type_sig()?)
+        } else {
+            None
+        };
+
         self.expect(TokenKind::Operator(Operator::Assignment))?;
         let expr = self.parse_expr()?;
         self.expect(TokenKind::Semicolon)?;
@@ -213,8 +365,16 @@ impl Parser {
     fn parse_type_assign(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Type))?;
         let name = self.parse_ident()?;
+
+        // Optional type parameters: type Stack<T> = ...
+        let type_params = self.parse_optional_type_params()?;
+
         self.expect(TokenKind::Operator(Operator::Assignment))?;
-        let ty = self.parse_type_sig()?;
+
+        // Try to parse union type: A | B | C(T)
+        // A union starts with an identifier optionally followed by (T) and then |
+        let ty = self.parse_type_sig_or_union()?;
+
         self.expect(TokenKind::Semicolon)?;
 
         let span = Span {
@@ -226,7 +386,7 @@ impl Parser {
         Ok(Stmt::TypeAssign(
             edge_ast::TypeDecl {
                 name,
-                type_params: Vec::new(),
+                type_params,
                 is_pub: false,
                 span: span.clone(),
             },
@@ -449,7 +609,26 @@ impl Parser {
     fn parse_module(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Module))?;
         let name = self.parse_ident()?;
-        self.expect(TokenKind::Semicolon)?;
+        self.skip_whitespace_and_comments();
+
+        // `mod name;` → external module declaration (no body)
+        // `mod name { items }` → inline module with body
+        let items = if self.check(&TokenKind::OpenBrace) {
+            self.advance(); // consume '{'
+            let mut stmts = Vec::new();
+            while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+                self.skip_whitespace_and_comments();
+                if self.check(&TokenKind::CloseBrace) {
+                    break;
+                }
+                stmts.push(self.parse_stmt()?);
+            }
+            self.expect(TokenKind::CloseBrace)?;
+            stmts
+        } else {
+            self.expect(TokenKind::Semicolon)?;
+            Vec::new()
+        };
 
         let span = Span {
             start: start_tok.span.start,
@@ -461,7 +640,7 @@ impl Parser {
             name,
             is_pub: false,
             doc: None,
-            items: Vec::new(),
+            items,
             span,
         }))
     }
@@ -473,17 +652,78 @@ impl Parser {
 
         let path = if self.check(&TokenKind::DoubleColon) {
             self.advance();
-            let mut path_segments = vec![self.parse_ident()?];
+            self.skip_whitespace_and_comments();
 
-            while self.check(&TokenKind::DoubleColon) {
+            // Tree import: `use root::{a, b, c}` or `use root::*`
+            if self.check(&TokenKind::OpenBrace) {
+                self.advance(); // consume '{'
+                let mut nested = Vec::new();
+                while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+                    self.skip_whitespace_and_comments();
+                    if self.check(&TokenKind::CloseBrace) {
+                        break;
+                    }
+                    let seg = self.parse_ident()?;
+                    nested.push(edge_ast::ImportPath::Ident(seg));
+                    self.skip_whitespace_and_comments();
+                    if !self.check(&TokenKind::CloseBrace) {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                }
+                self.expect(TokenKind::CloseBrace)?;
+                Some(edge_ast::ImportPath::Nested(nested))
+            } else if self.check(&TokenKind::Operator(
+                edge_types::tokens::Operator::Arithmetic(
+                    edge_types::tokens::ArithmeticOperator::Mul,
+                ),
+            )) {
+                // Glob import: `use root::*`
                 self.advance();
-                path_segments.push(self.parse_ident()?);
+                Some(edge_ast::ImportPath::All)
+            } else {
+                // Simple path: `use a::b::c`
+                let mut path_segments = vec![self.parse_ident()?];
+                while self.check(&TokenKind::DoubleColon) {
+                    self.advance();
+                    self.skip_whitespace_and_comments();
+                    if self.check(&TokenKind::OpenBrace) {
+                        // `use a::b::{c, d}`
+                        self.advance();
+                        let mut nested = Vec::new();
+                        while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+                            self.skip_whitespace_and_comments();
+                            if self.check(&TokenKind::CloseBrace) {
+                                break;
+                            }
+                            nested.push(edge_ast::ImportPath::Ident(self.parse_ident()?));
+                            self.skip_whitespace_and_comments();
+                            if !self.check(&TokenKind::CloseBrace) {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                        }
+                        self.expect(TokenKind::CloseBrace)?;
+                        // return the nested import under the accumulated prefix
+                        // For simplicity, store nested paths directly
+                        let _ = path_segments; // prefix context available if needed later
+                        self.expect(TokenKind::Semicolon)?;
+                        let span = Span {
+                            start: start_tok.span.start,
+                            end: self.tokens[self.cursor - 1].span.end,
+                            file: start_tok.span.file,
+                        };
+                        return Ok(Stmt::ModuleImport(edge_ast::ModuleImport {
+                            root,
+                            path: Some(edge_ast::ImportPath::Nested(nested)),
+                            is_pub: false,
+                            span,
+                        }));
+                    }
+                    path_segments.push(self.parse_ident()?);
+                }
+                path_segments
+                    .last()
+                    .map(|last| edge_ast::ImportPath::Ident(last.clone()))
             }
-
-            // For now, use the last segment as the import path
-            path_segments
-                .last()
-                .map(|last| edge_ast::ImportPath::Ident(last.clone()))
         } else {
             None
         };
@@ -508,6 +748,9 @@ impl Parser {
     fn parse_trait_stub(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Trait))?;
         let name = self.parse_ident()?;
+
+        // Optional type parameters: trait Comparable<T> { ... }
+        let type_params = self.parse_optional_type_params()?;
 
         // Optional supertraits: Trait: SuperA + SuperB
         let mut supertraits = Vec::new();
@@ -546,7 +789,7 @@ impl Parser {
         Ok(Stmt::TraitDecl(
             edge_ast::TraitDecl {
                 name,
-                type_params: Vec::new(),
+                type_params,
                 supertraits,
                 items,
                 is_pub: false,
@@ -743,9 +986,7 @@ impl Parser {
     /// Parse if-else statement
     fn parse_if_else(&mut self) -> ParseResult<Stmt> {
         let _start = self.expect(TokenKind::Keyword(Keyword::If))?;
-        self.expect(TokenKind::OpenParen)?;
-        let cond = self.parse_expr()?;
-        self.expect(TokenKind::CloseParen)?;
+        let cond = self.parse_if_condition()?;
         let block = self.parse_code_block()?;
 
         let mut conditions = vec![(cond, block)];
@@ -765,9 +1006,7 @@ impl Parser {
             if self.check(&TokenKind::Keyword(Keyword::If)) {
                 // else if
                 self.advance(); // consume 'if'
-                self.expect(TokenKind::OpenParen)?;
-                let elif_cond = self.parse_expr()?;
-                self.expect(TokenKind::CloseParen)?;
+                let elif_cond = self.parse_if_condition()?;
                 let elif_block = self.parse_code_block()?;
                 conditions.push((elif_cond, elif_block));
             } else {
@@ -778,6 +1017,71 @@ impl Parser {
         }
 
         Ok(Stmt::IfElse(conditions, else_block))
+    }
+
+    /// Parse an if condition: either `(expr)` or `expr matches Pattern`
+    fn parse_if_condition(&mut self) -> ParseResult<Expr> {
+        self.skip_whitespace_and_comments();
+        if self.check(&TokenKind::OpenParen) {
+            self.advance();
+            let cond = self.parse_expr()?;
+            self.expect(TokenKind::CloseParen)?;
+            Ok(cond)
+        } else {
+            // `if expr matches Pattern { ... }`
+            let expr = self.parse_expr()?;
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::Keyword(Keyword::Matches)) {
+                self.advance();
+                self.skip_whitespace_and_comments();
+                let pattern = self.parse_union_pattern()?;
+                let span = Span {
+                    start: expr.span().start,
+                    end: self.tokens[self.cursor - 1].span.end,
+                    file: expr.span().file,
+                };
+                Ok(Expr::PatternMatch(Box::new(expr), pattern, span))
+            } else {
+                Ok(expr)
+            }
+        }
+    }
+
+    /// Parse a union pattern: `Type::Variant` or `Type::Variant(binding)`
+    fn parse_union_pattern(&mut self) -> ParseResult<edge_ast::pattern::UnionPattern> {
+        let union_name = self.parse_ident()?;
+        self.expect(TokenKind::DoubleColon)?;
+        let member_name = self.parse_ident()?;
+
+        let mut bindings = Vec::new();
+        if self.check(&TokenKind::OpenParen) {
+            self.advance();
+            while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+                self.skip_whitespace_and_comments();
+                if self.check(&TokenKind::CloseParen) {
+                    break;
+                }
+                bindings.push(self.parse_ident()?);
+                self.skip_whitespace_and_comments();
+                if !self.check(&TokenKind::CloseParen) {
+                    self.expect(TokenKind::Comma)?;
+                }
+            }
+            self.expect(TokenKind::CloseParen)?;
+        }
+
+        let span = Span {
+            start: union_name.span.start,
+            end: self.tokens[self.cursor - 1].span.end,
+            file: union_name.span.file.clone(),
+        };
+
+        Ok(edge_ast::pattern::UnionPattern {
+            union_name,
+            member_name,
+            bindings,
+            span,
+        })
     }
 
     /// Parse match statement
@@ -794,7 +1098,47 @@ impl Parser {
             }
             let pattern = self.parse_match_pattern()?;
             self.expect(TokenKind::FatArrow)?;
-            let body = self.parse_code_block()?;
+            self.skip_whitespace_and_comments();
+
+            // Match arm body: either a code block { ... } or a single statement/expression
+            let body = if self.check(&TokenKind::OpenBrace) {
+                self.parse_code_block()?
+            } else {
+                // Single statement/expression arm without braces.
+                // Handle `return expr` and regular expressions.
+                self.skip_whitespace_and_comments();
+                let stmt = if self.check(&TokenKind::Keyword(Keyword::Return)) {
+                    // Parse return statement without requiring `;`
+                    let start_tok = self.advance();
+                    self.skip_whitespace_and_comments();
+                    // Check if the return has a value (not immediately followed by , or })
+                    let expr =
+                        if self.check(&TokenKind::Comma) || self.check(&TokenKind::CloseBrace) {
+                            None
+                        } else {
+                            Some(self.parse_expr()?)
+                        };
+                    let span = Span {
+                        start: start_tok.span.start,
+                        end: self.tokens[self.cursor - 1].span.end,
+                        file: start_tok.span.file,
+                    };
+                    Stmt::Return(expr, span)
+                } else {
+                    let expr = self.parse_expr()?;
+                    Stmt::Expr(expr)
+                };
+                let span = match &stmt {
+                    Stmt::Return(_, s) => s.clone(),
+                    Stmt::Expr(e) => e.span(),
+                    _ => Span::EOF,
+                };
+                CodeBlock {
+                    stmts: vec![BlockItem::Stmt(Box::new(stmt))],
+                    span,
+                }
+            };
+
             arms.push(edge_ast::pattern::MatchArm { pattern, body });
             self.skip_whitespace_and_comments();
             if self.check(&TokenKind::Comma) {
@@ -873,13 +1217,20 @@ impl Parser {
     fn parse_for_loop(&mut self) -> ParseResult<Stmt> {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::For))?;
         self.expect(TokenKind::OpenParen)?;
+        self.skip_whitespace_and_comments();
 
+        // Parse init: may be empty (;), a statement (let x = 0;), or an expr stmt
         let init = if self.check(&TokenKind::Semicolon) {
+            self.advance(); // consume the ;
             None
         } else {
+            // parse_stmt already consumes the trailing ;
             Some(Box::new(self.parse_stmt()?))
         };
 
+        self.skip_whitespace_and_comments();
+
+        // Parse condition: may be empty (;) or an expression
         let cond = if self.check(&TokenKind::Semicolon) {
             None
         } else {
@@ -887,10 +1238,15 @@ impl Parser {
         };
         self.expect(TokenKind::Semicolon)?;
 
+        self.skip_whitespace_and_comments();
+
+        // Parse update: may be empty ()) or an expression (like `i = i + 1`)
         let update = if self.check(&TokenKind::CloseParen) {
             None
         } else {
-            Some(Box::new(self.parse_stmt()?))
+            // The update clause is an expression (no trailing ;)
+            let expr = self.parse_expr()?;
+            Some(Box::new(Stmt::Expr(expr)))
         };
 
         self.expect(TokenKind::CloseParen)?;
@@ -1020,9 +1376,20 @@ impl Parser {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Impl))?;
         let ty_name = self.parse_ident()?;
 
-        // Check for trait impl: impl TraitName for TypeName
-        // Currently "for" is not in keywords - skip for now
-        let trait_impl = None;
+        // Optional type arguments/parameters: impl Stack<T> or impl Comparable<u256>
+        // Parse as type sigs and convert to TypeParams for the AST
+        let type_params = self.parse_optional_type_params_or_args()?;
+
+        // Check for trait impl: impl Type : TraitName { ... }
+        self.skip_whitespace_and_comments();
+        let trait_impl = if self.check(&TokenKind::Colon) {
+            self.advance();
+            let trait_name = self.parse_ident()?;
+            let trait_params = self.parse_optional_type_params_or_args()?;
+            Some((trait_name, trait_params))
+        } else {
+            None
+        };
 
         self.expect(TokenKind::OpenBrace)?;
 
@@ -1093,7 +1460,7 @@ impl Parser {
 
         Ok(Stmt::ImplBlock(edge_ast::item::ImplBlock {
             ty_name,
-            type_params: Vec::new(),
+            type_params,
             trait_impl,
             items,
             span,
@@ -1110,7 +1477,30 @@ impl Parser {
 
     /// Parse an expression
     pub fn parse_expr(&mut self) -> ParseResult<Expr> {
-        self.parse_binary_expr(0)
+        let cond = self.parse_binary_expr(0)?;
+        self.skip_whitespace_and_comments();
+
+        // Ternary: cond ? then : else
+        if self.check(&TokenKind::Question) {
+            self.advance(); // consume '?'
+            let then_expr = self.parse_expr()?;
+            self.skip_whitespace_and_comments();
+            self.expect(TokenKind::Colon)?;
+            let else_expr = self.parse_expr()?;
+            let span = Span {
+                start: cond.span().start,
+                end: else_expr.span().end,
+                file: cond.span().file,
+            };
+            return Ok(Expr::Ternary(
+                Box::new(cond),
+                Box::new(then_expr),
+                Box::new(else_expr),
+                span,
+            ));
+        }
+
+        Ok(cond)
     }
 
     /// Parse binary expression with precedence climbing
@@ -1235,20 +1625,37 @@ impl Parser {
                 }
                 TokenKind::Dot => {
                     self.advance();
-                    if let TokenKind::Ident(field_name) = &self.peek().kind {
-                        let field = Ident {
-                            name: field_name.clone(),
-                            span: self.peek().span.clone(),
-                        };
-                        self.advance();
+                    match &self.peek().kind {
+                        TokenKind::Ident(field_name) => {
+                            let field = Ident {
+                                name: field_name.clone(),
+                                span: self.peek().span.clone(),
+                            };
+                            self.advance();
 
-                        let span = Span {
-                            start: expr.span().start,
-                            end: self.tokens[self.cursor - 1].span.end,
-                            file: expr.span().file.clone(),
-                        };
+                            let span = Span {
+                                start: expr.span().start,
+                                end: self.tokens[self.cursor - 1].span.end,
+                                file: expr.span().file.clone(),
+                            };
 
-                        expr = Expr::FieldAccess(Box::new(expr), field, span);
+                            expr = Expr::FieldAccess(Box::new(expr), field, span);
+                        }
+                        TokenKind::Literal(lit_bytes) => {
+                            // Tuple field access: expr.0, expr.1, etc.
+                            let mut value: u64 = 0;
+                            for byte in lit_bytes {
+                                value = (value << 8) | (*byte as u64);
+                            }
+                            let token = self.advance();
+                            let span = Span {
+                                start: expr.span().start,
+                                end: token.span.end,
+                                file: expr.span().file.clone(),
+                            };
+                            expr = Expr::TupleFieldAccess(Box::new(expr), value, span);
+                        }
+                        _ => {}
                     }
                 }
                 _ => break,
@@ -1304,15 +1711,85 @@ impl Parser {
                             });
                         }
                     }
-                    let end_span = path_segments.last().unwrap().span.clone();
-                    let span = Span {
-                        start: token.span.start,
-                        end: end_span.end,
-                        file: token.span.file,
-                    };
-                    Ok(Expr::Path(path_segments, span))
+
+                    // Check for union instantiation with parens: Path::Variant(args)
+                    self.skip_whitespace_and_comments();
+                    if self.check(&TokenKind::OpenParen) {
+                        self.advance();
+                        let mut args = Vec::new();
+                        while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+                            self.skip_whitespace_and_comments();
+                            if self.check(&TokenKind::CloseParen) {
+                                break;
+                            }
+                            args.push(self.parse_expr()?);
+                            self.skip_whitespace_and_comments();
+                            if !self.check(&TokenKind::CloseParen) {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                        }
+                        let end = self.expect(TokenKind::CloseParen)?;
+                        let span = Span {
+                            start: token.span.start,
+                            end: end.span.end,
+                            file: token.span.file,
+                        };
+                        Ok(Expr::FunctionCall(
+                            Box::new(Expr::Path(path_segments, span.clone())),
+                            args,
+                            span,
+                        ))
+                    } else {
+                        let end_span = path_segments.last().unwrap().span.clone();
+                        let span = Span {
+                            start: token.span.start,
+                            end: end_span.end,
+                            file: token.span.file,
+                        };
+                        Ok(Expr::Path(path_segments, span))
+                    }
                 } else {
-                    Ok(Expr::Ident(ident))
+                    self.skip_whitespace_and_comments();
+                    // Arrow function: single-param form  `ident => { body }`
+                    if self.check(&TokenKind::FatArrow) {
+                        self.advance(); // consume '=>'
+                        let body = self.parse_code_block()?;
+                        let span = Span {
+                            start: token.span.start,
+                            end: body.span.end,
+                            file: token.span.file,
+                        };
+                        return Ok(Expr::ArrowFunction(vec![ident], Box::new(body), span));
+                    }
+
+                    // Check for struct instantiation: Name { field: expr, ... }
+                    if self.check(&TokenKind::OpenBrace) && self.is_struct_instantiation() {
+                        self.advance(); // consume {
+                        let mut fields = Vec::new();
+                        while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+                            self.skip_whitespace_and_comments();
+                            if self.check(&TokenKind::CloseBrace) {
+                                break;
+                            }
+                            let field_name = self.parse_ident()?;
+                            self.expect(TokenKind::Colon)?;
+                            let field_expr = self.parse_expr()?;
+                            fields.push((field_name, field_expr));
+                            self.skip_whitespace_and_comments();
+                            if !self.check(&TokenKind::CloseBrace) {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                        }
+                        let end = self.expect(TokenKind::CloseBrace)?;
+                        let span = Span {
+                            start: token.span.start,
+                            end: end.span.end,
+                            file: token.span.file,
+                        };
+                        Ok(Expr::StructInstantiation(None, ident, fields, span))
+                    } else {
+                        Ok(Expr::Ident(ident))
+                    }
                 }
             }
             TokenKind::At => {
@@ -1356,16 +1833,117 @@ impl Parser {
             }
             TokenKind::OpenParen => {
                 let start = self.advance().span;
-                let expr = self.parse_expr()?;
-                self.expect(TokenKind::CloseParen)?;
 
+                // Multi-param arrow function: () => body  or  (x, y) => body
+                // Detect by lookahead: () => or (ident, ident, ...) =>
+                if self.is_arrow_function_params() {
+                    // Parse parameter list of identifiers
+                    let mut params = Vec::new();
+                    while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+                        self.skip_whitespace_and_comments();
+                        if self.check(&TokenKind::CloseParen) {
+                            break;
+                        }
+                        params.push(self.parse_ident()?);
+                        self.skip_whitespace_and_comments();
+                        if !self.check(&TokenKind::CloseParen) {
+                            self.expect(TokenKind::Comma)?;
+                        }
+                    }
+                    self.expect(TokenKind::CloseParen)?;
+                    self.skip_whitespace_and_comments();
+                    self.expect(TokenKind::FatArrow)?;
+                    let body = self.parse_code_block()?;
+                    let span = Span {
+                        start: start.start,
+                        end: body.span.end,
+                        file: start.file,
+                    };
+                    return Ok(Expr::ArrowFunction(params, Box::new(body), span));
+                }
+
+                // Check for empty parens → empty tuple
+                if self.check(&TokenKind::CloseParen) {
+                    self.advance();
+                    let span = Span {
+                        start: start.start,
+                        end: self.tokens[self.cursor - 1].span.end,
+                        file: start.file,
+                    };
+                    return Ok(Expr::TupleInstantiation(None, Vec::new(), span));
+                }
+
+                let first = self.parse_expr()?;
+
+                // Check if this is a tuple (has comma) or just parenthesized expr
+                if self.check(&TokenKind::Comma) {
+                    // Tuple instantiation: (expr, expr, ...)
+                    let mut elems = vec![first];
+                    while self.check(&TokenKind::Comma) {
+                        self.advance();
+                        self.skip_whitespace_and_comments();
+                        if self.check(&TokenKind::CloseParen) {
+                            break;
+                        }
+                        elems.push(self.parse_expr()?);
+                    }
+                    self.expect(TokenKind::CloseParen)?;
+                    let span = Span {
+                        start: start.start,
+                        end: self.tokens[self.cursor - 1].span.end,
+                        file: start.file,
+                    };
+                    Ok(Expr::TupleInstantiation(None, elems, span))
+                } else {
+                    self.expect(TokenKind::CloseParen)?;
+                    self.skip_whitespace_and_comments();
+                    // Single-param arrow: (x) => body
+                    if self.check(&TokenKind::FatArrow) {
+                        if let Expr::Ident(param_ident) = first {
+                            self.advance(); // consume '=>'
+                            let body = self.parse_code_block()?;
+                            let span = Span {
+                                start: start.start,
+                                end: body.span.end,
+                                file: start.file,
+                            };
+                            return Ok(Expr::ArrowFunction(
+                                vec![param_ident],
+                                Box::new(body),
+                                span,
+                            ));
+                        }
+                    }
+                    let span = Span {
+                        start: start.start,
+                        end: self.tokens[self.cursor - 1].span.end,
+                        file: start.file,
+                    };
+                    Ok(Expr::Paren(Box::new(first), span))
+                }
+            }
+            // Array instantiation: [expr, expr, ...]
+            TokenKind::OpenBracket => {
+                let start = self.advance().span;
+                let mut elems = Vec::new();
+                while !self.check(&TokenKind::CloseBracket) && !self.is_at_end() {
+                    self.skip_whitespace_and_comments();
+                    if self.check(&TokenKind::CloseBracket) {
+                        break;
+                    }
+                    elems.push(self.parse_expr()?);
+                    self.skip_whitespace_and_comments();
+                    if !self.check(&TokenKind::CloseBracket) {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                }
+                let end_tok = self.expect(TokenKind::CloseBracket)?;
                 let span = Span {
                     start: start.start,
-                    end: self.tokens[self.cursor - 1].span.end,
+                    end: end_tok.span.end,
                     file: start.file,
                 };
-
-                Ok(Expr::Paren(Box::new(expr), span))
+                Ok(Expr::ArrayInstantiation(None, elems, span))
             }
             _ => {
                 let token = self.peek().clone();
@@ -1445,6 +2023,41 @@ impl Parser {
                 self.expect(TokenKind::CloseParen)?;
                 Ok(TypeSig::Tuple(types))
             }
+            // Struct type: { field: T, ... }
+            TokenKind::OpenBrace => self.parse_struct_type_sig(false),
+            // Array type: [T; N]
+            TokenKind::OpenBracket => self.parse_array_type_sig(false),
+            // Packed struct/tuple/array: packed { ... } or packed (...) or packed [...]
+            TokenKind::Keyword(Keyword::Packed) => {
+                self.advance();
+                self.skip_whitespace_and_comments();
+                match self.peek().kind {
+                    TokenKind::OpenBrace => self.parse_struct_type_sig(true),
+                    TokenKind::OpenParen => {
+                        self.advance();
+                        let mut types = Vec::new();
+                        while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+                            types.push(self.parse_type_sig()?);
+                            if !self.check(&TokenKind::CloseParen) {
+                                self.expect(TokenKind::Comma)?;
+                            }
+                        }
+                        self.expect(TokenKind::CloseParen)?;
+                        Ok(TypeSig::PackedTuple(types))
+                    }
+                    TokenKind::OpenBracket => self.parse_array_type_sig(true),
+                    _ => {
+                        let token = self.peek().clone();
+                        Err(ParseError::InvalidTypeSig {
+                            message: format!(
+                                "Expected '{{', '(' or '[' after 'packed', got: {:?}",
+                                token.kind
+                            ),
+                            span: token.span,
+                        })
+                    }
+                }
+            }
             _ => {
                 let token = self.peek().clone();
                 Err(ParseError::InvalidTypeSig {
@@ -1453,6 +2066,231 @@ impl Parser {
                 })
             }
         }
+    }
+
+    /// Parse a struct type signature: { field: T, field: T, ... }
+    fn parse_struct_type_sig(&mut self, packed: bool) -> ParseResult<TypeSig> {
+        self.expect(TokenKind::OpenBrace)?;
+
+        let mut fields = Vec::new();
+        while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::CloseBrace) {
+                break;
+            }
+            let field_name = self.parse_ident()?;
+            self.expect(TokenKind::Colon)?;
+            let field_ty = self.parse_type_sig()?;
+            fields.push(edge_ast::StructField {
+                name: field_name,
+                ty: field_ty,
+            });
+            self.skip_whitespace_and_comments();
+            if !self.check(&TokenKind::CloseBrace) {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+        self.expect(TokenKind::CloseBrace)?;
+
+        if packed {
+            Ok(TypeSig::PackedStruct(fields))
+        } else {
+            Ok(TypeSig::Struct(fields))
+        }
+    }
+
+    /// Parse an array type signature: [T; N]
+    fn parse_array_type_sig(&mut self, packed: bool) -> ParseResult<TypeSig> {
+        self.expect(TokenKind::OpenBracket)?;
+        let elem_ty = self.parse_type_sig()?;
+        self.expect(TokenKind::Semicolon)?;
+        let size_expr = self.parse_expr()?;
+        self.expect(TokenKind::CloseBracket)?;
+
+        if packed {
+            Ok(TypeSig::PackedArray(Box::new(elem_ty), Box::new(size_expr)))
+        } else {
+            Ok(TypeSig::Array(Box::new(elem_ty), Box::new(size_expr)))
+        }
+    }
+
+    /// Parse optional type parameters: `<T, U: Trait>`
+    fn parse_optional_type_params(&mut self) -> ParseResult<Vec<edge_ast::ty::TypeParam>> {
+        self.skip_whitespace_and_comments();
+        if !self.check(&TokenKind::Operator(
+            edge_types::tokens::Operator::Comparison(
+                edge_types::tokens::ComparisonOperator::LessThan,
+            ),
+        )) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // consume <
+
+        let mut params = Vec::new();
+        while !self.is_generic_close() && !self.is_at_end() {
+            self.skip_whitespace_and_comments();
+            if self.is_generic_close() {
+                break;
+            }
+            let param_name = self.parse_ident()?;
+
+            // Optional trait constraints: T: TraitA & TraitB
+            let mut constraints = Vec::new();
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::Colon) {
+                self.advance();
+                constraints.push(self.parse_ident()?);
+                while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::And,
+                ))) {
+                    self.advance();
+                    constraints.push(self.parse_ident()?);
+                }
+            }
+
+            params.push(edge_ast::ty::TypeParam {
+                name: param_name,
+                constraints,
+            });
+
+            self.skip_whitespace_and_comments();
+            if !self.is_generic_close() {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+        self.expect_generic_gt()?;
+
+        Ok(params)
+    }
+
+    /// Parse optional type parameters or type arguments: `<T>` or `<u256>`
+    ///
+    /// Used for impl blocks where the content can be either type parameters
+    /// (like `T`) or concrete type arguments (like `u256`).
+    fn parse_optional_type_params_or_args(&mut self) -> ParseResult<Vec<edge_ast::ty::TypeParam>> {
+        self.skip_whitespace_and_comments();
+        if !self.check(&TokenKind::Operator(
+            edge_types::tokens::Operator::Comparison(
+                edge_types::tokens::ComparisonOperator::LessThan,
+            ),
+        )) {
+            return Ok(Vec::new());
+        }
+        self.advance(); // consume <
+
+        let mut params = Vec::new();
+        while !self.is_generic_close() && !self.is_at_end() {
+            self.skip_whitespace_and_comments();
+            if self.is_generic_close() {
+                break;
+            }
+            // Parse as a type signature (handles both idents and concrete types)
+            let ty = self.parse_type_sig()?;
+            // Convert to TypeParam: use the type name as the param name
+            let param_name = match &ty {
+                TypeSig::Named(ident, _) => ident.clone(),
+                TypeSig::Primitive(p) => Ident {
+                    name: p.to_string(),
+                    span: Span::EOF,
+                },
+                _ => Ident {
+                    name: format!("{ty:?}"),
+                    span: Span::EOF,
+                },
+            };
+            params.push(edge_ast::ty::TypeParam {
+                name: param_name,
+                constraints: Vec::new(),
+            });
+
+            self.skip_whitespace_and_comments();
+            if !self.is_generic_close() {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+        self.expect_generic_gt()?;
+
+        Ok(params)
+    }
+
+    /// Parse a type signature that may be a union: `A | B | C(T)`
+    ///
+    /// Union members use `Ident(Type)` syntax with parentheses, NOT generics.
+    /// This is called from `parse_type_assign` where `type X = ...` can be
+    /// either a regular type sig or a union.
+    fn parse_type_sig_or_union(&mut self) -> ParseResult<TypeSig> {
+        self.skip_whitespace_and_comments();
+
+        // Check for leading `|` (optional per spec)
+        let has_leading_pipe = self.check(&TokenKind::Operator(
+            edge_types::tokens::Operator::Bitwise(edge_types::tokens::BitwiseOperator::Or),
+        ));
+        if has_leading_pipe {
+            self.advance();
+            self.skip_whitespace_and_comments();
+        }
+
+        // Try to detect a union: if the first token is an ident, check if `(` or `|` follows.
+        // Save cursor to backtrack if it's not a union.
+        let saved_cursor = self.cursor;
+
+        if let TokenKind::Ident(_) = self.peek().kind {
+            let first_member = self.parse_union_member()?;
+            self.skip_whitespace_and_comments();
+
+            // If `|` follows (or we had a leading pipe), it's definitely a union
+            let is_union = has_leading_pipe
+                || self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::Or,
+                )));
+
+            if is_union {
+                let mut members = vec![first_member];
+                while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                    edge_types::tokens::BitwiseOperator::Or,
+                ))) {
+                    self.advance(); // consume |
+                    self.skip_whitespace_and_comments();
+                    members.push(self.parse_union_member()?);
+                    self.skip_whitespace_and_comments();
+                }
+                return Ok(TypeSig::Union(members));
+            }
+
+            // Not a union -- but first_member was parsed as a union member.
+            // If the member had inner data `A(T)`, that's only valid in union context.
+            // If it was just `A`, it should be treated as a Named type.
+            // Backtrack and re-parse as a normal type signature.
+            if first_member.inner.is_some() {
+                // This is ambiguous -- A(T) is only valid as a union member.
+                // But since there's no `|`, treat as error or convert.
+                // Actually, backtrack and let normal type sig parsing handle it.
+                self.cursor = saved_cursor;
+                return self.parse_type_sig();
+            }
+
+            // It's just a plain ident -- backtrack and re-parse
+            self.cursor = saved_cursor;
+            return self.parse_type_sig();
+        }
+
+        // Not starting with an ident, just parse as normal type sig
+        self.parse_type_sig()
+    }
+
+    /// Parse a single union member: `Ident` or `Ident(TypeSig)`
+    fn parse_union_member(&mut self) -> ParseResult<edge_ast::UnionMember> {
+        let name = self.parse_ident()?;
+        self.skip_whitespace_and_comments();
+        let inner = if self.check(&TokenKind::OpenParen) {
+            self.advance();
+            let ty = self.parse_type_sig()?;
+            self.expect(TokenKind::CloseParen)?;
+            Some(ty)
+        } else {
+            None
+        };
+        Ok(edge_ast::UnionMember { name, inner })
     }
 
     /// Convert from `edge_types` `PrimitiveType` to `edge_ast` `PrimitiveType`
@@ -1494,6 +2332,9 @@ impl Parser {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Fn))?;
         let name = self.parse_ident()?;
 
+        // Optional type parameters: fn identity<T>(...)
+        let type_params = self.parse_optional_type_params()?;
+
         self.expect(TokenKind::OpenParen)?;
         let mut params = Vec::new();
         while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
@@ -1502,8 +2343,22 @@ impl Parser {
                 break;
             }
             let param_name = self.parse_ident()?;
-            self.expect(TokenKind::Colon)?;
-            let param_type = self.parse_type_sig()?;
+
+            // `self` parameter can omit type annotation
+            self.skip_whitespace_and_comments();
+            let param_type = if self.check(&TokenKind::Colon) {
+                self.advance();
+                self.parse_type_sig()?
+            } else {
+                // No type annotation -- use Named("Self") as implicit type
+                TypeSig::Named(
+                    Ident {
+                        name: "Self".to_string(),
+                        span: param_name.span.clone(),
+                    },
+                    Vec::new(),
+                )
+            };
             params.push((param_name, param_type));
 
             self.skip_whitespace_and_comments();
@@ -1539,7 +2394,7 @@ impl Parser {
 
         Ok(FnDecl {
             name,
-            type_params: Vec::new(),
+            type_params,
             params,
             returns,
             is_pub: false,
@@ -1661,7 +2516,32 @@ impl Parser {
                 break;
             }
 
-            stmts.push(BlockItem::Stmt(Box::new(self.parse_stmt()?)));
+            // Skip orphan semicolons (e.g. after match {} ;)
+            if self.check(&TokenKind::Semicolon) {
+                self.advance();
+                continue;
+            }
+
+            // Try parsing as a statement. If the expression statement fails
+            // because of a missing semicolon before `}`, treat it as a tail
+            // expression (like Rust's implicit return).
+            let saved_cursor = self.cursor;
+            match self.parse_stmt() {
+                Ok(stmt) => stmts.push(BlockItem::Stmt(Box::new(stmt))),
+                Err(_) => {
+                    // Try parsing as a tail expression (no semicolon needed
+                    // when followed by `}`)
+                    self.cursor = saved_cursor;
+                    let expr = self.parse_expr()?;
+                    // If '}' follows, this is a tail expression
+                    self.skip_whitespace_and_comments();
+                    if !self.check(&TokenKind::CloseBrace) {
+                        // Not a tail expression, need semicolon
+                        self.expect(TokenKind::Semicolon)?;
+                    }
+                    stmts.push(BlockItem::Stmt(Box::new(Stmt::Expr(expr))));
+                }
+            }
         }
 
         let end = self.expect(TokenKind::CloseBrace)?.span;
@@ -1755,19 +2635,38 @@ impl Parser {
         self.skip_whitespace_and_comments();
 
         let kind = self.peek().kind.clone();
-        if let TokenKind::Ident(name) = kind {
-            let token = self.advance();
-            Ok(Ident {
-                name,
-                span: token.span,
-            })
-        } else {
-            let token = self.peek().clone();
-            Err(ParseError::unexpected(
-                &token.kind,
-                "identifier",
-                token.span,
-            ))
+        match kind {
+            TokenKind::Ident(name) => {
+                let token = self.advance();
+                Ok(Ident {
+                    name,
+                    span: token.span,
+                })
+            }
+            // `self` and `Self` keywords can be used as identifiers in certain contexts
+            TokenKind::Keyword(Keyword::Self_) => {
+                let token = self.advance();
+                Ok(Ident {
+                    name: "self".to_string(),
+                    span: token.span,
+                })
+            }
+            // `super` keyword can be used as an identifier in path contexts
+            TokenKind::Keyword(Keyword::Super) => {
+                let token = self.advance();
+                Ok(Ident {
+                    name: "super".to_string(),
+                    span: token.span,
+                })
+            }
+            _ => {
+                let token = self.peek().clone();
+                Err(ParseError::unexpected(
+                    &token.kind,
+                    "identifier",
+                    token.span,
+                ))
+            }
         }
     }
 }

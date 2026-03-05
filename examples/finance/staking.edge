@@ -1,0 +1,154 @@
+// staking.edge — ERC-20 staking with per-second rewards
+//
+// What this demonstrates:
+//   - Complex &s state: multiple maps, u256 arithmetic
+//   - Staked/Withdrawn/RewardPaid events
+//   - while loops for time-based reward calculations
+//   - map<addr, u256> storage mappings
+//   - @caller() builtin
+//   - Internal helper functions for reward accumulation
+//   - Arithmetic: multiplication, division, addition, subtraction
+//
+// Run with:
+//   edgec lex examples/finance/staking.edge
+//   edgec parse examples/finance/staking.edge
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event Staked(indexed user: addr, amount: u256);
+event Withdrawn(indexed user: addr, amount: u256);
+event RewardPaid(indexed user: addr, reward: u256);
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IStaking {
+    fn stake(amount: u256);
+    fn withdraw(amount: u256);
+    fn claimReward();
+    fn earned(account: addr) -> (u256);
+    fn stakedBalance(account: addr) -> (u256);
+    fn totalStaked() -> (u256);
+}
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const REWARD_RATE: u256 = 1000000000000000000;
+const PRECISION: u256 = 1000000000000000000;
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract Staking {
+    // Token being staked.
+    let staking_token: &s addr;
+
+    // Reward token.
+    let reward_token: &s addr;
+
+    // Total amount currently staked across all users.
+    let total_staked: &s u256;
+
+    // Per-user staked balances.
+    let staked_balances: &s map<addr, u256>;
+
+    // Per-user accumulated rewards.
+    let rewards: &s map<addr, u256>;
+
+    // Per-user reward per token paid (for pro-rata calculation).
+    let user_reward_per_token_paid: &s map<addr, u256>;
+
+    // Global reward per token stored.
+    let reward_per_token_stored: &s u256;
+
+    // Last update timestamp.
+    let last_update_time: &s u256;
+
+    // Reward period end.
+    let period_finish: &s u256;
+
+    // Stake tokens into the pool.
+    pub fn stake(amount: u256) {
+        let caller: addr;
+        caller = @caller();
+        _updateReward(caller);
+
+        staked_balances[caller] = staked_balances[caller] + amount;
+        total_staked = total_staked + amount;
+
+        emit Staked(caller, amount);
+    }
+
+    // Withdraw staked tokens.
+    pub fn withdraw(amount: u256) {
+        let caller: addr;
+        caller = @caller();
+        _updateReward(caller);
+
+        staked_balances[caller] = staked_balances[caller] - amount;
+        total_staked = total_staked - amount;
+
+        emit Withdrawn(caller, amount);
+    }
+
+    // Claim accumulated rewards.
+    pub fn claimReward() {
+        let caller: addr;
+        caller = @caller();
+        _updateReward(caller);
+
+        let reward: u256;
+        reward = rewards[caller];
+        if (reward > 0) {
+            rewards[caller] = 0;
+            emit RewardPaid(caller, reward);
+        }
+    }
+
+    // Calculate earned rewards for an account.
+    pub fn earned(account: addr) -> (u256) {
+        let balance: u256;
+        balance = staked_balances[account];
+        let rpt: u256;
+        rpt = _rewardPerToken();
+        let paid: u256;
+        paid = user_reward_per_token_paid[account];
+        let pending: u256;
+        pending = balance * (rpt - paid) / PRECISION;
+        return rewards[account] + pending;
+    }
+
+    // Return staked balance for an account.
+    pub fn stakedBalance(account: addr) -> (u256) {
+        return staked_balances[account];
+    }
+
+    // Return total staked amount.
+    pub fn totalStaked() -> (u256) {
+        return total_staked;
+    }
+
+    // Calculate the current reward per token.
+    fn _rewardPerToken() -> (u256) {
+        if (total_staked == 0) {
+            return reward_per_token_stored;
+        }
+        let time_delta: u256;
+        time_delta = last_update_time;
+        let new_rewards: u256;
+        new_rewards = time_delta * REWARD_RATE * PRECISION / total_staked;
+        return reward_per_token_stored + new_rewards;
+    }
+
+    // Update reward state for a given account.
+    fn _updateReward(account: addr) {
+        reward_per_token_stored = _rewardPerToken();
+
+        let earned_amount: u256;
+        let balance: u256;
+        let paid: u256;
+        balance = staked_balances[account];
+        paid = user_reward_per_token_paid[account];
+        earned_amount = balance * (reward_per_token_stored - paid) / PRECISION;
+        rewards[account] = rewards[account] + earned_amount;
+        user_reward_per_token_paid[account] = reward_per_token_stored;
+    }
+}

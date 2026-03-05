@@ -1,0 +1,91 @@
+// pausable.edge — Pausable contract pattern
+//
+// What this demonstrates:
+//   - bool storage variable
+//   - if/else branching for state checks
+//   - Modifier-like internal functions (_requireNotPaused, _requirePaused)
+//   - Paused/Unpaused events
+//   - @caller() builtin
+//   - Simple state machine pattern
+//
+// Run with:
+//   edgec lex examples/access/pausable.edge
+//   edgec parse examples/access/pausable.edge
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event Paused(indexed account: addr);
+event Unpaused(indexed account: addr);
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IPausable {
+    fn paused() -> (bool);
+    fn pause();
+    fn unpause();
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract Pausable {
+    // Whether the contract is currently paused.
+    let is_paused: &s bool;
+
+    // Owner who can pause/unpause.
+    let owner: &s addr;
+
+    // Check if the contract is paused.
+    pub fn paused() -> (bool) {
+        return is_paused;
+    }
+
+    // Pause the contract. Only owner can call.
+    pub fn pause() {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+        _requireNotPaused();
+        is_paused = true;
+        emit Paused(caller);
+    }
+
+    // Unpause the contract. Only owner can call.
+    pub fn unpause() {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+        _requirePaused();
+        is_paused = false;
+        emit Unpaused(caller);
+    }
+
+    // Example guarded function: transfer that only works when not paused.
+    pub fn guardedTransfer(to: addr, amount: u256) -> (bool) {
+        _requireNotPaused();
+        let caller: addr;
+        caller = @caller();
+        // Transfer logic would go here.
+        return true;
+    }
+
+    // Internal: revert if the contract is paused.
+    fn _requireNotPaused() {
+        if (is_paused == true) {
+            revert();
+        }
+    }
+
+    // Internal: revert if the contract is not paused.
+    fn _requirePaused() {
+        if (is_paused == false) {
+            revert();
+        }
+    }
+
+    // Internal: revert if caller is not the owner.
+    fn _requireOwner(caller: addr) {
+        if (caller != owner) {
+            revert();
+        }
+    }
+}

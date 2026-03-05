@@ -1,0 +1,153 @@
+// bits.edge — Bit manipulation library
+//
+// What this demonstrates:
+//   - ALL bitwise operators: &, |, ~, ^, >>, <<
+//   - Exponentiation operator: **
+//   - while loops
+//   - Comparison and logical operators
+//   - Pure utility functions (no storage)
+//   - bool return type
+//
+// Run with:
+//   edgec lex examples/utils/bits.edge
+//   edgec parse examples/utils/bits.edge
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const ZERO: u256 = 0;
+const ONE: u256 = 1;
+const MAX_U256: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+
+// ── Functions ─────────────────────────────────────────────────────────────────
+
+// Find the index of the most significant bit (highest set bit).
+// Returns 0 if x is 0.
+fn most_significant_bit(x: u256) -> (u256) {
+    let result: u256;
+    result = 0;
+    let val: u256;
+    val = x;
+
+    // Binary search through bit positions.
+    // Check if upper 128 bits are set.
+    if (val >= 2 ** 128) {
+        val = val >> 128;
+        result = result + 128;
+    }
+    if (val >= 2 ** 64) {
+        val = val >> 64;
+        result = result + 64;
+    }
+    if (val >= 2 ** 32) {
+        val = val >> 32;
+        result = result + 32;
+    }
+    if (val >= 2 ** 16) {
+        val = val >> 16;
+        result = result + 16;
+    }
+    if (val >= 2 ** 8) {
+        val = val >> 8;
+        result = result + 8;
+    }
+    if (val >= 2 ** 4) {
+        val = val >> 4;
+        result = result + 4;
+    }
+    if (val >= 2 ** 2) {
+        val = val >> 2;
+        result = result + 2;
+    }
+    if (val >= 2) {
+        result = result + 1;
+    }
+
+    return result;
+}
+
+// Find the index of the least significant bit (lowest set bit).
+// Returns 256 if x is 0 (no bit set).
+fn least_significant_bit(x: u256) -> (u256) {
+    let result: u256;
+    result = 256;
+    let val: u256;
+    val = x;
+
+    if (val == 0) {
+        return result;
+    }
+
+    // Isolate the lowest set bit: val & (~val + 1)
+    let isolated: u256;
+    isolated = val & (~val + 1);
+
+    // Now find the position of that single bit.
+    result = most_significant_bit(isolated);
+    return result;
+}
+
+// Count the number of set bits (population count / Hamming weight).
+fn popcount(x: u256) -> (u256) {
+    let count: u256;
+    count = 0;
+    let val: u256;
+    val = x;
+
+    while (val > 0) {
+        // Clear the lowest set bit: val & (val - 1)
+        val = val & (val - 1);
+        count = count + 1;
+    }
+
+    return count;
+}
+
+// Check if a value is a power of two.
+// A power of two has exactly one bit set: x & (x - 1) == 0.
+fn is_power_of_two(x: u256) -> (bool) {
+    if (x == 0) {
+        return false;
+    }
+    let check: u256;
+    check = x & (x - 1);
+    return check == 0;
+}
+
+// Reverse the bits in the lowest 8 bits of a value.
+fn reverse_byte(x: u256) -> (u256) {
+    let val: u256;
+    val = x & 0xff;
+    let result: u256;
+    result = 0;
+    let i: u256;
+    i = 0;
+    while (i < 8) {
+        let bit_val: u256;
+        bit_val = (val >> i) & 1;
+        result = result | (bit_val << (7 - i));
+        i = i + 1;
+    }
+    return result;
+}
+
+// Extract a single bit at position `pos` from value `x`.
+fn extract_bit(x: u256, pos: u256) -> (u256) {
+    return (x >> pos) & 1;
+}
+
+// Set a single bit at position `pos` in value `x`.
+fn set_bit(x: u256, pos: u256) -> (u256) {
+    return x | (1 << pos);
+}
+
+// Clear a single bit at position `pos` in value `x`.
+fn clear_bit(x: u256, pos: u256) -> (u256) {
+    let mask: u256;
+    mask = ~(1 << pos);
+    return x & mask;
+}
+
+// Toggle a single bit at position `pos` in value `x`.
+fn toggle_bit(x: u256, pos: u256) -> (u256) {
+    return x ^ (1 << pos);
+}

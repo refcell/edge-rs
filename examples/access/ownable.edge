@@ -1,0 +1,110 @@
+// ownable.edge — Single-owner access control with trait and 2-step transfer
+//
+// What this demonstrates:
+//   - Trait declaration with function signatures
+//   - impl blocks satisfying trait constraints
+//   - Events with indexed fields
+//   - &s storage pointers
+//   - @caller() builtin
+//   - if/else branching
+//   - 2-step ownership transfer pattern
+//
+// Run with:
+//   edgec lex examples/access/ownable.edge
+//   edgec parse examples/access/ownable.edge
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event OwnershipTransferStarted(indexed previousOwner: addr, indexed newOwner: addr);
+event OwnershipTransferred(indexed previousOwner: addr, indexed newOwner: addr);
+
+// ── Trait ─────────────────────────────────────────────────────────────────────
+
+// Ownership interface. Any contract managing access control should
+// implement this trait.
+trait IOwnable {
+    fn owner() -> (addr);
+    fn pendingOwner() -> (addr);
+    fn transferOwnership(newOwner: addr);
+    fn acceptOwnership();
+    fn renounceOwnership();
+}
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IOwnableABI {
+    fn owner() -> (addr);
+    fn pendingOwner() -> (addr);
+    fn transferOwnership(newOwner: addr);
+    fn acceptOwnership();
+    fn renounceOwnership();
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract Ownable {
+    // Current owner of the contract.
+    let owner: &s addr;
+
+    // Pending owner for 2-step transfer.
+    let pending_owner: &s addr;
+
+    // Return the current owner address.
+    pub fn owner() -> (addr) {
+        return owner;
+    }
+
+    // Return the pending owner address.
+    pub fn pendingOwner() -> (addr) {
+        return pending_owner;
+    }
+
+    // Step 1: Current owner proposes a new owner.
+    // The new owner must call acceptOwnership() to finalize.
+    pub fn transferOwnership(newOwner: addr) {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+        pending_owner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    // Step 2: Pending owner accepts the transfer.
+    pub fn acceptOwnership() {
+        let caller: addr;
+        caller = @caller();
+        _requirePendingOwner(caller);
+        let old_owner: addr;
+        old_owner = owner;
+        owner = caller;
+        pending_owner = 0;
+        emit OwnershipTransferred(old_owner, caller);
+    }
+
+    // Renounce ownership entirely. Sets owner to address(0).
+    // This is irreversible.
+    pub fn renounceOwnership() {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+        let old_owner: addr;
+        old_owner = owner;
+        owner = 0;
+        pending_owner = 0;
+        emit OwnershipTransferred(old_owner, 0);
+    }
+
+    // Internal: revert if caller is not the owner.
+    fn _requireOwner(caller: addr) {
+        if (caller != owner) {
+            revert();
+        }
+    }
+
+    // Internal: revert if caller is not the pending owner.
+    fn _requirePendingOwner(caller: addr) {
+        if (caller != pending_owner) {
+            revert();
+        }
+    }
+}

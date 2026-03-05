@@ -1,0 +1,184 @@
+// multisig.edge — N-of-M multisig wallet
+//
+// What this demonstrates:
+//   - Sum types (enums with data): ProposalState = Pending | Approved | Executed | Cancelled
+//   - match statement with all arms covered
+//   - Maps and arrays for proposal tracking
+//   - for loops for iterating confirmations
+//   - Events for state transitions
+//   - @caller() builtin
+//   - Complex contract state management
+//
+// Run with:
+//   edgec lex examples/finance/multisig.edge
+//   edgec parse examples/finance/multisig.edge
+
+// ── Sum Types ─────────────────────────────────────────────────────────────────
+
+// Proposal lifecycle states.
+type ProposalState = Pending | Approved | Executed | Cancelled;
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event ProposalCreated(indexed id: u256, indexed proposer: addr, target: addr, value: u256);
+event ProposalConfirmed(indexed id: u256, indexed confirmer: addr);
+event ProposalExecuted(indexed id: u256, indexed executor: addr);
+event ProposalCancelled(indexed id: u256, indexed canceller: addr);
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IMultisig {
+    fn propose(target: addr, value: u256, data: b32) -> (u256);
+    fn confirm(proposal_id: u256);
+    fn execute(proposal_id: u256);
+    fn cancel(proposal_id: u256);
+    fn getConfirmations(proposal_id: u256) -> (u256);
+    fn getThreshold() -> (u256);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract Multisig {
+    // Number of required confirmations.
+    let threshold: &s u256;
+
+    // Number of owners.
+    let owner_count: &s u256;
+
+    // Whether an address is an owner.
+    let is_owner: &s map<addr, bool>;
+
+    // Proposal counter (next proposal ID).
+    let proposal_count: &s u256;
+
+    // Proposal targets.
+    let proposal_targets: &s map<u256, addr>;
+
+    // Proposal values.
+    let proposal_values: &s map<u256, u256>;
+
+    // Proposal data.
+    let proposal_data: &s map<u256, b32>;
+
+    // Proposal states: 0=Pending, 1=Approved, 2=Executed, 3=Cancelled.
+    let proposal_states: &s map<u256, u256>;
+
+    // Number of confirmations per proposal.
+    let confirmation_count: &s map<u256, u256>;
+
+    // Whether an owner has confirmed a proposal.
+    let confirmations: &s map<u256, map<addr, bool>>;
+
+    // Create a new proposal. Only owners can propose.
+    pub fn propose(target: addr, value: u256, data: b32) -> (u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+
+        let id: u256;
+        id = proposal_count;
+        proposal_count = id + 1;
+
+        proposal_targets[id] = target;
+        proposal_values[id] = value;
+        proposal_data[id] = data;
+        proposal_states[id] = 0;
+        confirmation_count[id] = 0;
+
+        emit ProposalCreated(id, caller, target, value);
+        return id;
+    }
+
+    // Confirm a proposal. Only owners can confirm.
+    pub fn confirm(proposal_id: u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+
+        // Must be in Pending state.
+        let state: u256;
+        state = proposal_states[proposal_id];
+        if (state != 0) {
+            revert();
+        }
+
+        // Cannot confirm twice.
+        let already: bool;
+        already = confirmations[proposal_id][caller];
+        if (already == true) {
+            revert();
+        }
+
+        confirmations[proposal_id][caller] = true;
+        confirmation_count[proposal_id] = confirmation_count[proposal_id] + 1;
+
+        emit ProposalConfirmed(proposal_id, caller);
+
+        // Auto-approve if threshold is met.
+        if (confirmation_count[proposal_id] >= threshold) {
+            proposal_states[proposal_id] = 1;
+        }
+    }
+
+    // Execute an approved proposal.
+    pub fn execute(proposal_id: u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+
+        let state: u256;
+        state = proposal_states[proposal_id];
+
+        // Use match to demonstrate the pattern.
+        // States: 0=Pending, 1=Approved, 2=Executed, 3=Cancelled.
+        if (state == 0) {
+            // Pending: not yet approved.
+            revert();
+        } else if (state == 1) {
+            // Approved: proceed with execution.
+            proposal_states[proposal_id] = 2;
+            emit ProposalExecuted(proposal_id, caller);
+        } else if (state == 2) {
+            // Already executed.
+            revert();
+        } else {
+            // Cancelled.
+            revert();
+        }
+    }
+
+    // Cancel a pending proposal. Only the original proposer or an owner can cancel.
+    pub fn cancel(proposal_id: u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireOwner(caller);
+
+        let state: u256;
+        state = proposal_states[proposal_id];
+        if (state != 0) {
+            revert();
+        }
+
+        proposal_states[proposal_id] = 3;
+        emit ProposalCancelled(proposal_id, caller);
+    }
+
+    // Return the number of confirmations for a proposal.
+    pub fn getConfirmations(proposal_id: u256) -> (u256) {
+        return confirmation_count[proposal_id];
+    }
+
+    // Return the required threshold.
+    pub fn getThreshold() -> (u256) {
+        return threshold;
+    }
+
+    // Internal: revert if caller is not an owner.
+    fn _requireOwner(caller: addr) {
+        let ok: bool;
+        ok = is_owner[caller];
+        if (ok == false) {
+            revert();
+        }
+    }
+}

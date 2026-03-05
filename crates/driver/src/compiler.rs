@@ -189,24 +189,56 @@ impl Compiler {
             });
         }
 
-        // Code generation
-        let bytecode = edge_codegen::compile(
-            &ir_program,
-            self.session.config.optimization_level,
-            self.session.config.optimize_for,
-        )
-        .map_err(|e| {
-            self.session
-                .emit_error(Diagnostic::error(format!("codegen error: {e}")));
-            CompileError::Aborted
-        })?;
+        // Code generation — compile each contract individually
+        let mut all_bytecodes: IndexMap<String, Vec<u8>> = IndexMap::new();
+        for contract in &ir_program.contracts {
+            let single_program = edge_ir::EvmProgram {
+                contracts: vec![contract.clone()],
+                free_functions: Vec::new(),
+            };
+            let bytecode = edge_codegen::compile(
+                &single_program,
+                self.session.config.optimization_level,
+                self.session.config.optimize_for,
+            )
+            .map_err(|e| {
+                self.session
+                    .emit_error(Diagnostic::error(format!("codegen error: {e}")));
+                CompileError::Aborted
+            })?;
+            all_bytecodes.insert(contract.name.clone(), bytecode);
+        }
+
+        // Also compile free functions if no contracts
+        if ir_program.contracts.is_empty() && !ir_program.free_functions.is_empty() {
+            let bytecode = edge_codegen::compile(
+                &ir_program,
+                self.session.config.optimization_level,
+                self.session.config.optimize_for,
+            )
+            .map_err(|e| {
+                self.session
+                    .emit_error(Diagnostic::error(format!("codegen error: {e}")));
+                CompileError::Aborted
+            })?;
+            return Ok(CompileOutput {
+                tokens: None,
+                ast: Some(ast),
+                ir: None,
+                bytecode: Some(bytecode),
+                bytecodes: None,
+                asm: None,
+            });
+        }
+
+        let last_bytecode = all_bytecodes.values().last().cloned();
 
         Ok(CompileOutput {
             tokens: None,
             ast: Some(ast),
             ir: None,
-            bytecode: Some(bytecode),
-            bytecodes: None,
+            bytecode: last_bytecode,
+            bytecodes: Some(all_bytecodes),
             asm: None,
         })
     }

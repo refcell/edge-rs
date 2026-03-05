@@ -1,0 +1,165 @@
+// generics.edge — Demonstrates generics (parametric polymorphism)
+//
+// What this demonstrates:
+//   - Generic function: fn identity<T>(x: T) -> (T)
+//   - Generic struct with type parameter: type Stack<T>
+//   - Trait with generic: trait Comparable<T>
+//   - Impl trait for concrete type
+//   - Generic impl block: impl Stack<T>
+//   - Type parameters with trait constraints
+//   - Monomorphization at compile time
+//
+// Run with:
+//   edgec lex examples/types/generics.edge
+//   edgec parse examples/types/generics.edge
+
+// ── Generic Functions ─────────────────────────────────────────────────────────
+
+// The simplest generic function: returns its argument unchanged.
+// Monomorphized at compile time for each concrete type used.
+fn identity<T>(x: T) -> (T) {
+    return x;
+}
+
+// Generic swap: returns two values in reversed order.
+fn swap<T>(a: T, b: T) -> (T, T) {
+    return (b, a);
+}
+
+// Generic max using comparison.
+fn max<T>(a: T, b: T) -> (T) {
+    if (a >= b) {
+        return a;
+    }
+    return b;
+}
+
+// Generic min using comparison.
+fn min<T>(a: T, b: T) -> (T) {
+    if (a <= b) {
+        return a;
+    }
+    return b;
+}
+
+// ── Generic Structs ───────────────────────────────────────────────────────────
+
+// A fixed-capacity stack backed by an array.
+type Stack<T> = {
+    items: [T; 32],
+    len: u256,
+};
+
+// A key-value entry for generic mappings.
+type Entry<K, V> = {
+    key: K,
+    value: V,
+};
+
+// A pair of two potentially different types.
+type TypedPair<A, B> = {
+    first: A,
+    second: B,
+};
+
+// ── Generic Impl Block ───────────────────────────────────────────────────────
+
+impl Stack<T> {
+    // Push a value onto the stack.
+    fn push(self: Stack<T>, value: T) -> (Stack<T>) {
+        let idx: u256;
+        idx = self.len;
+        self.items[idx] = value;
+        self.len = idx + 1;
+        return self;
+    }
+
+    // Pop a value from the stack. Returns the value.
+    fn pop(self: Stack<T>) -> (T) {
+        let new_len: u256;
+        new_len = self.len - 1;
+        self.len = new_len;
+        return self.items[new_len];
+    }
+
+    // Peek at the top value without removing it.
+    fn peek(self: Stack<T>) -> (T) {
+        let idx: u256;
+        idx = self.len - 1;
+        return self.items[idx];
+    }
+
+    // Check if the stack is empty.
+    fn is_empty(self: Stack<T>) -> (bool) {
+        return self.len == 0;
+    }
+
+    // Return the number of elements.
+    fn size(self: Stack<T>) -> (u256) {
+        return self.len;
+    }
+}
+
+// ── Trait with Generic ────────────────────────────────────────────────────────
+
+// A trait for types that can be compared.
+trait Comparable<T> {
+    fn compare(a: T, b: T) -> (bool);
+    fn equals(a: T, b: T) -> (bool);
+}
+
+// A trait for types that have a default/zero value.
+trait Default<T> {
+    fn default() -> (T);
+}
+
+// ── Impl Trait for Concrete Type ──────────────────────────────────────────────
+
+// Implement Comparable for u256.
+impl Comparable<u256> {
+    fn compare(a: u256, b: u256) -> (bool) {
+        return a < b;
+    }
+
+    fn equals(a: u256, b: u256) -> (bool) {
+        return a == b;
+    }
+}
+
+// ── Usage Examples ────────────────────────────────────────────────────────────
+
+fn generic_usage() -> (u256) {
+    // Identity with different types.
+    let a: u256;
+    a = identity(42);
+
+    let b: bool;
+    b = identity(true);
+
+    // Max/min with u256.
+    let bigger: u256;
+    bigger = max(10, 20);
+
+    let smaller: u256;
+    smaller = min(10, 20);
+
+    // Swap values.
+    let x: u256;
+    let y: u256;
+    x = 1;
+    y = 2;
+
+    return bigger;
+}
+
+fn entry_usage() -> (u256) {
+    // Create a typed pair.
+    let pair: TypedPair<addr, u256>;
+    pair = TypedPair { first: 0, second: 100 };
+
+    // Create an entry.
+    let entry: Entry<b32, u256>;
+    entry = Entry { key: 0, value: 42 };
+
+    return entry.value;
+}
