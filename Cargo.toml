@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 description = "Edge Language Compiler Workspace"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
