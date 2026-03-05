@@ -7,6 +7,7 @@ use edge_diagnostics::Diagnostic;
 use edge_lexer::lexer::Lexer;
 use edge_parser::Parser;
 use edge_types::tokens::Token;
+use indexmap::IndexMap;
 
 use crate::{
     config::{CompilerConfig, EmitKind},
@@ -20,8 +21,10 @@ pub struct CompileOutput {
     pub tokens: Option<Vec<Token>>,
     /// Emitted AST (if emit=ast)
     pub ast: Option<Program>,
-    /// Emitted bytecode (if emit=bytecode)
+    /// Emitted bytecode for the last contract (backward compat)
     pub bytecode: Option<Vec<u8>>,
+    /// Emitted bytecodes for all contracts, keyed by contract name
+    pub bytecodes: Option<IndexMap<String, Vec<u8>>>,
 }
 
 /// Compiler errors
@@ -79,6 +82,7 @@ impl Compiler {
                 tokens: Some(tokens),
                 ast: None,
                 bytecode: None,
+                bytecodes: None,
             });
         }
 
@@ -90,6 +94,7 @@ impl Compiler {
                 tokens: None,
                 ast: Some(ast),
                 bytecode: None,
+                bytecodes: None,
             });
         }
 
@@ -102,7 +107,7 @@ impl Compiler {
         })?;
 
         // Lower to IR and generate bytecode for each contract
-        let mut all_bytecode: Vec<u8> = Vec::new();
+        let mut all_bytecodes: IndexMap<String, Vec<u8>> = IndexMap::new();
 
         for contract_info in &checked.contracts {
             // Build storage slots for lowerer
@@ -154,13 +159,17 @@ impl Compiler {
                     CompileError::CodeGenErrors
                 })?;
 
-            all_bytecode = bytecode; // use last contract's bytecode (MVP: single contract)
+            all_bytecodes.insert(contract_info.name.clone(), bytecode);
         }
+
+        // Last contract's bytecode for backward compatibility
+        let last_bytecode = all_bytecodes.values().last().cloned().unwrap_or_default();
 
         Ok(CompileOutput {
             tokens: None,
             ast: Some(ast),
-            bytecode: Some(all_bytecode),
+            bytecode: Some(last_bytecode),
+            bytecodes: Some(all_bytecodes),
         })
     }
 

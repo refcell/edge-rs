@@ -323,7 +323,7 @@ fn lex_decimal_literal() {
     let tok = lexer.next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
     // "42" in hex is "2a", so str_to_bytes32("42") pads it into [u8; 32]
-    assert_eq!(tok.kind, TokenKind::Literal(str_to_bytes32("42")));
+    assert_eq!(tok.kind, TokenKind::Literal(str_to_bytes32("42").unwrap()));
 }
 
 // ─── Keywords ───────────────────────────────────────────────────────

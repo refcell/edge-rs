@@ -50,7 +50,6 @@ pub struct FnMeta {
 }
 
 /// Context for lowering a single function
-#[allow(dead_code)]
 struct FnContext {
     /// Storage slots: `field_name` → slot number
     storage_slots: IndexMap<String, u32>,
@@ -64,7 +63,6 @@ struct FnContext {
     label_counter: u32,
 }
 
-#[allow(dead_code)]
 impl FnContext {
     /// Create a new function context
     fn new(storage_slots: IndexMap<String, u32>) -> Self {
@@ -131,7 +129,6 @@ pub struct Lowerer {
     pub fn_metas: Vec<FnMeta>,
 }
 
-#[allow(dead_code)]
 impl Lowerer {
     /// Create a new lowerer
     pub const fn new(storage_slots: IndexMap<String, u32>, fn_metas: Vec<FnMeta>) -> Self {

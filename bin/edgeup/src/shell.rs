@@ -90,12 +90,17 @@ impl Shell {
     }
 
     /// Get the shell name for display
-    #[allow(dead_code)]
     pub fn name(&self) -> &'static str {
         match self.shell_type {
             ShellType::Bash => "bash",
             ShellType::Zsh => "zsh",
             ShellType::Fish => "fish",
         }
+    }
+}
+
+impl std::fmt::Display for Shell {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
     }
 }
