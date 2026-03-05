@@ -36,7 +36,7 @@
 //! | Internal Code     | 16          | Code size is less than 0xffff
 //! | External Code     | 176         | Contains 160 bit address and 16 bit code pointer
 
-use std::fmt;
+use derive_more::Display;
 
 /// Data Location
 ///
@@ -45,56 +45,48 @@ use std::fmt;
 /// for data location pointers. This is a divergence from general purpose
 /// programming languages to more accurately represent the EVM execution
 /// environment.
-#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialOrd, PartialEq, Eq, Hash, Display)]
 pub enum Location {
     /// Persistent Storage
     ///
     /// Part of the map category, 256 bit keys map to 256 bit values.
     /// May be written or read one word at a time.
+    #[display("&s")]
     PersistentStorage,
     /// Transient Storage
     ///
     /// Part of the map category, 256 bit keys map to 256 bit values.
     /// May be written or read one word at a time.
+    #[display("&t")]
     TransientStorage,
     /// Memory
     ///
     /// A linear data buffer.
     /// May be read to the stack, copied to memory, and written to.
+    #[display("&m")]
     Memory,
     /// Calldata
     ///
     /// A linear data buffer.
     /// May be read to the stack and copied to memory.
+    #[display("&cd")]
     Calldata,
     /// Returndata
     ///
     /// A linear data buffer.
     /// May only be copied to memory.
+    #[display("&rd")]
     Returndata,
     /// Internal (local) code
     ///
     /// A linear data buffer.
     /// May only be copied to memory.
+    #[display("&ic")]
     InternalCode,
     /// External code
     ///
     /// A linear data buffer.
     /// May only be copied to memory.
+    #[display("&ec")]
     ExternalCode,
-}
-
-impl fmt::Display for Location {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let x = match self {
-            Location::PersistentStorage => "s",
-            Location::TransientStorage => "t",
-            Location::Memory => "m",
-            Location::Calldata => "cd",
-            Location::Returndata => "rd",
-            Location::InternalCode => "ic",
-            Location::ExternalCode => "ec",
-        };
-        write!(f, "&{x}")
-    }
 }

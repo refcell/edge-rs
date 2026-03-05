@@ -1,189 +1,147 @@
 //! Operators
 
-use std::fmt;
+use derive_more::Display;
 
 /// Operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum Operator {
     /// An Assignment Operator
+    #[display("=")]
     Assignment,
     /// Compound Assignment Operator
+    #[display("{_0}")]
     CompoundAssignment(CompoundAssignmentOperator),
     /// Arithmetic Operator
+    #[display("{_0}")]
     Arithmetic(ArithmeticOperator),
     /// Comparison Operator
+    #[display("{_0}")]
     Comparison(ComparisonOperator),
     /// Logical Operator
+    #[display("{_0}")]
     Logical(LogicalOperator),
     /// Bitwise Operator
+    #[display("{_0}")]
     Bitwise(BitwiseOperator),
 }
 
 /// Compound assignment operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum CompoundAssignmentOperator {
     /// +=
+    #[display("+=")]
     AddAssign,
     /// -=
+    #[display("-=")]
     SubAssign,
     /// *=
+    #[display("*=")]
     MulAssign,
     /// /=
+    #[display("/=")]
     DivAssign,
     /// %=
+    #[display("%=")]
     ModAssign,
     /// **=
+    #[display("**=")]
     ExpAssign,
     /// &=
+    #[display("&=")]
     AndAssign,
     /// |=
+    #[display("|=")]
     OrAssign,
     /// ^=
+    #[display("^=")]
     XorAssign,
     /// >>=
+    #[display(">>=")]
     ShrAssign,
     /// <<=
+    #[display("<<=")]
     ShlAssign,
 }
 
-impl fmt::Display for CompoundAssignmentOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            CompoundAssignmentOperator::AddAssign => write!(f, "+="),
-            CompoundAssignmentOperator::SubAssign => write!(f, "-="),
-            CompoundAssignmentOperator::MulAssign => write!(f, "*="),
-            CompoundAssignmentOperator::DivAssign => write!(f, "/="),
-            CompoundAssignmentOperator::ModAssign => write!(f, "%="),
-            CompoundAssignmentOperator::ExpAssign => write!(f, "**="),
-            CompoundAssignmentOperator::AndAssign => write!(f, "&="),
-            CompoundAssignmentOperator::OrAssign => write!(f, "|="),
-            CompoundAssignmentOperator::XorAssign => write!(f, "^="),
-            CompoundAssignmentOperator::ShrAssign => write!(f, ">>="),
-            CompoundAssignmentOperator::ShlAssign => write!(f, "<<="),
-        }
-    }
-}
-
-impl fmt::Display for Operator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Operator::Assignment => write!(f, "="),
-            Operator::CompoundAssignment(op) => write!(f, "{}", op),
-            Operator::Arithmetic(op) => write!(f, "{}", op),
-            Operator::Comparison(op) => write!(f, "{}", op),
-            Operator::Logical(op) => write!(f, "{}", op),
-            Operator::Bitwise(op) => write!(f, "{}", op),
-        }
-    }
-}
-
 /// Arithmetic operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum ArithmeticOperator {
     /// Addition
+    #[display("+")]
     Add,
     /// Subtraction
+    #[display("-")]
     Sub,
     /// Multiplication
+    #[display("*")]
     Mul,
     /// Division
+    #[display("/")]
     Div,
     /// Modulus
+    #[display("%")]
     Mod,
     /// Exponentiation
+    #[display("**")]
     Exp,
 }
 
-impl fmt::Display for ArithmeticOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ArithmeticOperator::Add => write!(f, "+"),
-            ArithmeticOperator::Sub => write!(f, "-"),
-            ArithmeticOperator::Mul => write!(f, "*"),
-            ArithmeticOperator::Div => write!(f, "/"),
-            ArithmeticOperator::Mod => write!(f, "%"),
-            ArithmeticOperator::Exp => write!(f, "**"),
-        }
-    }
-}
-
 /// Comparison Operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum ComparisonOperator {
     /// Less than
+    #[display("<")]
     LessThan,
     /// Less than or equal to
+    #[display("<=")]
     LessThanOrEqual,
     /// Greater than
+    #[display(">")]
     GreaterThan,
     /// Greater than or equal to
+    #[display(">=")]
     GreaterThanOrEqual,
     /// Equal to
+    #[display("==")]
     Equal,
     /// Not equal to
+    #[display("!=")]
     NotEqual,
 }
 
-impl fmt::Display for ComparisonOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ComparisonOperator::LessThan => write!(f, "<"),
-            ComparisonOperator::LessThanOrEqual => write!(f, "<="),
-            ComparisonOperator::GreaterThan => write!(f, ">"),
-            ComparisonOperator::GreaterThanOrEqual => write!(f, ">="),
-            ComparisonOperator::Equal => write!(f, "=="),
-            ComparisonOperator::NotEqual => write!(f, "!="),
-        }
-    }
-}
-
 /// Logical Operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum LogicalOperator {
     /// Logical AND
+    #[display("&&")]
     And,
     /// Logical OR
+    #[display("||")]
     Or,
     /// Logical NOT
+    #[display("!")]
     Not,
-}
-
-impl fmt::Display for LogicalOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LogicalOperator::And => write!(f, "&&"),
-            LogicalOperator::Or => write!(f, "||"),
-            LogicalOperator::Not => write!(f, "!"),
-        }
-    }
 }
 
 /// Bitwise Operators
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Display)]
 pub enum BitwiseOperator {
     /// Bitwise AND
+    #[display("&")]
     And,
     /// Bitwise OR
+    #[display("|")]
     Or,
     /// Bitwise XOR
+    #[display("^")]
     Xor,
     /// Bitwise NOT
+    #[display("~")]
     Not,
     /// Bitwise Left Shift
+    #[display("<<")]
     LeftShift,
     /// Bitwise Right Shift
+    #[display(">>")]
     RightShift,
-}
-
-impl fmt::Display for BitwiseOperator {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BitwiseOperator::And => write!(f, "&"),
-            BitwiseOperator::Or => write!(f, "|"),
-            BitwiseOperator::Xor => write!(f, "^"),
-            BitwiseOperator::Not => write!(f, "~"),
-            BitwiseOperator::LeftShift => write!(f, "<<"),
-            BitwiseOperator::RightShift => write!(f, ">>"),
-        }
-    }
 }

@@ -49,6 +49,8 @@ pub enum TokenKind {
     Pointer(Location),
     /// A Comment
     Comment(String),
+    /// A doc comment (`///` outer or `//!` inner)
+    DocComment(String),
     /// Whitespace
     Whitespace,
     /// A numeric literal
@@ -115,6 +117,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Operator(o) => return write!(f, "{o}"),
             TokenKind::DataType(d) => return write!(f, "{d}"),
             TokenKind::Comment(s) => return write!(f, "Comment({s})"),
+            TokenKind::DocComment(s) => return write!(f, "{s}"),
             TokenKind::Keyword(k) => return write!(f, "{k}"),
             TokenKind::Pointer(l) => return write!(f, "{l}"),
             TokenKind::Literal(l) => {

@@ -25,7 +25,8 @@ impl Parser {
     /// Create a new parser from source code
     pub fn new(source: &str) -> ParseResult<Self> {
         let mut lexer = Lexer::new(source);
-        let mut tokens = Vec::new();
+        // Heuristic: roughly one meaningful token per 5 source characters.
+        let mut tokens = Vec::with_capacity(source.len() / 5 + 1);
 
         loop {
             let token = lexer
@@ -33,7 +34,11 @@ impl Parser {
                 .map_err(|e| ParseError::LexerError(format!("{e:?}")))?;
 
             let is_eof = token.kind == TokenKind::Eof;
-            tokens.push(token);
+            // Drop whitespace and comments eagerly so the parser never has to
+            // skip them, and so we store fewer tokens overall.
+            if !matches!(token.kind, TokenKind::Whitespace | TokenKind::Comment(_)) {
+                tokens.push(token);
+            }
             if is_eof {
                 break;
             }
