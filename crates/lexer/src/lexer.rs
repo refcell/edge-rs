@@ -79,7 +79,8 @@ impl<'a> Lexer<'a> {
         // This function is only called when we want to continue consuming a character of the same
         // type. For example, we see a digit and we want to consume the whole integer
         // Therefore, the current character which triggered this function will need to be appended
-        let mut word = String::new();
+        // Pre-allocate a small buffer; most tokens are short identifiers/keywords.
+        let mut word = String::with_capacity(16);
         if let Some(init_char) = initial_char {
             word.push(init_char)
         }
@@ -102,34 +103,34 @@ impl<'a> Lexer<'a> {
         (word, start, self.position)
     }
 
-    /// Lexes a hexadecimal integer literal starting with the given initial character.
-    pub fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
-        let (integer_str, mut start, end) = self.eat_while(Some(initial_char), |ch| {
-            ch.is_ascii_hexdigit() | (ch == 'x')
-        });
+    /// Lexes a hexadecimal integer literal.
+    ///
+    /// The `0x` prefix has already been consumed by the caller.
+    /// Only pure hex digits are accepted.
+    pub fn eat_hex_digit(&mut self) -> TokenResult {
+        let (hex_str, start, end) =
+            self.eat_while(None, |ch| ch.is_ascii_hexdigit());
 
-        // // TODO: check for sure that we have a correct hex string, eg. 0x56 and not 0x56x34
-        // let kind = if self.context == Context::CodeTableBody {
-        //     // In codetables, the bytecode provided is of arbitrary length. We pass
-        //     // the code as an Ident, and it is appended to the end of the runtime
-        //     // bytecode in codegen.
-        //     if &integer_str[0..2] == "0x" {
-        //         TokenKind::Ident(integer_str[2..].to_owned())
-        //     } else {
-        //         TokenKind::Ident(integer_str)
-        //     }
-        // } else {
-        //     TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()))
-        // };
-
-        let kind = TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()));
-
-        start += 2;
         let span = Span {
             start: start as usize,
             end: end as usize,
             file: None,
         };
+
+        if hex_str.is_empty() {
+            return Err(LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral("empty hex literal after 0x".to_string()),
+                span,
+            ));
+        }
+
+        let literal = str_to_bytes32(&hex_str).map_err(|e| {
+            LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                span.clone(),
+            )
+        })?;
+        let kind = TokenKind::Literal(literal);
         Ok(Token { kind, span })
     }
 
@@ -261,7 +262,12 @@ impl<'a> Lexer<'a> {
             end: end_pos as usize,
             file: None,
         };
-        let literal = str_to_bytes32(binary_str.replace('_', "").as_ref());
+        let literal = str_to_bytes32(binary_str.replace('_', "").as_ref()).map_err(|e| {
+            LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                span.clone(),
+            )
+        })?;
         Ok(Token {
             kind: TokenKind::Literal(literal.into()),
             span,
@@ -345,61 +351,68 @@ impl<'a> Lexer<'a> {
 
         let token = match ch {
             '/' => {
-                let mut comment_string = String::new();
                 let start = self.position;
-                comment_string.push(ch);
-                if let Some(ch2) = self.peek() {
-                    match ch2 {
-                        // TODO: Add support for /// and //! comments
-                        '/' => {
-                            // Consume until newline
-                            comment_string.push(ch2);
-                            let (comment_string, start, end) =
-                                self.eat_while(Some(ch), |c| c != '\n');
-                            Ok(TokenKind::Comment(comment_string).into_span(start, end))
+                match self.peek() {
+                    Some('/') => {
+                        self.consume(); // consume second '/'
+                        match self.peek() {
+                            // Outer doc comment: ///
+                            Some('/') => {
+                                self.consume(); // consume third '/'
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::DocComment(format!("///{body}"))
+                                    .into_span(start, end))
+                            }
+                            // Inner doc comment: //!
+                            Some('!') => {
+                                self.consume(); // consume '!'
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::DocComment(format!("//!{body}"))
+                                    .into_span(start, end))
+                            }
+                            // Regular line comment: //
+                            _ => {
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::Comment(format!("//{body}")).into_span(start, end))
+                            }
                         }
-                        '*' => {
-                            let c = self.consume();
-                            comment_string.push(c.unwrap());
-                            let mut depth = 1usize;
-                            while let Some(c) = self.consume() {
-                                match c {
-                                    '/' if self.peek() == Some('*') => {
-                                        comment_string.push(c);
-                                        let c2 = self.consume();
-                                        comment_string.push(c2.unwrap());
-                                        depth += 1;
-                                    }
-                                    '*' if self.peek() == Some('/') => {
-                                        comment_string.push(c);
-                                        let c2 = self.consume();
-                                        comment_string.push(c2.unwrap());
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            // This block comment is closed, so for a
-                                            // construction like "/* */ */"
-                                            // there will be a successfully parsed block comment
-                                            // "/* */"
-                                            // and " */" will be processed separately.
-                                            break;
-                                        }
-                                    }
-                                    _ => {
-                                        comment_string.push(c);
+                    }
+                    Some('*') => {
+                        let mut comment_string = String::from("/*");
+                        self.consume(); // consume '*'
+                        let mut depth = 1usize;
+                        while let Some(c) = self.consume() {
+                            match c {
+                                '/' if self.peek() == Some('*') => {
+                                    comment_string.push(c);
+                                    let c2 = self.consume();
+                                    comment_string.push(c2.unwrap());
+                                    depth += 1;
+                                }
+                                '*' if self.peek() == Some('/') => {
+                                    comment_string.push(c);
+                                    let c2 = self.consume();
+                                    comment_string.push(c2.unwrap());
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        // This block comment is closed, so for a
+                                        // construction like "/* */ */"
+                                        // there will be a successfully parsed block comment
+                                        // "/* */"
+                                        // and " */" will be processed separately.
+                                        break;
                                     }
                                 }
+                                _ => {
+                                    comment_string.push(c);
+                                }
                             }
-
-                            Ok(TokenKind::Comment(comment_string).into_span(start, self.position))
                         }
-                        _ => self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
-                            ArithmeticOperator::Div,
-                        ))),
+                        Ok(TokenKind::Comment(comment_string).into_span(start, self.position))
                     }
-                } else {
-                    self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
                         ArithmeticOperator::Div,
-                    )))
+                    ))),
                 }
             }
 
@@ -451,14 +464,8 @@ impl<'a> Lexer<'a> {
 
                 // If not a type, check for keywords
                 if found_kind.is_none() {
-                    let keys = Keyword::all();
-                    for kind in keys.into_iter() {
-                        let key = kind.to_string();
-                        let peeked = word.clone();
-                        if key == peeked {
-                            found_kind = Some(TokenKind::Keyword(kind));
-                            break;
-                        }
+                    if let Some(kw) = Keyword::from_word(&word) {
+                        found_kind = Some(TokenKind::Keyword(kw));
                     }
                 }
 
@@ -479,9 +486,10 @@ impl<'a> Lexer<'a> {
 
                 // Syntax sugar: true evaluates to 0x01, false evaluates to 0x00
                 if matches!(word.as_str(), "true" | "false") {
-                    found_kind = Some(TokenKind::Literal(str_to_bytes32(
-                        if word.as_str() == "true" { "1" } else { "0" },
-                    )));
+                    found_kind = Some(TokenKind::Literal(
+                        str_to_bytes32(if word.as_str() == "true" { "1" } else { "0" })
+                            .expect("single hex digit is always valid"),
+                    ));
                     self.eat_while(None, |c| c.is_alphanumeric());
                 }
 
@@ -503,8 +511,8 @@ impl<'a> Lexer<'a> {
             // Hex/binary prefix: 0x, 0b
             '0' => match self.peek() {
                 Some('x') | Some('X') => {
-                    // Don't consume 'x' here — eat_hex_digit's predicate includes 'x'
-                    self.eat_hex_digit('0')
+                    self.consume(); // consume 'x'/'X'
+                    self.eat_hex_digit()
                 }
                 Some('b') | Some('B') => {
                     self.consume();

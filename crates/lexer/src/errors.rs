@@ -30,6 +30,8 @@ pub enum LexicalErrorKind {
     InvalidPrimitiveType(String),
     /// Unterminated string literal
     UnterminatedString,
+    /// Invalid hex literal
+    InvalidHexLiteral(String),
 }
 
 impl Spanned for LexicalError {

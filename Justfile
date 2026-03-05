@@ -21,7 +21,7 @@ test:
 
 # Run tests for CI (using nextest)
 test-ci:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --exclude edge-e2e
 
 # Fix formatting
 format-fix:
@@ -75,6 +75,14 @@ e2e:
 # Run acceptance tests for CI
 e2e-ci:
     cargo nextest run -p edge-e2e
+
+# Run benchmarks
+bench:
+    cargo bench -p edge-bench
+
+# Run benchmarks with a specific filter (e.g., just bench-filter parse)
+bench-filter filter:
+    cargo bench -p edge-bench -- {{filter}}
 
 # Serve the book
 book:

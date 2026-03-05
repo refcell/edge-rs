@@ -12,7 +12,7 @@
 [License]: https://img.shields.io/badge/license-MIT-7795AF.svg
 [mit-license]: https://github.com/refcell/edge-rs/blob/main/LICENSE.md
 [Language]: https://img.shields.io/badge/language-edge-39ff14.svg
-[edge-lang]: https://edgelang.netlify.app/
+[edge-lang]: https://edge.refcell.org/
 [EVM]: https://img.shields.io/badge/target-EVM-39ff14.svg
 [evm-link]: https://ethereum.org/en/developers/docs/evm/
 [Rust]: https://img.shields.io/badge/built%20with-rust-orange.svg
@@ -23,7 +23,7 @@
 > [!IMPORTANT]
 > Edge is alpha software. The compiler is under active development — language features, syntax, and APIs will change without notice. **Do not use in production.**
 
-**edge-rs** is a compiler for the [Edge language](https://edgelang.netlify.app/) — an EVM-targeted DSL for writing smart contracts with a Rust-like type system.
+**edge-rs** is a compiler for the [Edge language](https://edge.refcell.org/) — an EVM-targeted DSL for writing smart contracts with a Rust-like type system.
 
 **[Install](#install)**
 | [Examples](#examples)
@@ -53,22 +53,81 @@ cargo install --path bin/edgec
 
 See the [`examples/`](./examples/) directory for complete Edge programs. The introductory files cover basic syntax; the `lib/` and `tokens/` subdirectories contain a set of composable contracts — fixed-point math, ownership primitives, ERC-20/721/4626 — structured the way a real Edge project would be.
 
+### Compiling a contract
+
+Pass a source file directly to compile it — `edgec` prints the bytecode as a hex string to stdout:
+
 ```sh
-# Lex a file (print tokens)
+# Compile to EVM bytecode (prints hex to stdout)
+edgec examples/counter.edge
+# 0x60003560e01c8063d09de08a146100365780632baeceb7146100...
+
+# Write raw bytecode bytes to a file
+edgec examples/counter.edge -o counter.bin
+
+# Enable compiler tracing (-v warn, -vv info, -vvv debug, -vvvv trace)
+edgec -v examples/expressions.edge
+```
+
+### Debugging the pipeline
+
+```sh
+# Print the token stream
 edgec lex examples/counter.edge
 
-# Parse a file (print AST)
-edgec parse examples/types.edge
+# Print the AST
+edgec parse examples/counter.edge
 
-# Modular token contracts
+# Type-check only (no codegen)
+edgec check examples/counter.edge
+```
+
+### Example: counter contract
+
+```rust
+contract Counter {
+    let count: &s u256;
+
+    pub fn increment() {
+        let val: u256;
+        val = count + 1;
+        count = val;
+    }
+
+    pub fn get() -> (u256) {
+        return count;
+    }
+
+    pub fn reset() {
+        count = 0;
+    }
+}
+```
+
+```sh
+edgec examples/counter.edge
+# 0x60003560e01c8063d09de08a14610036578063...  (127 bytes)
+```
+
+The compiled bytecode includes a selector dispatcher, storage reads/writes via `SLOAD`/`SSTORE`, and a revert fallback for unknown selectors — all verified against a live EVM in the [integration tests](./crates/e2e/).
+
+### More examples
+
+```sh
+# Arithmetic, comparisons, bitwise ops, operator precedence
+edgec examples/expressions.edge         # 329 bytes
+
+# ERC-20 token contract
+edgec examples/erc20.edge               # 334 bytes
+
+# Composable library modules
 edgec parse examples/lib/math.edge
-edgec parse examples/tokens/erc20.edge
 edgec parse examples/tokens/erc4626.edge
 ```
 
 ## Lore
 
-Edge was conceived by [jtriley](https://github.com/jtriley-eth), an Ethereum developer and EVM language researcher who had spent years studying the design space of smart contract languages. In November 2023 he published ["The Edge Programming Language"](https://jtriley.substack.com/p/the-edge-programming-language) on his Substack, laying out both a diagnosis and a proposed cure.
+Edge was conceived by [jtriley](https://github.com/jtriley2p), an Ethereum developer and EVM language researcher who had spent years studying the design space of smart contract languages. In November 2023 he published ["The Edge Programming Language"](https://jtriley.substack.com/p/the-edge-programming-language) on his Substack, laying out both a diagnosis and a proposed cure.
 
 The diagnosis was blunt. A 2021 Trail of Bits report found that roughly ninety percent of all deployed EVM smart contracts share at least fifty-six percent of their bytecode with other contracts, a sign that the abstraction mechanisms available to developers were badly broken. Teams were copy-pasting instead of composing. The existing languages either gave you Solidity's implicit compiler decisions and sprawling inheritance graphs, or they gave you [Huff](https://huff.sh)'s raw opcodes with no type safety at all. Nothing in between let an experienced engineer write genuinely reusable, auditable, low-overhead code without reaching for assembly.
 
@@ -78,7 +137,7 @@ jtriley had also written extensively about this gap, comparing Huff and Yul, cat
 
 Edge was his attempt to start from first principles. The goal was not to replace Solidity for beginners but to give experienced teams a language that combined the granularity of Huff with the type system and compile-time execution of a high-level language. That combination, jtriley argued, would unlock constructs that no existing smart contract language could express at all — type-checked SSTORE2 implementations, in-memory hash maps, compressed ABI encoders, elliptic curve types, nested virtual machines with zero stack overhead. The key insight was that explicit data location annotations for all seven EVM storage areas, paired with parametric polymorphism and a trait system, would let the type checker enforce correctness that developers currently had to maintain by hand or discover through audit.
 
-jtriley presented Edge at Solidity Summit 2023 alongside contributors from other EVM language projects, and the specification has been available at [edge-specification.vercel.app](https://edge-specification.vercel.app/) since the announcement. edge-rs is the Rust implementation of that compiler.
+jtriley presented Edge at Solidity Summit 2023 alongside contributors from other EVM language projects, and the specification has been available at [edge-specification.vercel.app](https://edge-specification.vercel.app/) since the announcement, and is hosted here at [edge.refcell.org](https://edge.refcell.org/). edge-rs is the Rust implementation of that compiler.
 
 ## Contributing
 

@@ -1,6 +1,6 @@
 [package]
 name = "edge-types"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 license = "MIT"
 authors = ["refcell"]
@@ -12,6 +12,7 @@ description = "Common types used across the Edge Language compiler"
 keywords = ["edge", "rust", "evm", "bytecode", "compiler"]
 
 [dependencies]
+derive_more = { workspace = true }
 anyhow = "1.0.79"
 tracing = "0.1.40"
 serde = { version = "1.0.196", features = [ "derive", "rc" ] }

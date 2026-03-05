@@ -1,6 +1,5 @@
 //! Byte utilities and helpers.
 
-// use crate::{evm::Opcode, evm_version::EVMVersion};
 use std::num::ParseIntError;
 
 use alloy_primitives::B256;
@@ -9,13 +8,13 @@ use tiny_keccak::{Hasher, Keccak};
 /// Convert a string slice to a [`B256`].
 /// Pads zeros to the left of significant bytes.
 /// i.e. 0xa57b becomes `[0, 0, ..., 0, 165, 123]`
-pub fn str_to_bytes32(s: &str) -> B256 {
+pub fn str_to_bytes32(s: &str) -> Result<B256, ParseIntError> {
     let s = format_even_bytes(String::from(s));
 
     let bytes: Vec<u8> = (0..s.len())
         .step_by(2)
-        .map(|c| u8::from_str_radix(&s[c..c + 2], 16).unwrap())
-        .collect();
+        .map(|c| u8::from_str_radix(&s[c..c + 2], 16))
+        .collect::<Result<Vec<u8>, _>>()?;
 
     let mut padded = [0u8; 32];
 
@@ -23,7 +22,7 @@ pub fn str_to_bytes32(s: &str) -> B256 {
         padded[i] = bytes[bytes.len() - (32 - i)];
     }
 
-    B256::from(padded)
+    Ok(B256::from(padded))
 }
 
 /// Convert a [`B256`] to a bytes string.
@@ -52,7 +51,8 @@ pub fn decimal_to_bytes32(s: &str) -> [u8; 32] {
     }
     // Fallback for very large decimals: convert to hex string, then use str_to_bytes32
     let hex = decimal_str_to_hex(s);
-    *str_to_bytes32(&hex)
+    // This is called from the lexer for decimal literals which should always be valid
+    str_to_bytes32(&hex).expect("decimal_to_bytes32: invalid decimal string").into()
 }
 
 /// Convert a decimal digit string to a hex string (no prefix).
@@ -120,28 +120,11 @@ pub fn str_to_vec(s: &str) -> Result<Vec<u8>, std::num::ParseIntError> {
 }
 
 /// Hash a string with Keccak256
-pub fn hash_bytes(dest: &mut [u8], to_hash: &String) {
+pub fn hash_bytes(dest: &mut [u8], to_hash: &str) {
     let mut hasher = Keccak::v256();
     hasher.update(to_hash.as_bytes());
     hasher.finalize(dest);
 }
-
-// /// Converts a value literal to its smallest equivalent `PUSHX` bytecode
-// pub fn literal_gen(evm_version: &EVMVersion, l: &[u8; 32]) -> String {
-//     let hex_literal: String = bytes32_to_string(l, false);
-//     match hex_literal.as_str() {
-//         "00" => format_push0(evm_version, hex_literal),
-//         _ => format_literal(hex_literal),
-//     }
-// }
-
-// fn format_push0(evm_version: &EVMVersion, hex_literal: String) -> String {
-//     if evm_version.has_push0() {
-//         Opcode::Push0.to_string()
-//     } else {
-//         format_literal(hex_literal)
-//     }
-// }
 
 /// Converts a literal into its bytecode string representation
 pub fn format_literal(hex_literal: String) -> String {

@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use anyhow::Result;
-use clap::{Parser, Subcommand};
+use anyhow::{bail, Result};
+use clap::{ArgAction, Parser, Subcommand};
 use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind, OptimizeFor},
@@ -14,34 +14,13 @@ use edge_driver::{
 #[command(name = "edgec")]
 #[command(about = "The Edge Language Compiler")]
 #[command(version)]
+#[command(arg_required_else_help = true)]
 pub struct Cli {
-    #[command(subcommand)]
-    pub command: Commands,
-}
+    /// Source file to compile (outputs bytecode to stdout)
+    pub file: Option<PathBuf>,
 
-/// Subcommands for the edgec compiler
-#[derive(Debug, Subcommand)]
-pub enum Commands {
-    /// Compile an Edge source file
-    Build(BuildArgs),
-    /// Check an Edge source file without producing output
-    Check(CheckArgs),
-    /// Lex a file and print tokens (debugging)
-    Lex(FileArgs),
-    /// Parse a file and print AST (debugging)
-    Parse(FileArgs),
-    /// Print version information
-    Version,
-}
-
-/// Arguments for the build command
-#[derive(Debug, Parser)]
-pub struct BuildArgs {
-    /// Source file to compile
-    pub file: PathBuf,
-
-    /// Output file path
-    #[arg(short, long)]
+    /// Output file path (write raw bytecode bytes)
+    #[arg(short, long, requires = "file")]
     pub output: Option<PathBuf>,
 
     /// What to emit: tokens, ast, ir, bytecode
@@ -52,27 +31,30 @@ pub struct BuildArgs {
     #[arg(short = 'O', value_parser = clap::value_parser!(u8).range(0..=3), default_value = "0")]
     pub opt_level: u8,
 
-    /// Verbose output
-    #[arg(short, long)]
-    pub verbose: bool,
-
     /// What metric to optimize extraction for
     #[arg(long, value_parser = ["gas", "size"], default_value = "gas")]
     pub optimize_for: String,
+
+    /// Verbosity level (-v warn, -vv info, -vvv debug, -vvvv trace)
+    #[arg(short, action = ArgAction::Count, global = true)]
+    pub verbose: u8,
+
+    #[command(subcommand)]
+    pub command: Option<Commands>,
 }
 
-/// Arguments for the check command
-#[derive(Debug, Parser)]
-pub struct CheckArgs {
-    /// Source file to check
-    pub file: PathBuf,
-
-    /// Verbose output
-    #[arg(short, long)]
-    pub verbose: bool,
+/// Subcommands for inspecting compiler pipeline stages
+#[derive(Debug, Subcommand)]
+pub enum Commands {
+    /// Check an Edge source file for errors without producing output
+    Check(FileArgs),
+    /// Lex a file and print tokens
+    Lex(FileArgs),
+    /// Parse a file and print AST
+    Parse(FileArgs),
 }
 
-/// Arguments for file-based commands (lex, parse)
+/// Arguments for file-based subcommands
 #[derive(Debug, Parser)]
 pub struct FileArgs {
     /// Source file to process
@@ -80,36 +62,30 @@ pub struct FileArgs {
 }
 
 impl Cli {
-    /// Check if any subcommand has verbose enabled.
-    pub fn is_verbose(&self) -> bool {
-        match &self.command {
-            Commands::Build(args) => args.verbose,
-            Commands::Check(args) => args.verbose,
-            _ => false,
-        }
-    }
-
     /// Execute the CLI command
     pub fn execute(self) -> Result<()> {
         match self.command {
-            Commands::Build(args) => Self::build(args),
-            Commands::Check(args) => Self::check(args),
-            Commands::Lex(args) => Self::lex(args),
-            Commands::Parse(args) => Self::parse(args),
-            Commands::Version => {
-                println!("edgec {}", env!("CARGO_PKG_VERSION"));
-                Ok(())
+            Some(Commands::Check(args)) => Self::check(args),
+            Some(Commands::Lex(args)) => Self::lex(args),
+            Some(Commands::Parse(args)) => Self::parse(args),
+            None => {
+                if let Some(file) = self.file {
+                    Self::compile(file, self.output, &self.emit, self.opt_level, &self.optimize_for)
+                } else {
+                    bail!("no input file specified")
+                }
             }
         }
     }
 
-    fn build(args: BuildArgs) -> Result<()> {
-        if args.verbose {
-            eprintln!("Building: {}", args.file.display());
-        }
-
-        // Parse the emit kind
-        let emit = match args.emit.as_str() {
+    fn compile(
+        file: PathBuf,
+        output: Option<PathBuf>,
+        emit: &str,
+        opt_level: u8,
+        optimize_for: &str,
+    ) -> Result<()> {
+        let emit_kind = match emit {
             "tokens" => EmitKind::Tokens,
             "ast" => EmitKind::Ast,
             "ir" => EmitKind::Ir,
@@ -117,40 +93,33 @@ impl Cli {
             _ => EmitKind::Bytecode,
         };
 
-        // Create compiler config
-        let mut config = CompilerConfig::new(args.file.clone());
-        config.output_file = args.output.clone();
-        config.emit = emit;
-        config.optimization_level = args.opt_level;
-        config.verbose = args.verbose;
-        config.optimize_for = match args.optimize_for.as_str() {
+        let mut config = CompilerConfig::new(file);
+        config.output_file = output.clone();
+        config.emit = emit_kind;
+        config.optimization_level = opt_level;
+        config.optimize_for = match optimize_for {
             "size" => OptimizeFor::Size,
             _ => OptimizeFor::Gas,
         };
 
-        // Create and run compiler
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
+        let result = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let output = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        // Output the result based on emit kind
-        match emit {
+        match emit_kind {
             EmitKind::Tokens => {
-                if let Some(tokens) = output.tokens {
-                    println!("=== Tokens ===");
+                if let Some(tokens) = result.tokens {
                     for token in tokens {
                         println!("{:#?}", token);
                     }
                 }
             }
             EmitKind::Ast => {
-                if let Some(ast) = output.ast {
-                    println!("=== Abstract Syntax Tree ===");
+                if let Some(ast) = result.ast {
                     println!("{:#?}", ast);
                 }
             }
             EmitKind::Ir => {
-                if let Some(ref ir) = output.ir {
+                if let Some(ref ir) = result.ir {
                     for contract in &ir.contracts {
                         println!(";; Contract: {}", contract.name);
                         println!(";; Storage fields: {}", contract.storage_fields.len());
@@ -171,29 +140,19 @@ impl Cli {
                 }
             }
             EmitKind::Bytecode => {
-                if let Some(ref bytecode) = output.bytecode {
+                if let Some(ref bytecode) = result.bytecode {
                     if bytecode.is_empty() {
                         eprintln!("warning: empty bytecode produced");
                     } else {
-                        // Print hex-encoded bytecode to stdout
                         let hex: String = bytecode.iter().map(|b| format!("{b:02x}")).collect();
-                        println!("{hex}");
+                        println!("0x{hex}");
 
-                        // Write to output file if specified
-                        if let Some(output_file) = &args.output {
-                            std::fs::write(output_file, bytecode)?;
-                            if args.verbose {
-                                eprintln!("Wrote bytecode to {}", output_file.display());
-                            }
+                        if let Some(path) = output {
+                            std::fs::write(&path, bytecode)?;
                         }
-
-                        eprintln!(
-                            "Compilation successful, {} bytes of bytecode generated",
-                            bytecode.len()
-                        );
                     }
                 } else {
-                    eprintln!("warning: no bytecode generated");
+                    eprintln!("warning: bytecode generation produced no output");
                 }
             }
         }
@@ -201,39 +160,21 @@ impl Cli {
         Ok(())
     }
 
-    fn check(args: CheckArgs) -> Result<()> {
-        if args.verbose {
-            eprintln!("Checking: {}", args.file.display());
-        }
-
-        // Create compiler config (don't emit anything, just check)
-        let mut config = CompilerConfig::new(args.file);
-        config.verbose = args.verbose;
-
-        // Create and run compiler
+    fn check(args: FileArgs) -> Result<()> {
+        let config = CompilerConfig::new(args.file);
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        // Just run through the compilation pipeline to check for errors
         compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
-
-        if args.verbose {
-            eprintln!("Check passed!");
-        }
         Ok(())
     }
 
     fn lex(args: FileArgs) -> Result<()> {
-        // Create compiler config with emit=tokens
         let mut config = CompilerConfig::new(args.file);
         config.emit = EmitKind::Tokens;
 
-        // Create and run compiler
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
-
         let output = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         if let Some(tokens) = output.tokens {
-            println!("=== Tokens ===");
             for token in tokens {
                 println!("{:#?}", token);
             }
@@ -243,17 +184,13 @@ impl Cli {
     }
 
     fn parse(args: FileArgs) -> Result<()> {
-        // Create compiler config with emit=ast
         let mut config = CompilerConfig::new(args.file);
         config.emit = EmitKind::Ast;
 
-        // Create and run compiler
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
-
         let output = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         if let Some(ast) = output.ast {
-            println!("=== Abstract Syntax Tree ===");
             println!("{:#?}", ast);
         }
 

@@ -7,6 +7,7 @@ use edge_diagnostics::Diagnostic;
 use edge_lexer::lexer::Lexer;
 use edge_parser::Parser;
 use edge_types::tokens::Token;
+use indexmap::IndexMap;
 
 use crate::{
     config::{CompilerConfig, EmitKind},
@@ -22,8 +23,10 @@ pub struct CompileOutput {
     pub ast: Option<Program>,
     /// Emitted IR (if emit=ir)
     pub ir: Option<edge_ir::EvmProgram>,
-    /// Emitted bytecode (if emit=bytecode)
+    /// Emitted bytecode for the last contract (backward compat)
     pub bytecode: Option<Vec<u8>>,
+    /// Emitted bytecodes for all contracts, keyed by contract name
+    pub bytecodes: Option<IndexMap<String, Vec<u8>>>,
 }
 
 /// Compiler errors
@@ -67,6 +70,16 @@ impl Compiler {
         })
     }
 
+    /// Create a compiler from an in-memory source string, bypassing file I/O.
+    ///
+    /// Useful for testing and benchmarks where the source is already in memory.
+    pub fn from_source(source: impl Into<String>) -> Self {
+        let config = CompilerConfig::new(std::path::PathBuf::from("<stdin>"));
+        Self {
+            session: Session::new(config, source.into()),
+        }
+    }
+
     /// Run the compilation pipeline
     pub fn compile(&mut self) -> Result<CompileOutput, CompileError> {
         tracing::info!("Compiling {:?}", self.session.config.input_file);
@@ -82,6 +95,7 @@ impl Compiler {
                 ast: None,
                 ir: None,
                 bytecode: None,
+                bytecodes: None,
             });
         }
 
@@ -94,6 +108,7 @@ impl Compiler {
                 ast: Some(ast),
                 ir: None,
                 bytecode: None,
+                bytecodes: None,
             });
         }
 
@@ -124,6 +139,7 @@ impl Compiler {
                 ast: Some(ast),
                 ir: Some(ir_program),
                 bytecode: None,
+                bytecodes: None,
             });
         }
 
@@ -144,6 +160,7 @@ impl Compiler {
             ast: Some(ast),
             ir: None,
             bytecode: Some(bytecode),
+            bytecodes: None,
         })
     }
 

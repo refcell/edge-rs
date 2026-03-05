@@ -90,7 +90,8 @@ impl Span {
 
 impl From<Span> for Range<usize> {
     fn from(span: Span) -> Self {
-        span.range().unwrap()
+        span.range()
+            .expect("cannot convert EOF span to Range; check for Span::EOF before converting")
     }
 }
 
