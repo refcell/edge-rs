@@ -7,11 +7,11 @@ use edge_driver::{
     config::{CompilerConfig, EmitKind},
 };
 use revm::{
-    context::{Context, TxEnv},
+    context::TxEnv,
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -86,43 +86,66 @@ fn decode_u256(output: &[u8]) -> u64 {
 // EVM test harness
 // =============================================================================
 
-/// Fixed address where the ERC20 contract is deployed for tests.
-/// Using 0x1001 to avoid collisions with other contracts (counter.edge uses 0x1000).
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x01,
-]);
+const CALLER: Address = Address::new([0x01; 20]);
 
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-/// In-memory EVM with a single contract deployed at [`CONTRACT_ADDR`].
+/// In-memory EVM with a single contract deployed via CREATE.
 ///
 /// Storage changes are committed after each [`call`][EvmHandle::call], so
 /// calls are stateful: calls to `_mint` followed by `balanceOf` reflect the minted amount.
 struct EvmHandle {
     evm: TestEvm,
+    contract: Address,
     /// Tracks caller nonce; `transact_commit` increments it in the DB each call.
     nonce: u64,
 }
 
 impl EvmHandle {
-    /// Deploy `bytecode` at [`CONTRACT_ADDR`] and return a ready handle.
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    /// Deploy `bytecode` via CREATE and return a ready handle.
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(CALLER, caller_info);
+
+        let mut evm = revm::context::Context::mainnet()
+            .with_db(db)
+            .build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
     /// Call the contract with `calldata`. Returns `(success, return_data)`.
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
 
@@ -179,9 +202,6 @@ fn test_erc20_mint_and_balance() {
     let alice = test_address(0x01);
 
     // Mint 1000 tokens to alice.
-    // Note: This test assumes the contract provides a _mint function that can be
-    // called. Depending on the implementation, this might require an internal call
-    // or a public mint function. For now, we assume _mint exists as a public function.
     let mint_sel = selector("_mint(address,uint256)");
     let mint_calldata =
         encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
@@ -219,9 +239,6 @@ fn test_erc20_transfer() {
     assert!(ok, "_mint(alice, 1000) reverted");
 
     // Transfer 300 from alice to bob.
-    // Note: This assumes transfer can be called with the contract acting as alice.
-    // In a real test, we'd need to set the caller to alice, but EvmHandle uses fixed caller.
-    // For now, we assume _transfer is callable directly for testing.
     let xfer_sel = selector("_transfer(address,address,uint256)");
     let xfer_calldata = encode_call_with_args(
         xfer_sel,
@@ -271,8 +288,6 @@ fn test_erc20_approve_and_transferfrom() {
     assert!(ok, "_mint(alice, 1000) reverted");
 
     // Alice approves bob to spend 500 tokens.
-    // Note: In a real test, we'd call approve with caller=alice.
-    // For now, we assume _approve is testable as a public function.
     let approve_sel = selector("_approve(address,address,uint256)");
     let approve_calldata = encode_call_with_args(
         approve_sel,
@@ -294,7 +309,6 @@ fn test_erc20_approve_and_transferfrom() {
     );
 
     // Bob transfers 300 from alice to charlie using transferFrom.
-    // Note: This assumes transferFrom can be called with bob as spender.
     let xfer_sel = selector("transferFrom(address,address,uint256)");
     let xfer_calldata = encode_call_with_args(
         xfer_sel,

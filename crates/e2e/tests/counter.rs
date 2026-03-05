@@ -7,11 +7,11 @@ use edge_driver::{
     config::{CompilerConfig, EmitKind},
 };
 use revm::{
-    context::{Context, TxEnv},
+    context::TxEnv,
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -67,44 +67,66 @@ fn decode_u256(output: &[u8]) -> u64 {
 // EVM test harness
 // =============================================================================
 
-/// Fixed address where the contract is deployed for tests.
-///
-/// Must be > 0x09 to avoid Ethereum precompile addresses (0x01–0x09).
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
-]);
+const CALLER: Address = Address::new([0x01; 20]);
 
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-/// In-memory EVM with a single contract deployed at [`CONTRACT_ADDR`].
+/// In-memory EVM with a single contract deployed via CREATE.
 ///
 /// Storage changes are committed after each [`call`][EvmHandle::call], so
 /// calls are stateful: `increment()` followed by `get()` returns 1.
 struct EvmHandle {
     evm: TestEvm,
+    contract: Address,
     /// Tracks caller nonce; `transact_commit` increments it in the DB each call.
     nonce: u64,
 }
 
 impl EvmHandle {
-    /// Deploy `bytecode` at [`CONTRACT_ADDR`] and return a ready handle.
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    /// Deploy `bytecode` via CREATE and return a ready handle.
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(CALLER, caller_info);
+
+        let mut evm = revm::context::Context::mainnet()
+            .with_db(db)
+            .build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
     /// Call the contract with `calldata`. Returns `(success, return_data)`.
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
 
@@ -156,15 +178,17 @@ fn test_revm_return_works() {
         0x60, 0x00, // PUSH1 0
         0xf3, // RETURN(0, 32)
     ];
-    // Use a safe non-precompile address (precompiles are 0x01–0x09)
+    // This is raw runtime bytecode (no constructor), so insert directly as code
     let addr = Address::new([
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x01,
     ]);
-    let code = Bytecode::new_legacy(Bytes::from(bytecode_bytes));
+    let code = revm::state::Bytecode::new_legacy(Bytes::from(bytecode_bytes));
     let account = AccountInfo::default().with_code(code);
     let mut db = CacheDB::<EmptyDB>::default();
     db.insert_account_info(addr, account);
-    let mut evm = Context::mainnet().with_db(db).build_mainnet();
+    let mut evm = revm::context::Context::mainnet()
+        .with_db(db)
+        .build_mainnet();
 
     let tx = TxEnv::builder()
         .caller(Address::ZERO)

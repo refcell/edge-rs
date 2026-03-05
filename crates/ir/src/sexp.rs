@@ -286,7 +286,7 @@ fn list_to_sexp(exprs: &[RcExpr]) -> String {
 #[derive(Debug, Clone, PartialEq)]
 enum Sexp {
     Atom(String),
-    List(Vec<Sexp>),
+    List(Vec<Self>),
 }
 
 /// Tokenize and parse an s-expression string.
@@ -846,7 +846,7 @@ pub fn pretty_sexp(sexp: &str, indent: usize) -> String {
 #[derive(Debug)]
 enum STree {
     Atom(String),
-    List(Vec<STree>),
+    List(Vec<Self>),
 }
 
 fn tokenize_sexp(s: &str) -> Vec<String> {

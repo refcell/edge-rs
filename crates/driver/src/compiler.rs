@@ -148,6 +148,18 @@ impl Compiler {
             });
         }
 
+        // No contracts → nothing to codegen; return after type check + IR
+        if ir_program.contracts.is_empty() {
+            return Ok(CompileOutput {
+                tokens: None,
+                ast: Some(ast),
+                ir: Some(ir_program),
+                bytecode: None,
+                bytecodes: None,
+                asm: None,
+            });
+        }
+
         // Assembly output (pre-final-assembly)
         if emit == EmitKind::Asm {
             let mut asm_outputs = Vec::new();

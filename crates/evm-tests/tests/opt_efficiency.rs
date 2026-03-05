@@ -303,6 +303,7 @@ fn args_addr_addr_u256(a: Address, b: Address, v: U256) -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "very slow benchmark"]
 fn erc20_optimization_efficiency() {
     let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(measure_erc20).collect();
 

@@ -50,7 +50,7 @@
 
 # The Compiler
 
-1. [Overview](compiler/overview.md)
+1. [Architecture](compiler/overview.md)
 1. [Quickstart](compiler/quickstart.md)
 
 # Tooling
