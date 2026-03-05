@@ -22,7 +22,7 @@ use revm::{
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -99,9 +99,7 @@ fn decode_address(output: &[u8]) -> [u8; 20] {
     output[12..32].try_into().unwrap()
 }
 
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
-]);
+const CALLER: Address = Address::ZERO;
 const ALICE_ADDR: [u8; 20] = {
     let mut a = [0u8; 20];
     a[19] = 0xA1;
@@ -113,25 +111,50 @@ type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
 struct EvmHandle {
     evm: TestEvm,
+    contract: Address,
     nonce: u64,
 }
 
 impl EvmHandle {
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(CALLER, caller_info);
+
+        let mut evm = Context::mainnet().with_db(db).build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
         let result = self.evm.transact_commit(tx).unwrap();
@@ -207,14 +230,14 @@ fn test_ownable_accept_ownership_sets_owner() {
     let bc = compile_named("examples/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
 
-    // Set alice as pending owner
+    // Set caller (0x0) as pending owner so acceptOwnership() passes the guard
     let (ok, _) = evm.call(calldata(
         selector("transferOwnership(address)"),
-        &[encode_address(ALICE_ADDR)],
+        &[encode_address([0u8; 20])],
     ));
     assert!(ok, "transferOwnership reverted");
 
-    // acceptOwnership() — auth guard bypassed; sets owner = @caller() = 0x0
+    // acceptOwnership() — caller is 0x0 which matches pending_owner
     let (ok, _) = evm.call(calldata(selector("acceptOwnership()"), &[]));
     assert!(ok, "acceptOwnership reverted");
 

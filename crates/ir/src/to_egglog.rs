@@ -1028,6 +1028,17 @@ impl AstToEgglog {
             return Ok(result);
         }
 
+        // Handle builtin functions
+        if fn_name == "revert" {
+            let state =
+                ast_helpers::arg(EvmType::Base(EvmBaseType::StateT), self.current_ctx.clone());
+            return Ok(ast_helpers::revert(
+                ast_helpers::const_int(0, self.current_ctx.clone()),
+                ast_helpers::const_int(0, self.current_ctx.clone()),
+                state,
+            ));
+        }
+
         // Not an internal function — emit a Call node
         let args_ir: Vec<RcExpr> = args
             .iter()
