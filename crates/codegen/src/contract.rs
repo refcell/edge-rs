@@ -7,6 +7,7 @@
 //!    via the dispatcher.
 
 use edge_ir::schema::EvmContract;
+use edge_ir::var_opt;
 use edge_ir::OptimizeFor;
 
 use crate::{
@@ -44,8 +45,10 @@ fn generate_constructor(
     let mut asm = Assembler::new();
 
     // Execute constructor body (storage initializations, etc.)
-    let mut compiler = ExprCompiler::new(&mut asm);
+    let allocations = var_opt::analyze_allocations(&contract.constructor);
+    let mut compiler = ExprCompiler::with_allocations(&mut asm, allocations);
     compiler.compile_expr(&contract.constructor);
+    compiler.emit_overflow_revert_trampoline();
 
     // Optimize constructor body
     let instructions = asm.take_instructions();

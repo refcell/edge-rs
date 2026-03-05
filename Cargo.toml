@@ -74,6 +74,8 @@ dirs = "5"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 egglog = { git = "https://github.com/egraphs-good/egglog", rev = "161a36f" }
 indexmap = "2.0.0"
+ruint = "1"
+lazy_static = "1"
 
 [profile.dev]
 incremental = true

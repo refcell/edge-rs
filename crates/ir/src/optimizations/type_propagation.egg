@@ -1,0 +1,151 @@
+;; ============================================================
+;; Type Propagation
+;; ============================================================
+;; Populates the HasType and FunctionHasType relations declared
+;; in schema.egg. Purely additive — only adds facts, no rewrites.
+
+;; ---- Leaf nodes ----
+
+;; Const: type from constructor
+(rule ((= e (Const c ty ctx)))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; Arg: type from constructor
+(rule ((= e (Arg ty ctx)))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; Empty: type from constructor
+(rule ((= e (Empty ty ctx)))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; Selector: always u256 (4 bytes, but pushed as 256-bit value on EVM)
+(rule ((= e (Selector s)))
+      ((HasType e (Base (UIntT 256))))
+      :ruleset type-propagation)
+
+;; ---- Arithmetic ----
+;; All arithmetic binary ops produce u256
+(rule ((= e (Bop (OpAdd) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSub) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpMul) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpDiv) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSDiv) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpMod) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSMod) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpExp) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; Checked arithmetic → u256
+(rule ((= e (Bop (OpCheckedAdd) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpCheckedSub) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpCheckedMul) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; ---- Comparison (produce bool / 0 or 1) ----
+(rule ((= e (Bop (OpLt) a b)))     ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpGt) a b)))     ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSLt) a b)))    ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSGt) a b)))    ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpEq) a b)))     ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpLogAnd) a b))) ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpLogOr) a b)))  ((HasType e (Base (BoolT)))) :ruleset type-propagation)
+
+;; ---- Unary ----
+(rule ((= e (Uop (OpIsZero) x)))     ((HasType e (Base (BoolT))))    :ruleset type-propagation)
+(rule ((= e (Uop (OpNot) x)))        ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Uop (OpNeg) x)))        ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Uop (OpSignExtend) x))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; ---- Bitwise ----
+(rule ((= e (Bop (OpAnd) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpOr) a b)))   ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpXor) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpShl) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpShr) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpSar) a b)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpByte) a b))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; ---- Storage/memory reads → u256 ----
+(rule ((= e (Bop (OpSLoad) slot state)))          ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpTLoad) slot state)))           ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpMLoad) offset state)))         ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+(rule ((= e (Bop (OpCalldataLoad) offset state)))  ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; ---- Storage/memory writes → state ----
+(rule ((= e (Top (OpSStore) slot val state)))       ((HasType e (Base (StateT)))) :ruleset type-propagation)
+(rule ((= e (Top (OpTStore) slot val state)))       ((HasType e (Base (StateT)))) :ruleset type-propagation)
+(rule ((= e (Top (OpMStore) offset val state)))     ((HasType e (Base (StateT)))) :ruleset type-propagation)
+(rule ((= e (Top (OpMStore8) offset val state)))    ((HasType e (Base (StateT)))) :ruleset type-propagation)
+
+;; ---- Keccak256 → u256 ----
+(rule ((= e (Top (OpKeccak256) offset size state))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
+
+;; ---- Select: inherits type from true branch ----
+(rule ((= e (Top (OpSelect) cond t f)) (HasType t ty))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; ---- Concat: type of second operand (the "result") ----
+(rule ((= e (Concat a b)) (HasType b ty))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; ---- If: type of then-branch ----
+(rule ((= e (If pred inputs then_body else_body)) (HasType then_body ty))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; ---- Log → state ----
+(rule ((= e (Log n topics data state)))
+      ((HasType e (Base (StateT))))
+      :ruleset type-propagation)
+
+;; ---- Revert/Return → unit (terminal) ----
+(rule ((= e (Revert offset size state)))
+      ((HasType e (Base (UnitT))))
+      :ruleset type-propagation)
+(rule ((= e (ReturnOp offset size state)))
+      ((HasType e (Base (UnitT))))
+      :ruleset type-propagation)
+
+;; ---- VarStore/Drop → unit ----
+(rule ((= e (VarStore name val)))
+      ((HasType e (Base (UnitT))))
+      :ruleset type-propagation)
+(rule ((= e (Drop name)))
+      ((HasType e (Base (UnitT))))
+      :ruleset type-propagation)
+
+;; ---- LetBind: type of body ----
+(rule ((= e (LetBind name init body)) (HasType body ty))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; ---- Environment reads → u256 ----
+(rule ((= e (EnvRead op state)))
+      ((HasType e (Base (UIntT 256))))
+      :ruleset type-propagation)
+(rule ((= e (EnvRead1 op arg state)))
+      ((HasType e (Base (UIntT 256))))
+      :ruleset type-propagation)
+
+;; ---- ExtCall → u256 (success flag) ----
+(rule ((= e (ExtCall target value argsOff argsLen retOff retLen state)))
+      ((HasType e (Base (UIntT 256))))
+      :ruleset type-propagation)
+
+;; ---- Function definition → populates FunctionHasType ----
+(rule ((= e (Function name input_ty output_ty body)))
+      ((FunctionHasType name input_ty output_ty))
+      :ruleset type-propagation)
+
+;; ---- DoWhile: inherits type from body ----
+(rule ((= e (DoWhile inputs pred_and_body)) (HasType inputs ty))
+      ((HasType e ty))
+      :ruleset type-propagation)
+
+;; ---- Get: u256 (tuple element extraction) ----
+(rule ((= e (Get tuple idx)))
+      ((HasType e (Base (UIntT 256))))
+      :ruleset type-propagation)

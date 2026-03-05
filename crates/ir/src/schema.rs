@@ -119,6 +119,12 @@ pub enum EvmBinaryOp {
     SMod,
     /// Exponentiation
     Exp,
+    /// Checked addition (reverts on overflow)
+    CheckedAdd,
+    /// Checked subtraction (reverts on underflow)
+    CheckedSub,
+    /// Checked multiplication (reverts on overflow)
+    CheckedMul,
 
     // Comparison
     /// Unsigned less than
@@ -301,6 +307,8 @@ pub enum EvmExpr {
     Var(String),
     /// Write to a LetBind variable's memory slot (mutates the variable in place)
     VarStore(String, RcExpr),
+    /// Drop a variable (marks end of lifetime for slot reclamation)
+    Drop(String),
 
     // ---- Top-level ----
     /// Function: (name, input_type, output_type, body)
@@ -364,6 +372,9 @@ impl std::fmt::Display for EvmBinaryOp {
             Self::Mod => "MOD",
             Self::SMod => "SMOD",
             Self::Exp => "EXP",
+            Self::CheckedAdd => "CHECKED_ADD",
+            Self::CheckedSub => "CHECKED_SUB",
+            Self::CheckedMul => "CHECKED_MUL",
             Self::Lt => "LT",
             Self::Gt => "GT",
             Self::SLt => "SLT",
@@ -384,6 +395,13 @@ impl std::fmt::Display for EvmBinaryOp {
             Self::CalldataLoad => "CALLDATALOAD",
         };
         write!(f, "{s}")
+    }
+}
+
+impl EvmBinaryOp {
+    /// Returns true if the second operand is a state token (ignored by codegen).
+    pub fn has_state(&self) -> bool {
+        matches!(self, Self::SLoad | Self::TLoad | Self::MLoad | Self::CalldataLoad)
     }
 }
 

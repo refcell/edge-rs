@@ -70,6 +70,26 @@
 ;; Var (let-binding reference) is pure
 (rule ((= e (Var name)))                   ((IsPure e)) :ruleset dead-code)
 
+;; Drop (lifetime marker) is pure — no side effects
+(rule ((= e (Drop name)))                  ((IsPure e)) :ruleset dead-code)
+
+;; Concat of pure expressions is pure (enables cascading DCE)
+(rule ((= e (Concat a b)) (IsPure a) (IsPure b))
+      ((IsPure e)) :ruleset dead-code)
+
+;; If with all-pure branches is pure
+(rule ((= e (If cond t f ctx)) (IsPure cond) (IsPure t) (IsPure f))
+      ((IsPure e)) :ruleset dead-code)
+
+;; ---- Empty elimination in Concat chains ----
+;; Empty is the unit value — concatenating with it is a no-op.
+;; These fire without needing IsPure analysis, catching cases early.
+
+;; Concat(Empty, x) → x
+(rewrite (Concat (Empty ty ctx) rest) rest :subsume :ruleset dead-code)
+;; Concat(x, Empty) → x
+(rewrite (Concat inner (Empty ty ctx)) inner :subsume :ruleset dead-code)
+
 ;; ---- Dead statement elimination in Concat chains ----
 ;;
 ;; Concat(a, b) evaluates a for side effects then returns b.
@@ -84,4 +104,14 @@
 ;; Peels one dead pure entry from the tail of the left-nested chain.
 (rule ((= e (Concat (Concat prev inner) rest)) (IsPure inner))
       ((union e (Concat prev rest)))
+      :ruleset dead-code)
+
+;; ---- Dead variable elimination via Drop ----
+;;
+;; Drop(x) marks the end of variable x's lifetime.
+;; If a LetBind's body is just Drop(x) (no uses), the variable is dead.
+
+;; Dead variable: pure init, body is just Drop → eliminate
+(rule ((= e (LetBind name init (Drop name))) (IsPure init))
+      ((union e (Empty (Base (UnitT)) (InFunction "__dead__"))))
       :ruleset dead-code)

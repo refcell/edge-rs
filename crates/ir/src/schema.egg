@@ -94,6 +94,8 @@
 (datatype EvmBinaryOp
   ;; Arithmetic (all 256-bit on EVM)
   (OpAdd) (OpSub) (OpMul) (OpDiv) (OpSDiv) (OpMod) (OpSMod) (OpExp)
+  ;; Checked arithmetic (revert on overflow/underflow)
+  (OpCheckedAdd) (OpCheckedSub) (OpCheckedMul)
   ;; Comparison
   (OpLt) (OpGt) (OpSLt) (OpSGt) (OpEq)
   ;; Bitwise
@@ -213,6 +215,8 @@
 (constructor Var (String) EvmExpr)
 ;; Write to a LetBind variable's memory slot (mutates in place)
 (constructor VarStore (String EvmExpr) EvmExpr)
+;; Drop a variable (marks end of lifetime for slot reclamation)
+(constructor Drop (String) EvmExpr)
 
 ;; ============================================================
 ;; Top-Level Structures
@@ -241,6 +245,9 @@
 (ruleset memory-opt)
 (ruleset dead-code)
 (ruleset cse-rules)
+(ruleset range-analysis)
+(ruleset u256-const-fold)
+(ruleset type-propagation)
 
 ;; ============================================================
 ;; Helper Relations
@@ -254,6 +261,10 @@
 (relation ContextOf (EvmExpr EvmContext))
 ;; Function type info
 (relation FunctionHasType (String EvmType EvmType))
+
+;; Immutable variable: Var(name) has the same value as LetBind init.
+;; Populated by the lowering/var_opt pass for variables with no VarStore.
+(relation ImmutableVar (String))
 
 ;; Operator name mapping for debugging
 (relation bop->string (EvmBinaryOp String))
@@ -283,5 +294,8 @@
 (bop->string (OpTLoad) "TLOAD")
 (bop->string (OpMLoad) "MLOAD")
 (bop->string (OpCalldataLoad) "CALLDATALOAD")
+(bop->string (OpCheckedAdd) "CHECKED_ADD")
+(bop->string (OpCheckedSub) "CHECKED_SUB")
+(bop->string (OpCheckedMul) "CHECKED_MUL")
 
 

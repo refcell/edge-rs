@@ -96,6 +96,10 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
         m.insert(*op, 5);
     }
     m.insert("OpExp", 60); // 10 + ~50 per byte
+    // Checked arithmetic: higher cost than unchecked to prefer elision
+    m.insert("OpCheckedAdd", 20);
+    m.insert("OpCheckedSub", 20);
+    m.insert("OpCheckedMul", 30);
     m.insert("OpKeccak256", 36); // 30 + 6*1word
     m.insert("OpLogAnd", 6); // ~2× ISZERO+JUMPI
     m.insert("OpLogOr", 6);
@@ -196,6 +200,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("LetBind", 3);    // MSTORE cost
     m.insert("Var", 3);        // MLOAD cost
     m.insert("VarStore", 6);   // PUSH offset + MSTORE
+    m.insert("Drop", 0);       // No-op lifetime marker
     m.insert("Function", 0);
     m.insert("StorageField", 0);
     m.insert("Contract", 0);

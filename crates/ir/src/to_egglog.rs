@@ -4,6 +4,7 @@
 //! and producing IR nodes. This follows the pattern from eggcc's
 //! `TreeToEgglog` but targets EVM-specific IR constructs.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -16,6 +17,57 @@ use crate::{
     },
     IrError,
 };
+
+/// Check if an expression references any variable from a set of names.
+///
+/// Used during lowering to ensure a LetBind init expression doesn't reference
+/// variables whose LetBinds are inner (not yet allocated).
+fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
+    match expr.as_ref() {
+        EvmExpr::Var(n) => names.contains(n.as_str()),
+        EvmExpr::Const(..)
+        | EvmExpr::Arg(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Selector(_)
+        | EvmExpr::StorageField(..)
+        | EvmExpr::Drop(_) => false,
+        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
+            references_any_var(a, names) || references_any_var(b, names)
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_var(a, names),
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            references_any_var(a, names)
+                || references_any_var(b, names)
+                || references_any_var(c, names)
+        }
+        EvmExpr::If(c, i, t, e) => {
+            references_any_var(c, names)
+                || references_any_var(i, names)
+                || references_any_var(t, names)
+                || references_any_var(e, names)
+        }
+        EvmExpr::VarStore(_, v) => references_any_var(v, names),
+        EvmExpr::LetBind(_, init, body) => {
+            references_any_var(init, names) || references_any_var(body, names)
+        }
+        EvmExpr::EnvRead(_, s) => references_any_var(s, names),
+        EvmExpr::EnvRead1(_, a, s) => {
+            references_any_var(a, names) || references_any_var(s, names)
+        }
+        EvmExpr::Log(_, topics, data, state) => {
+            topics.iter().any(|t| references_any_var(t, names))
+                || references_any_var(data, names)
+                || references_any_var(state, names)
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            [a, b, c, d, e, f, g]
+                .iter()
+                .any(|x| references_any_var(x, names))
+        }
+        EvmExpr::Call(_, args) => references_any_var(args, names),
+        EvmExpr::Function(_, _, _, body) => references_any_var(body, names),
+    }
+}
 
 /// Tracks a variable binding during lowering.
 #[derive(Debug, Clone)]
@@ -430,18 +482,72 @@ impl AstToEgglog {
             ));
         }
 
+        // Store-forwarding at the lowering level: for each VarDecl, find
+        // the first VarStore(var, val) in the statement list. If it's only
+        // preceded by Empty nodes (from other VarDecls) and its value doesn't
+        // reference any later-declared locals, use val directly as the
+        // LetBind init instead of zero. This avoids generating
+        // LetBind(x, 0, Concat(VarStore(x, real), ...)) in the first place.
+        let local_var_names: Vec<String> = var_decl_names
+            .iter()
+            .map(|n| format!("__local_{n}"))
+            .collect();
+        let mut var_inits: std::collections::HashMap<String, RcExpr> =
+            std::collections::HashMap::new();
+        for (i, name) in var_decl_names.iter().enumerate() {
+            let var_name = format!("__local_{name}");
+
+            // Find the first VarStore for this variable
+            let idx = stmts.iter().position(|s| {
+                matches!(s.as_ref(), EvmExpr::VarStore(n, _) if n == &var_name)
+            });
+            let Some(idx) = idx else { continue };
+
+            // All preceding statements must be Empty (pure VarDecl placeholders).
+            let preceding_ok = stmts[..idx]
+                .iter()
+                .all(|s| matches!(s.as_ref(), EvmExpr::Empty(..)));
+            if !preceding_ok {
+                continue;
+            }
+
+            // Extract the init value
+            let init_val = match stmts[idx].as_ref() {
+                EvmExpr::VarStore(_, val) => val.clone(),
+                _ => unreachable!(),
+            };
+
+            // The init must not reference any locals declared AFTER this one,
+            // because those LetBinds are inner (haven't allocated yet when
+            // the outer LetBind's init is evaluated).
+            let inner_vars: std::collections::HashSet<&str> = local_var_names[i + 1..]
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            if !inner_vars.is_empty() && references_any_var(&init_val, &inner_vars) {
+                continue;
+            }
+
+            var_inits.insert(var_name, init_val);
+            stmts.remove(idx);
+        }
+
         let mut result = stmts[0].clone();
         for stmt in &stmts[1..] {
             result = ast_helpers::concat(result, stmt.clone());
         }
 
         // Wrap the result in LetBinds for memory-backed locals (innermost first).
-        // LetBind allocates a memory slot and initializes it with the given value.
-        // VarStore/Var will write/read from that slot.
+        // Each variable gets: Drop(var) appended to body, then wrapped in LetBind.
+        // Drop marks the end of the variable's lifetime for slot reclamation.
         for name in var_decl_names.iter().rev() {
             let var_name = format!("__local_{name}");
-            let zero = ast_helpers::const_int(0, self.current_ctx.clone());
-            result = ast_helpers::let_bind(var_name, zero, result);
+            // Append Drop at end of this variable's scope
+            result = ast_helpers::concat(result, ast_helpers::drop_var(var_name.clone()));
+            let init = var_inits
+                .remove(&var_name)
+                .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
+            result = ast_helpers::let_bind(var_name, init, result);
         }
 
         Ok(result)
@@ -829,9 +935,9 @@ impl AstToEgglog {
         rhs: RcExpr,
     ) -> Result<RcExpr, IrError> {
         let ir_op = match op {
-            edge_ast::BinOp::Add | edge_ast::BinOp::AddAssign => EvmBinaryOp::Add,
-            edge_ast::BinOp::Sub | edge_ast::BinOp::SubAssign => EvmBinaryOp::Sub,
-            edge_ast::BinOp::Mul | edge_ast::BinOp::MulAssign => EvmBinaryOp::Mul,
+            edge_ast::BinOp::Add | edge_ast::BinOp::AddAssign => EvmBinaryOp::CheckedAdd,
+            edge_ast::BinOp::Sub | edge_ast::BinOp::SubAssign => EvmBinaryOp::CheckedSub,
+            edge_ast::BinOp::Mul | edge_ast::BinOp::MulAssign => EvmBinaryOp::CheckedMul,
             edge_ast::BinOp::Div | edge_ast::BinOp::DivAssign => EvmBinaryOp::Div,
             edge_ast::BinOp::Mod | edge_ast::BinOp::ModAssign => EvmBinaryOp::Mod,
             edge_ast::BinOp::Exp | edge_ast::BinOp::ExpAssign => EvmBinaryOp::Exp,

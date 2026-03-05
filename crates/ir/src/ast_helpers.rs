@@ -87,6 +87,21 @@ pub fn mul(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::Mul, lhs, rhs)
 }
 
+/// Shorthand: checked addition (reverts on overflow)
+pub fn checked_add(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::CheckedAdd, lhs, rhs)
+}
+
+/// Shorthand: checked subtraction (reverts on underflow)
+pub fn checked_sub(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::CheckedSub, lhs, rhs)
+}
+
+/// Shorthand: checked multiplication (reverts on overflow)
+pub fn checked_mul(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::CheckedMul, lhs, rhs)
+}
+
 /// Shorthand: storage load
 pub fn sload(slot: RcExpr, state: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::SLoad, slot, state)
@@ -200,6 +215,11 @@ pub fn var(name: String) -> RcExpr {
 /// Write to a LetBind variable's memory slot. Pushes 0 values to stack.
 pub fn var_store(name: String, value: RcExpr) -> RcExpr {
     Rc::new(EvmExpr::VarStore(name, value))
+}
+
+/// Drop a variable (marks end of lifetime for slot reclamation).
+pub fn drop_var(name: String) -> RcExpr {
+    Rc::new(EvmExpr::Drop(name))
 }
 
 /// Storage field definition.

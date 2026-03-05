@@ -103,6 +103,7 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         EvmExpr::VarStore(name, value) => {
             format!("(VarStore \"{}\" {})", name, expr_to_sexp(value))
         }
+        EvmExpr::Drop(name) => format!("(Drop \"{}\")", name),
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             format!(
                 "(Function \"{}\" {} {} {})",
@@ -173,6 +174,9 @@ fn binop_sexp(op: &EvmBinaryOp) -> &'static str {
         EvmBinaryOp::Mod => "(OpMod)",
         EvmBinaryOp::SMod => "(OpSMod)",
         EvmBinaryOp::Exp => "(OpExp)",
+        EvmBinaryOp::CheckedAdd => "(OpCheckedAdd)",
+        EvmBinaryOp::CheckedSub => "(OpCheckedSub)",
+        EvmBinaryOp::CheckedMul => "(OpCheckedMul)",
         EvmBinaryOp::Lt => "(OpLt)",
         EvmBinaryOp::Gt => "(OpGt)",
         EvmBinaryOp::SLt => "(OpSLt)",
@@ -473,6 +477,10 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let value = sexp_to_evm_expr(&items[2])?;
                     Ok(Rc::new(EvmExpr::VarStore(name, value)))
                 }
+                "Drop" => {
+                    let name = atom_string(&items[1])?;
+                    Ok(Rc::new(EvmExpr::Drop(name)))
+                }
                 "Function" => {
                     let name = atom_string(&items[1])?;
                     let in_ty = sexp_to_type(&items[2])?;
@@ -610,6 +618,9 @@ fn sexp_to_binop(sexp: &Sexp) -> Result<EvmBinaryOp, IrError> {
                 "OpMod" => Ok(EvmBinaryOp::Mod),
                 "OpSMod" => Ok(EvmBinaryOp::SMod),
                 "OpExp" => Ok(EvmBinaryOp::Exp),
+                "OpCheckedAdd" => Ok(EvmBinaryOp::CheckedAdd),
+                "OpCheckedSub" => Ok(EvmBinaryOp::CheckedSub),
+                "OpCheckedMul" => Ok(EvmBinaryOp::CheckedMul),
                 "OpLt" => Ok(EvmBinaryOp::Lt),
                 "OpGt" => Ok(EvmBinaryOp::Gt),
                 "OpSLt" => Ok(EvmBinaryOp::SLt),
@@ -885,7 +896,8 @@ fn is_leaf_form(tree: &STree) -> bool {
                     head.as_str(),
                     // Operators
                     "OpAdd" | "OpSub" | "OpMul" | "OpDiv" | "OpSDiv" | "OpMod" | "OpSMod"
-                    | "OpExp" | "OpLt" | "OpGt" | "OpSLt" | "OpSGt" | "OpEq"
+                    | "OpExp" | "OpCheckedAdd" | "OpCheckedSub" | "OpCheckedMul"
+                    | "OpLt" | "OpGt" | "OpSLt" | "OpSGt" | "OpEq"
                     | "OpAnd" | "OpOr" | "OpXor" | "OpShl" | "OpShr" | "OpSar" | "OpByte"
                     | "OpLogAnd" | "OpLogOr" | "OpSLoad" | "OpTLoad" | "OpMLoad" | "OpCalldataLoad"
                     | "OpIsZero" | "OpNot" | "OpNeg" | "OpSignExtend"

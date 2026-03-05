@@ -1,0 +1,381 @@
+;; ============================================================
+;; Range & Property Analysis (Lattice-Based)
+;; ============================================================
+;; Tracks value properties through the IR using egglog merge functions.
+;;
+;; IMPORTANT: EVM uses 256-bit unsigned wrapping arithmetic. Bound
+;; propagation through Add/Sub/Mul/SHL is NOT performed because
+;; overflow would make the bounds unsound. Only operations that
+;; provably narrow or preserve bounds are propagated.
+;;
+;; Safe propagations: constants, booleans, AND, OR, SHR, MOD, DIV.
+;; Unsafe (omitted): ADD, SUB, MUL, SHL (can overflow/underflow).
+;;
+;; This ruleset should be saturated BEFORE optimization rulesets fire.
+
+;; ---- Bound functions (lattice-valued) ----
+;; These represent known bounds in i64 range. Since we can't represent
+;; full u256, bounds only apply when values are "small" (fit in i64).
+(function upper-bound (EvmExpr) i64 :merge (min old new))
+(function lower-bound (EvmExpr) i64 :merge (max old new))
+
+;; ---- U256 bounds (full 256-bit range) ----
+(function u256-upper-bound (EvmExpr) U256 :merge (u256-min old new))
+(function u256-lower-bound (EvmExpr) U256 :merge (u256-max old new))
+
+;; ---- Map any constant expression to its U256 value ----
+(function const-u256-val (EvmExpr) U256 :merge (u256-min old new))
+
+;; ---- Derived relations ----
+;; Non-zero: value is provably != 0
+(relation NonZero (EvmExpr))
+;; Boolean: value is provably 0 or 1
+(relation IsBool (EvmExpr))
+;; Bit-width: value fits in N bits (unsigned). Useful for packing decisions.
+(function max-bits (EvmExpr) i64 :merge (min old new))
+
+;; ============================================================
+;; Base Cases: Constants
+;; ============================================================
+
+;; SmallInt constants have exact bounds
+(rule ((= e (Const (SmallInt n) ty ctx)))
+      ((set (lower-bound e) n)
+       (set (upper-bound e) n))
+      :ruleset range-analysis)
+
+;; SmallInt → U256 value
+(rule ((= e (Const (SmallInt n) ty ctx)) (>= n 0))
+      ((set (const-u256-val e) (u256-from-i64 n)))
+      :ruleset range-analysis)
+
+;; LargeInt → U256 value
+(rule ((= e (Const (LargeInt hex) ty ctx))
+       (= v (u256-from-hex hex)))
+      ((set (const-u256-val e) v))
+      :ruleset range-analysis)
+
+;; SmallInt constants: compute bit width
+(rule ((= e (Const (SmallInt n) ty ctx))
+       (>= n 0) (<= n 1))
+      ((set (max-bits e) 1))
+      :ruleset range-analysis)
+(rule ((= e (Const (SmallInt n) ty ctx))
+       (> n 1) (<= n 255))
+      ((set (max-bits e) 8))
+      :ruleset range-analysis)
+(rule ((= e (Const (SmallInt n) ty ctx))
+       (> n 255) (<= n 65535))
+      ((set (max-bits e) 16))
+      :ruleset range-analysis)
+(rule ((= e (Const (SmallInt n) ty ctx))
+       (> n 65535) (<= n 4294967295))
+      ((set (max-bits e) 32))
+      :ruleset range-analysis)
+(rule ((= e (Const (SmallInt n) ty ctx))
+       (> n 4294967295))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+
+;; Boolean constants
+(rule ((= e (Const (ConstBool true) ty ctx)))
+      ((set (lower-bound e) 1) (set (upper-bound e) 1)
+       (set (max-bits e) 1) (IsBool e))
+      :ruleset range-analysis)
+(rule ((= e (Const (ConstBool false) ty ctx)))
+      ((set (lower-bound e) 0) (set (upper-bound e) 0)
+       (set (max-bits e) 1) (IsBool e))
+      :ruleset range-analysis)
+
+;; NonZero for any constant with a known U256 value
+(rule ((= v (const-u256-val e)) (u256-nonzero v))
+      ((NonZero e))
+      :ruleset range-analysis)
+
+;; U256 bounds from const-u256-val
+(rule ((= v (const-u256-val e)))
+      ((set (u256-upper-bound e) v) (set (u256-lower-bound e) v))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Boolean Analysis
+;; ============================================================
+;; Comparison and predicate operations always produce 0 or 1.
+;; This is sound regardless of operand values — EVM spec guarantees it.
+
+(rule ((= e (Bop (OpLt) a b)))     ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpGt) a b)))     ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpSLt) a b)))    ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpSGt) a b)))    ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpEq) a b)))     ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Uop (OpIsZero) x)))   ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpLogAnd) a b))) ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Bop (OpLogOr) a b)))  ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+
+;; ============================================================
+;; Overflow-Safe Bound Propagation
+;; ============================================================
+;; Only propagate through operations that CANNOT overflow/underflow.
+
+;; ---- AND: result <= min(a, b) for unsigned values ----
+;; AND can only clear bits, so upper bound narrows. Always safe.
+(rule ((= e (Bop (OpAnd) a b))
+       (= ha (upper-bound a)) (>= ha 0))
+      ((set (upper-bound e) ha))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) a b))
+       (= hb (upper-bound b)) (>= hb 0))
+      ((set (upper-bound e) hb))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) a b)))
+      ((set (lower-bound e) 0))
+      :ruleset range-analysis)
+
+;; AND bit-width: min of operand bit-widths
+(rule ((= e (Bop (OpAnd) a b))
+       (= ba (max-bits a)))
+      ((set (max-bits e) ba))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) a b))
+       (= bb (max-bits b)))
+      ((set (max-bits e) bb))
+      :ruleset range-analysis)
+
+;; ---- OR: result >= max(a, b) for unsigned values ----
+;; OR can only set bits, so lower bound holds. Always safe.
+(rule ((= e (Bop (OpOr) a b))
+       (= la (lower-bound a)) (>= la 0))
+      ((set (lower-bound e) la))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpOr) a b))
+       (= lb (lower-bound b)) (>= lb 0))
+      ((set (lower-bound e) lb))
+      :ruleset range-analysis)
+
+;; OR bit-width: max of operand bit-widths
+(rule ((= e (Bop (OpOr) a b))
+       (= ba (max-bits a)) (= bb (max-bits b))
+       (>= ba bb))
+      ((set (max-bits e) ba))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpOr) a b))
+       (= ba (max-bits a)) (= bb (max-bits b))
+       (< ba bb))
+      ((set (max-bits e) bb))
+      :ruleset range-analysis)
+
+;; ---- SHR: result <= val, always safe for unsigned ----
+(rule ((= e (Bop (OpShr) shift val))
+       (= ls (lower-bound shift)) (= hv (upper-bound val))
+       (>= ls 0) (>= hv 0) (< ls 64))
+      ((set (upper-bound e) (>> hv ls)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpShr) shift val))
+       (= lv (lower-bound val))
+       (>= lv 0))
+      ((set (lower-bound e) 0))
+      :ruleset range-analysis)
+
+;; SHR bit-width: narrows by shift amount
+(rule ((= e (Bop (OpShr) shift val))
+       (= bv (max-bits val)) (= ls (lower-bound shift))
+       (>= ls 0) (< ls 64))
+      ((set (max-bits e) (max 1 (- bv ls))))
+      :ruleset range-analysis)
+
+;; ---- MOD: result in [0, divisor-1], always safe ----
+(rule ((= e (Bop (OpMod) a b))
+       (= hb (upper-bound b)) (> hb 0))
+      ((set (lower-bound e) 0)
+       (set (upper-bound e) (- hb 1)))
+      :ruleset range-analysis)
+
+;; MOD bit-width: bounded by divisor bit-width
+(rule ((= e (Bop (OpMod) a b))
+       (= bb (max-bits b)))
+      ((set (max-bits e) bb))
+      :ruleset range-analysis)
+
+;; ---- DIV: result <= dividend (when divisor >= 1), always safe for unsigned ----
+(rule ((= e (Bop (OpDiv) a b))
+       (= la (lower-bound a)) (= hb (upper-bound b))
+       (>= la 0) (> hb 0))
+      ((set (lower-bound e) (/ la hb)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpDiv) a b))
+       (= ha (upper-bound a)) (= lb (lower-bound b))
+       (>= ha 0) (> lb 0))
+      ((set (upper-bound e) (/ ha lb)))
+      :ruleset range-analysis)
+
+;; ---- BYTE: result is always [0, 255] ----
+(rule ((= e (Bop (OpByte) idx val)))
+      ((set (lower-bound e) 0)
+       (set (upper-bound e) 255)
+       (set (max-bits e) 8))
+      :ruleset range-analysis)
+
+;; ---- CalldataLoad: 32 bytes = 256 bits max ----
+(rule ((= e (Bop (OpCalldataLoad) offset state)))
+      ((set (lower-bound e) 0)
+       (set (max-bits e) 256))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Environment Value Bounds
+;; ============================================================
+
+;; All environment reads are unsigned (>= 0)
+(rule ((= e (EnvRead op state)))
+      ((set (lower-bound e) 0))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead1 op arg state)))
+      ((set (lower-bound e) 0))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; NonZero Derivation
+;; ============================================================
+
+;; From bounds
+(rule ((= lo (lower-bound e)) (> lo 0))
+      ((NonZero e))
+      :ruleset range-analysis)
+
+;; SmallInt constants with known non-zero value
+(rule ((= e (Const (SmallInt n) ty ctx)) (!= n 0))
+      ((NonZero e))
+      :ruleset range-analysis)
+
+;; Selectors are always non-zero (4-byte function sig, never 0x00000000 in practice)
+(rule ((= e (Selector s)))
+      ((NonZero e))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Analysis-Guarded Rewrites
+;; ============================================================
+
+;; x / x -> 1 (when x is non-zero, wrapping is irrelevant for division)
+(rule ((= e (Bop (OpDiv) x x)) (NonZero x))
+      ((union e (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset range-analysis)
+
+;; x % x -> 0 (when x is non-zero)
+(rule ((= e (Bop (OpMod) x x)) (NonZero x))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Boolean-Guarded Rewrites
+;; ============================================================
+
+;; IsZero(IsZero(x)) -> x when x is boolean (0 or 1)
+(rule ((= e (Uop (OpIsZero) (Uop (OpIsZero) x))) (IsBool x))
+      ((union e x))
+      :ruleset range-analysis)
+
+;; bool & 1 -> bool
+(rule ((= e (Bop (OpAnd) x (Const (SmallInt 1) ty ctx))) (IsBool x))
+      ((union e x))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) (Const (SmallInt 1) ty ctx) x)) (IsBool x))
+      ((union e x))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; U256 Bound Propagation
+;; ============================================================
+
+;; AND: upper bound narrows (result <= min of operands)
+(rule ((= e (Bop (OpAnd) a b)) (= ha (u256-upper-bound a)))
+      ((set (u256-upper-bound e) ha))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) a b)) (= hb (u256-upper-bound b)))
+      ((set (u256-upper-bound e) hb))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpAnd) a b)))
+      ((set (u256-lower-bound e) (u256-from-i64 0)))
+      :ruleset range-analysis)
+
+;; SHR: result <= value (shift right can only decrease)
+(rule ((= e (Bop (OpShr) shift val)) (= hv (u256-upper-bound val)))
+      ((set (u256-upper-bound e) hv))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpShr) shift val)))
+      ((set (u256-lower-bound e) (u256-from-i64 0)))
+      :ruleset range-analysis)
+
+;; MOD: result in [0, divisor-1]
+(rule ((= e (Bop (OpMod) a b)) (= hb (u256-upper-bound b)))
+      ((set (u256-lower-bound e) (u256-from-i64 0))
+       (set (u256-upper-bound e) (u256-sub hb (u256-from-i64 1))))
+      :ruleset range-analysis)
+
+;; BYTE: result is always [0, 255]
+(rule ((= e (Bop (OpByte) idx val)))
+      ((set (u256-lower-bound e) (u256-from-i64 0))
+       (set (u256-upper-bound e) (u256-from-i64 255)))
+      :ruleset range-analysis)
+
+;; Boolean results: [0, 1]
+(rule ((IsBool e))
+      ((set (u256-lower-bound e) (u256-from-i64 0))
+       (set (u256-upper-bound e) (u256-from-i64 1)))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; LetBind → Var Bound Propagation
+;; ============================================================
+;; For immutable variables (no VarStore), Var(name) reads the same
+;; value as the LetBind init. Propagate all bounds through.
+
+;; U256 bounds
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (= h (u256-upper-bound init)))
+      ((set (u256-upper-bound v) h))
+      :ruleset range-analysis)
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (= l (u256-lower-bound init)))
+      ((set (u256-lower-bound v) l))
+      :ruleset range-analysis)
+
+;; i64 bounds
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (= h (upper-bound init)))
+      ((set (upper-bound v) h))
+      :ruleset range-analysis)
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (= l (lower-bound init)))
+      ((set (lower-bound v) l))
+      :ruleset range-analysis)
+
+;; max-bits
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (= b (max-bits init)))
+      ((set (max-bits v) b))
+      :ruleset range-analysis)
+
+;; IsBool and NonZero
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (IsBool init))
+      ((IsBool v))
+      :ruleset range-analysis)
+(rule ((= e (LetBind name init body))
+       (ImmutableVar name)
+       (= v (Var name))
+       (NonZero init))
+      ((NonZero v))
+      :ruleset range-analysis)

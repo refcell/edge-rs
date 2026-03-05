@@ -4,6 +4,7 @@
 //! (the function selector) and jumps to the matching function body.
 
 use edge_ir::schema::EvmContract;
+use edge_ir::var_opt;
 
 use crate::{
     assembler::Assembler,
@@ -17,9 +18,11 @@ use crate::{
 /// Each branch loads the selector from calldata, compares it, and
 /// executes the matching function body (which terminates with RETURN/STOP).
 pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
-    // The runtime IR handles selector loading in each if-condition
-    let mut compiler = ExprCompiler::new(asm);
+    // Analyze variable allocations to decide stack vs memory
+    let allocations = var_opt::analyze_allocations(&contract.runtime);
+    let mut compiler = ExprCompiler::with_allocations(asm, allocations);
     compiler.compile_expr(&contract.runtime);
+    compiler.emit_overflow_revert_trampoline();
 }
 
 /// Compute the 4-byte function selector from a function signature.

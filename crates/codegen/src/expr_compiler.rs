@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use edge_ir::schema::{
     EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmUnaryOp, RcExpr,
 };
+use edge_ir::var_opt::{AllocationMode, VarAllocation};
 
 use crate::{
     assembler::{AsmInstruction, Assembler},
@@ -23,26 +24,61 @@ const LET_BIND_BASE_OFFSET: usize = 0x80;
 pub struct ExprCompiler<'a> {
     /// The assembler to emit instructions into
     asm: &'a mut Assembler,
-    /// Maps LetBind names to their memory offsets
+    /// Maps LetBind names to their memory offsets (memory-mode variables)
     let_bindings: HashMap<String, usize>,
-    /// Next available memory offset for LetBind storage
+    /// Next available memory offset for LetBind storage (high-water mark)
     next_let_offset: usize,
+    /// Free-list of memory slots reclaimed by `Drop` (available for reuse)
+    free_slots: Vec<usize>,
+    /// Per-variable allocation info (Stack vs Memory + read count)
+    allocation_modes: HashMap<String, VarAllocation>,
+    /// Maps stack-allocated variable names to their stack position (depth when pushed)
+    stack_vars: HashMap<String, usize>,
+    /// Current EVM stack depth (number of values on the stack, tracked for DUP indexing)
+    stack_depth: usize,
+    /// Label for shared overflow revert trampoline (lazily created)
+    overflow_revert_label: Option<String>,
 }
 
 impl<'a> ExprCompiler<'a> {
     /// Create a new expression compiler targeting the given assembler.
     pub fn new(asm: &'a mut Assembler) -> Self {
+        Self::with_allocations(asm, HashMap::new())
+    }
+
+    /// Create an expression compiler with pre-computed allocation modes.
+    pub fn with_allocations(
+        asm: &'a mut Assembler,
+        allocation_modes: HashMap<String, VarAllocation>,
+    ) -> Self {
         Self {
             asm,
             let_bindings: HashMap::new(),
             next_let_offset: LET_BIND_BASE_OFFSET,
+            free_slots: Vec::new(),
+            allocation_modes,
+            stack_vars: HashMap::new(),
+            stack_depth: 0,
+            overflow_revert_label: None,
         }
+    }
+
+    /// Look up the allocation mode for a variable (defaults to Memory).
+    fn alloc_mode(&self, name: &str) -> AllocationMode {
+        self.allocation_modes
+            .get(name)
+            .map(|a| a.mode)
+            .unwrap_or(AllocationMode::Memory)
     }
 
     /// Compile an IR expression, pushing its result onto the stack.
     pub fn compile_expr(&mut self, expr: &EvmExpr) {
         match expr {
-            EvmExpr::Const(c, _, _) => self.compile_const(c),
+            EvmExpr::Const(c, _, _) => {
+                self.compile_const(c);
+                // All const paths push exactly 1 value
+                self.stack_depth += 1;
+            }
 
             EvmExpr::Arg(_, _) => {
                 // Function argument is already on the stack at entry.
@@ -62,20 +98,16 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(tuple);
                 let n = Self::count_stack_values(tuple);
                 if n > 1 {
-                    // Stack layout after compiling tuple: [e_0 ... e_{n-1}]
-                    // e_{n-1} is on top, e_0 is deepest.
-                    // Element idx is at depth (n - 1 - idx) from top.
                     let depth = n - 1 - idx;
                     if depth > 0 && depth <= 16 {
-                        // SWAP the desired element to the top
                         self.asm.emit_op(Opcode::swap_n(depth as u8));
                     }
-                    // POP the remaining n-1 values below
                     for _ in 0..(n - 1) {
                         self.asm.emit_op(Opcode::Pop);
+                        self.stack_depth -= 1;
                     }
                 }
-                // If n <= 1, the single value is already on top (no-op)
+                // Net: count(tuple) - (n-1) = 1
             }
 
             EvmExpr::Concat(a, b) => {
@@ -91,8 +123,14 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_do_while(inputs, pred_and_body);
             }
 
-            EvmExpr::EnvRead(op, _state) => self.compile_env_read(op),
-            EvmExpr::EnvRead1(op, arg, _state) => self.compile_env_read1(op, arg),
+            EvmExpr::EnvRead(op, _state) => {
+                self.compile_env_read(op);
+                self.stack_depth += 1;
+            }
+            EvmExpr::EnvRead1(op, arg, _state) => {
+                self.compile_env_read1(op, arg);
+                // compile_env_read1 handles depth tracking internally
+            }
 
             EvmExpr::Log(topic_count, topics, data, _state) => {
                 self.compile_log(*topic_count, topics, data);
@@ -102,12 +140,14 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(size);
                 self.compile_expr(offset);
                 self.asm.emit_op(Opcode::Revert);
+                self.stack_depth -= 2; // REVERT pops offset + size
             }
 
             EvmExpr::ReturnOp(offset, size, _state) => {
                 self.compile_expr(size);
                 self.compile_expr(offset);
                 self.asm.emit_op(Opcode::Return);
+                self.stack_depth -= 2; // RETURN pops offset + size
             }
 
             EvmExpr::ExtCall(target, value, args_offset, args_len, ret_offset, ret_len, _state) => {
@@ -119,59 +159,42 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(value);
                 self.compile_expr(target);
                 self.asm.emit_op(Opcode::Gas); // forward all gas
+                self.stack_depth += 1;
                 self.asm.emit_op(Opcode::Call);
+                self.stack_depth -= 6; // CALL pops 7, pushes 1
             }
 
             EvmExpr::Call(name, args) => {
                 self.compile_expr(args);
                 let label = format!("fn_{name}");
                 let ret_label = self.asm.fresh_label(&format!("ret_{name}"));
-                // Push return address, jump to function
-                // The function will JUMP back to ret_label
                 self.asm.emit(AsmInstruction::JumpTo(label));
+                // JumpTo: PUSH label (+1), JUMP (-1) → net 0
                 self.asm.emit(AsmInstruction::Label(ret_label));
             }
 
             EvmExpr::Selector(sig) => {
-                // Compute keccak256 of the signature and take top 4 bytes
                 let mut hash = [0u8; 32];
                 edge_types::bytes::hash_bytes(&mut hash, &sig.to_owned());
                 let selector = &hash[..4];
                 self.asm.emit(AsmInstruction::Push(selector.to_vec()));
+                self.stack_depth += 1;
             }
 
             EvmExpr::LetBind(name, value, body) => {
-                // Memory mode: compile value onto stack, spill to memory.
-                // NOTE: Stack mode (DUP1) is disabled — it doesn't track
-                // stack depth, so DUP1 duplicates the wrong value when
-                // sub-expressions push operands before the Var reference.
-                self.compile_expr(value);
-                let offset = self.next_let_offset;
-                self.next_let_offset += 32;
-                self.asm.emit_push_usize(offset);
-                self.asm.emit_op(Opcode::MStore);
-                let prev = self.let_bindings.insert(name.clone(), offset);
-                self.compile_expr(body);
-                if let Some(prev_offset) = prev {
-                    self.let_bindings.insert(name.clone(), prev_offset);
-                } else {
-                    self.let_bindings.remove(name);
-                }
-                self.next_let_offset -= 32;
+                self.compile_let_bind(name, value, body);
             }
 
             EvmExpr::Var(name) => {
-                let offset = self.let_bindings[name];
-                self.asm.emit_push_usize(offset);
-                self.asm.emit_op(Opcode::MLoad);
+                self.compile_var(name);
             }
 
             EvmExpr::VarStore(name, value) => {
-                // Write value to the LetBind variable's memory slot
-                self.compile_expr(value);
-                let offset = self.let_bindings[name];
-                self.asm.emit_push_usize(offset);
-                self.asm.emit_op(Opcode::MStore);
+                self.compile_var_store(name, value);
+            }
+
+            EvmExpr::Drop(name) => {
+                self.compile_drop(name);
             }
 
             EvmExpr::Function(name, _in_ty, _out_ty, body) => {
@@ -186,6 +209,150 @@ impl<'a> ExprCompiler<'a> {
         }
     }
 
+    /// Compile a LetBind: allocate variable, compile body, clean up.
+    fn compile_let_bind(&mut self, name: &str, value: &RcExpr, body: &RcExpr) {
+        match self.alloc_mode(name) {
+            AllocationMode::Stack => {
+                // Stack mode: leave value on stack, use DUP to read
+                self.compile_expr(value);
+                // Value is now on top of stack; record its position
+                let var_pos = self.stack_depth - 1;
+                let prev_stack = self.stack_vars.insert(name.to_owned(), var_pos);
+
+                self.compile_expr(body);
+
+                // Only clean up if the variable wasn't already dropped by an
+                // early Drop node (e.g. in a halting branch)
+                if self.stack_vars.contains_key(name) {
+                    // Clean up: remove variable from under body's results
+                    let body_count = Self::count_stack_values(body);
+                    if body_count == 0 {
+                        self.asm.emit_op(Opcode::Pop);
+                        self.stack_depth -= 1;
+                    } else if body_count <= 16 {
+                        self.asm.emit_op(Opcode::swap_n(body_count as u8));
+                        self.asm.emit_op(Opcode::Pop);
+                        self.stack_depth -= 1;
+                    }
+                    // else: body_count > 16, variable leaks (shouldn't happen with eligibility criteria)
+                    self.stack_vars.remove(name);
+                }
+
+                // Restore previous stack binding if shadowed
+                if let Some(prev) = prev_stack {
+                    self.stack_vars.insert(name.to_owned(), prev);
+                } else {
+                    self.stack_vars.remove(name);
+                }
+            }
+            AllocationMode::Memory => {
+                // Memory mode: compile value, spill to memory
+                self.compile_expr(value);
+                // Allocate a memory slot: reuse a freed slot or bump the high-water mark
+                let offset = if let Some(reused) = self.free_slots.pop() {
+                    reused
+                } else {
+                    let off = self.next_let_offset;
+                    self.next_let_offset += 32;
+                    off
+                };
+                self.asm.emit_push_usize(offset);
+                self.stack_depth += 1;
+                self.asm.emit_op(Opcode::MStore);
+                self.stack_depth -= 2; // MSTORE pops value + offset
+
+                let prev = self.let_bindings.insert(name.to_owned(), offset);
+                self.compile_expr(body);
+
+                // Free the slot if Drop didn't already reclaim it
+                if self.let_bindings.get(name) == Some(&offset) {
+                    self.free_slots.push(offset);
+                }
+                // Restore previous binding (for shadowed names)
+                if let Some(prev_offset) = prev {
+                    self.let_bindings.insert(name.to_owned(), prev_offset);
+                } else {
+                    self.let_bindings.remove(name);
+                }
+            }
+        }
+    }
+
+    /// Compile a variable read.
+    fn compile_var(&mut self, name: &str) {
+        if let Some(&var_pos) = self.stack_vars.get(name) {
+            // Stack mode: DUP from the correct position
+            let dup_index = self.stack_depth - var_pos;
+            debug_assert!(
+                dup_index >= 1 && dup_index <= 16,
+                "DUP index {dup_index} out of range for variable {name} (depth={}, pos={var_pos})",
+                self.stack_depth
+            );
+            self.asm.emit_op(Opcode::dup_n(dup_index as u8));
+            self.stack_depth += 1;
+        } else {
+            // Memory mode: PUSH offset, MLOAD
+            let offset = self.let_bindings[name];
+            self.asm.emit_push_usize(offset);
+            self.stack_depth += 1;
+            self.asm.emit_op(Opcode::MLoad);
+            // MLOAD: pops offset, pushes value → net 0
+        }
+    }
+
+    /// Compile a variable store.
+    fn compile_var_store(&mut self, name: &str, value: &RcExpr) {
+        // VarStore only applies to memory-mode variables (stack vars can't be reassigned)
+        self.compile_expr(value);
+        let offset = self.let_bindings[name];
+        self.asm.emit_push_usize(offset);
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::MStore);
+        self.stack_depth -= 2;
+    }
+
+    /// Compile a drop (lifetime end marker).
+    ///
+    /// For stack-allocated variables, emits POP (or SWAP+POP) to remove the
+    /// variable from the stack. For memory-allocated variables, reclaims the
+    /// slot for reuse.
+    fn compile_drop(&mut self, name: &str) {
+        if let Some(var_pos) = self.stack_vars.remove(name) {
+            // Stack mode: actually emit POP to remove the variable
+            let depth = self.stack_depth - var_pos;
+            if depth == 1 {
+                // Variable is at TOS: just POP
+                self.asm.emit_op(Opcode::Pop);
+            } else if depth <= 16 {
+                // Variable is buried: SWAP to TOS then POP
+                self.asm.emit_op(Opcode::swap_n((depth - 1) as u8));
+                self.asm.emit_op(Opcode::Pop);
+            }
+            // else: depth > 16, can't reach (shouldn't happen with eligibility criteria)
+
+            if depth >= 1 && depth <= 16 {
+                // SWAP+POP moved the old TOS into the variable's slot.
+                // Update any stack var that was at TOS position.
+                if depth > 1 {
+                    let old_tos = self.stack_depth - 1;
+                    for (_, pos) in self.stack_vars.iter_mut() {
+                        if *pos == old_tos {
+                            *pos = var_pos;
+                            break;
+                        }
+                    }
+                }
+                self.stack_depth -= 1;
+            }
+
+        } else {
+            // Memory mode: reclaim the slot for reuse
+            if let Some(offset) = self.let_bindings.remove(name) {
+                self.free_slots.push(offset);
+            }
+        }
+    }
+
     /// Compile a constant value.
     fn compile_const(&mut self, c: &EvmConstant) {
         match c {
@@ -195,8 +362,6 @@ impl<'a> ExprCompiler<'a> {
             EvmConstant::SmallInt(n) => {
                 let val = *n;
                 if val < 0 {
-                    // Negative values: two's complement
-                    // For simplicity, push the absolute value and negate
                     let abs_val = val.unsigned_abs();
                     let bytes = minimal_be_bytes_u64(abs_val);
                     self.asm.emit(AsmInstruction::Push(bytes));
@@ -213,7 +378,6 @@ impl<'a> ExprCompiler<'a> {
                 if bytes.is_empty() || bytes.iter().all(|&b| b == 0) {
                     self.asm.emit_op(Opcode::Push0);
                 } else {
-                    // Strip leading zeros
                     let start = bytes.iter().position(|&b| b != 0).unwrap_or(0);
                     self.asm.emit(AsmInstruction::Push(bytes[start..].to_vec()));
                 }
@@ -226,161 +390,182 @@ impl<'a> ExprCompiler<'a> {
             }
             EvmConstant::Addr(hex_str) => {
                 let bytes = hex_string_to_bytes(hex_str);
-                // Addresses are 20 bytes
                 if bytes.len() > 20 {
-                    self.asm.emit(AsmInstruction::Push(bytes[bytes.len() - 20..].to_vec()));
+                    self.asm
+                        .emit(AsmInstruction::Push(bytes[bytes.len() - 20..].to_vec()));
                 } else {
                     self.asm.emit(AsmInstruction::Push(bytes));
                 }
             }
         }
+        // Note: stack_depth += 1 is handled by the caller (compile_expr)
     }
 
     /// Compile a binary operation.
     fn compile_binary_op(&mut self, op: &EvmBinaryOp, lhs: &RcExpr, rhs: &RcExpr) {
         match op {
-            // Arithmetic & comparison: push operands, then opcode
-            // EVM order: for ADD, stack top = a, next = b, result = a + b
-            // But operand order varies by opcode. Most are commutative,
-            // but SUB, DIV, etc. care about order.
             EvmBinaryOp::Add => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Add);
+                self.stack_depth -= 1; // pops 2, pushes 1
             }
             EvmBinaryOp::Sub => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Sub);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Mul => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Mul);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Div => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Div);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::SDiv => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::SDiv);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Mod => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Mod);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::SMod => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::SMod);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Exp => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Exp);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Lt => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Lt);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Gt => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Gt);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::SLt => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::SLt);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::SGt => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::SGt);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Eq => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Eq);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::And => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::And);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Or => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Or);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Xor => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Xor);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Shl => {
-                // IR convention: Bop(Shl, shift_amount, value)
-                // EVM SHL: (shift, value) -> value << shift, shift on TOS
-                // compile(rhs=value), compile(lhs=shift) -> stack [shift, value]
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Shl);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Shr => {
-                // IR convention: Bop(Shr, shift_amount, value)
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Shr);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Sar => {
-                // IR convention: Bop(Sar, shift_amount, value)
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Sar);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::Byte => {
                 self.compile_expr(rhs);
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::Byte);
+                self.stack_depth -= 1;
             }
             EvmBinaryOp::LogAnd => {
                 // Short-circuit AND: if lhs is false, skip rhs
                 let skip_label = self.asm.fresh_label("logand_skip");
                 let end_label = self.asm.fresh_label("logand_end");
-                self.compile_expr(lhs);
+                self.compile_expr(lhs); // depth += 1
                 self.asm.emit_op(Opcode::Dup1);
-                self.asm.emit_op(Opcode::IsZero);
-                self.asm.emit(AsmInstruction::JumpITo(skip_label.clone()));
-                self.asm.emit_op(Opcode::Pop); // pop lhs
-                self.compile_expr(rhs);
-                self.asm.emit(AsmInstruction::JumpTo(end_label.clone()));
+                self.stack_depth += 1;
+                self.asm.emit_op(Opcode::IsZero); // 0 net
+                self.asm
+                    .emit(AsmInstruction::JumpITo(skip_label.clone()));
+                self.stack_depth -= 1; // JumpITo: PUSH(+1) JUMPI(-2) = net -1
+                self.asm.emit_op(Opcode::Pop); // pop lhs copy
+                self.stack_depth -= 1;
+                self.compile_expr(rhs); // depth += 1
+                self.asm.emit(AsmInstruction::JumpTo(end_label.clone())); // net 0
                 self.asm.emit(AsmInstruction::Label(skip_label));
-                // lhs (false) is already on stack
+                // On skip path: lhs (false) is on stack — same depth as fall-through
                 self.asm.emit(AsmInstruction::Label(end_label));
+                // Both paths end with 1 value. Net from start: +1
             }
             EvmBinaryOp::LogOr => {
                 // Short-circuit OR: if lhs is true, skip rhs
                 let skip_label = self.asm.fresh_label("logor_skip");
                 let end_label = self.asm.fresh_label("logor_end");
-                self.compile_expr(lhs);
+                self.compile_expr(lhs); // depth += 1
                 self.asm.emit_op(Opcode::Dup1);
-                self.asm.emit(AsmInstruction::JumpITo(skip_label.clone()));
-                self.asm.emit_op(Opcode::Pop); // pop lhs
-                self.compile_expr(rhs);
-                self.asm.emit(AsmInstruction::JumpTo(end_label.clone()));
+                self.stack_depth += 1;
+                self.asm
+                    .emit(AsmInstruction::JumpITo(skip_label.clone()));
+                self.stack_depth -= 1; // JumpITo: net -1
+                self.asm.emit_op(Opcode::Pop); // pop lhs copy
+                self.stack_depth -= 1;
+                self.compile_expr(rhs); // depth += 1
+                self.asm.emit(AsmInstruction::JumpTo(end_label.clone())); // net 0
                 self.asm.emit(AsmInstruction::Label(skip_label));
-                // lhs (true) is already on stack
+                // On skip path: lhs (true) is on stack — same depth
                 self.asm.emit(AsmInstruction::Label(end_label));
+                // Both paths: +1 net
             }
             EvmBinaryOp::SLoad => {
-                // slot is lhs, state is rhs (state is implicit in codegen)
-                self.compile_expr(lhs);
-                self.asm.emit_op(Opcode::SLoad);
+                self.compile_expr(lhs); // slot; depth += 1
+                self.asm.emit_op(Opcode::SLoad); // pops 1, pushes 1 → net 0
             }
             EvmBinaryOp::TLoad => {
                 self.compile_expr(lhs);
@@ -394,22 +579,146 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(lhs);
                 self.asm.emit_op(Opcode::CallDataLoad);
             }
+            EvmBinaryOp::CheckedAdd => {
+                self.compile_checked_add(lhs, rhs);
+            }
+            EvmBinaryOp::CheckedSub => {
+                self.compile_checked_sub(lhs, rhs);
+            }
+            EvmBinaryOp::CheckedMul => {
+                self.compile_checked_mul(lhs, rhs);
+            }
         }
+    }
+
+    /// Get or create the shared overflow revert label.
+    fn get_overflow_revert_label(&mut self) -> String {
+        if let Some(ref label) = self.overflow_revert_label {
+            label.clone()
+        } else {
+            let label = self.asm.fresh_label("overflow_revert");
+            self.overflow_revert_label = Some(label.clone());
+            label
+        }
+    }
+
+    /// Emit the shared overflow revert trampoline (if any checked op was compiled).
+    /// Call this after all expressions have been compiled.
+    pub fn emit_overflow_revert_trampoline(&mut self) {
+        if let Some(label) = self.overflow_revert_label.take() {
+            self.asm.emit(AsmInstruction::Label(label));
+            self.asm.emit_op(Opcode::Push0);
+            self.asm.emit_op(Opcode::Push0);
+            self.asm.emit_op(Opcode::Revert);
+        }
+    }
+
+    /// Compile checked addition: a + b, revert if overflow.
+    /// Stack: rhs, lhs → [b, a] → DUP2 → [b, a, b] → ADD → [r, b]
+    ///   → DUP1 → [r, r, b] → SWAP2 → [b, r, r] → GT → [b>r, r]
+    ///   → JUMPI(revert) → [r]
+    fn compile_checked_add(&mut self, lhs: &RcExpr, rhs: &RcExpr) {
+        let revert_label = self.get_overflow_revert_label();
+        self.compile_expr(rhs);   // [b]
+        self.compile_expr(lhs);   // [a, b]
+        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Add);     // [r, b]  (r = a+b wrapping)
+        self.stack_depth -= 1;
+        self.asm.emit_op(Opcode::Dup1);    // [r, r, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Swap2);   // [b, r, r]
+        self.asm.emit_op(Opcode::Gt);      // [b>r, r]  overflow iff b > result
+        self.stack_depth -= 1;
+        self.asm.emit(AsmInstruction::JumpITo(revert_label));
+        self.stack_depth -= 1;             // JUMPI consumes condition
+        // Net: pushed 2 (lhs, rhs), +1 DUP2, -1 ADD, +1 DUP1, -1 GT, -1 JUMPI = -1 from initial 2 = 1 value
+        // But we already tracked lhs (+1) and rhs (+1) via compile_expr. So net from here is -1.
+    }
+
+    /// Compile checked subtraction: a - b, revert if a < b.
+    /// Stack: rhs, lhs → [b, a] → DUP2 → [b, a, b] → DUP2 → [a, b, a, b]
+    ///   → LT → [a<b, a, b] → JUMPI(revert) → [a, b] → SUB → [a-b]
+    fn compile_checked_sub(&mut self, lhs: &RcExpr, rhs: &RcExpr) {
+        let revert_label = self.get_overflow_revert_label();
+        self.compile_expr(rhs);   // [b]
+        self.compile_expr(lhs);   // [a, b]
+        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Dup2);    // [a, b, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Lt);      // [a<b, a, b]  underflow iff a < b
+        self.stack_depth -= 1;
+        self.asm.emit(AsmInstruction::JumpITo(revert_label));
+        self.stack_depth -= 1;             // JUMPI consumes condition
+        self.asm.emit_op(Opcode::Sub);     // [a-b]
+        self.stack_depth -= 1;
+    }
+
+    /// Compile checked multiplication: a * b, revert if overflow.
+    /// Uses: if a == 0, result is 0 (no overflow possible).
+    /// Otherwise: result = a*b (wrapping), check result/a == b.
+    fn compile_checked_mul(&mut self, lhs: &RcExpr, rhs: &RcExpr) {
+        let revert_label = self.get_overflow_revert_label();
+        let mul_ok_label = self.asm.fresh_label("mul_ok");
+
+        self.compile_expr(rhs);   // [b]
+        self.compile_expr(lhs);   // [a, b]
+        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Dup2);    // [a, b, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Mul);     // [r, a, b]  r = a*b wrapping
+        self.stack_depth -= 1;
+
+        // Check: if a == 0, skip overflow check (0 * anything = 0)
+        self.asm.emit_op(Opcode::Dup2);    // [a, r, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::IsZero);  // [a==0, r, a, b]
+        self.asm.emit(AsmInstruction::JumpITo(mul_ok_label.clone()));
+        self.stack_depth -= 1;             // JUMPI consumes condition
+
+        // a != 0: check r/a == b
+        self.asm.emit_op(Opcode::Dup1);    // [r, r, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Dup3);    // [a, r, r, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Swap1);   // [r, a, r, a, b]
+        self.asm.emit_op(Opcode::Div);     // [r/a, r, a, b]
+        self.stack_depth -= 1;
+        self.asm.emit_op(Opcode::Dup4);    // [b, r/a, r, a, b]
+        self.stack_depth += 1;
+        self.asm.emit_op(Opcode::Eq);      // [b==r/a, r, a, b]
+        self.stack_depth -= 1;
+        self.asm.emit_op(Opcode::IsZero);  // [b!=r/a, r, a, b]
+        self.asm.emit(AsmInstruction::JumpITo(revert_label));
+        self.stack_depth -= 1;             // JUMPI consumes condition
+
+        // mul_ok: [r, a, b]
+        self.asm.emit(AsmInstruction::Label(mul_ok_label));
+        self.asm.emit_op(Opcode::Swap2);   // [b, a, r]
+        self.asm.emit_op(Opcode::Pop);     // [a, r]
+        self.stack_depth -= 1;
+        self.asm.emit_op(Opcode::Pop);     // [r]
+        self.stack_depth -= 1;
     }
 
     /// Compile a unary operation.
     fn compile_unary_op(&mut self, op: &EvmUnaryOp, expr: &RcExpr) {
-        self.compile_expr(expr);
+        self.compile_expr(expr); // depth += 1
         match op {
-            EvmUnaryOp::IsZero => self.asm.emit_op(Opcode::IsZero),
-            EvmUnaryOp::Not => self.asm.emit_op(Opcode::Not),
+            EvmUnaryOp::IsZero => self.asm.emit_op(Opcode::IsZero), // 0 net
+            EvmUnaryOp::Not => self.asm.emit_op(Opcode::Not),       // 0 net
             EvmUnaryOp::Neg => {
-                // 0 - x
+                // 0 - x: Push0 (+1), Sub (-1) → net 0
                 self.asm.emit_op(Opcode::Push0);
+                self.stack_depth += 1;
                 self.asm.emit_op(Opcode::Sub);
+                self.stack_depth -= 1;
             }
-            EvmUnaryOp::SignExtend => self.asm.emit_op(Opcode::SignExtend),
+            EvmUnaryOp::SignExtend => self.asm.emit_op(Opcode::SignExtend), // 0 net (our Uop convention)
         }
+        // Total net: +1
     }
 
     /// Compile a ternary operation.
@@ -422,45 +731,63 @@ impl<'a> ExprCompiler<'a> {
     ) {
         match op {
             EvmTernaryOp::SStore => {
-                // SSTORE: key, value
                 self.compile_expr(b); // value
                 self.compile_expr(a); // key (slot)
                 self.asm.emit_op(Opcode::SStore);
+                self.stack_depth -= 2;
             }
             EvmTernaryOp::TStore => {
                 self.compile_expr(b); // value
                 self.compile_expr(a); // key
                 self.asm.emit_op(Opcode::TStore);
+                self.stack_depth -= 2;
             }
             EvmTernaryOp::MStore => {
                 self.compile_expr(b); // value
                 self.compile_expr(a); // offset
                 self.asm.emit_op(Opcode::MStore);
+                self.stack_depth -= 2;
             }
             EvmTernaryOp::MStore8 => {
                 self.compile_expr(b); // value
                 self.compile_expr(a); // offset
                 self.asm.emit_op(Opcode::MStore8);
+                self.stack_depth -= 2;
             }
             EvmTernaryOp::Keccak256 => {
-                // Keccak256(offset, size, state) -> hash
-                // a = offset, b = size, c = state (ignored — memory already written)
                 self.compile_expr(b); // size
                 self.compile_expr(a); // offset
                 self.asm.emit_op(Opcode::Keccak256);
+                self.stack_depth -= 1; // pops 2, pushes 1
             }
             EvmTernaryOp::Select => {
-                // Select(cond, true_val, false_val)
-                // Implemented as: if cond then true_val else false_val
+                // Select(cond, true_val, false_val) → if cond then true_val else false_val
                 let else_label = self.asm.fresh_label("select_else");
                 let end_label = self.asm.fresh_label("select_end");
-                self.compile_expr(a); // cond
-                self.asm.emit_op(Opcode::IsZero);
-                self.asm.emit(AsmInstruction::JumpITo(else_label.clone()));
+
+                self.compile_expr(a); // cond; depth += 1
+                self.asm.emit_op(Opcode::IsZero); // 0 net
+                self.asm
+                    .emit(AsmInstruction::JumpITo(else_label.clone()));
+                self.stack_depth -= 1; // JumpITo: net -1 (cond consumed)
+
+                let depth_before_branches = self.stack_depth;
+
                 self.compile_expr(b); // true value
-                self.asm.emit(AsmInstruction::JumpTo(end_label.clone()));
+                self.asm.emit(AsmInstruction::JumpTo(end_label.clone())); // net 0
+
+                // Reset depth for else path
+                let depth_after_then = self.stack_depth;
+                self.stack_depth = depth_before_branches;
+
                 self.asm.emit(AsmInstruction::Label(else_label));
                 self.compile_expr(c); // false value
+
+                debug_assert_eq!(
+                    self.stack_depth, depth_after_then,
+                    "Select branches produce different stack depths"
+                );
+
                 self.asm.emit(AsmInstruction::Label(end_label));
             }
         }
@@ -473,17 +800,67 @@ impl<'a> ExprCompiler<'a> {
         let else_label = self.asm.fresh_label("else");
         let end_label = self.asm.fresh_label("endif");
 
-        self.compile_expr(cond);
-        self.asm.emit_op(Opcode::IsZero);
+        self.compile_expr(cond); // depth += 1
+        self.asm.emit_op(Opcode::IsZero); // 0 net
         self.asm.emit(AsmInstruction::JumpITo(else_label.clone()));
+        self.stack_depth -= 1; // JumpITo: net -1 (cond consumed)
+
+        let depth_before_branches = self.stack_depth;
+        // Save all mutable state before branching, since
+        // Drop in one branch must not affect the other.
+        let stack_vars_before = self.stack_vars.clone();
+        let let_bindings_before = self.let_bindings.clone();
+        let free_slots_before = self.free_slots.clone();
+
+        let then_halts = Self::expr_definitely_halts(then_body);
+        let else_halts = Self::expr_definitely_halts(else_body);
 
         self.compile_expr(then_body);
-        self.asm.emit(AsmInstruction::JumpTo(end_label.clone()));
+        self.asm.emit(AsmInstruction::JumpTo(end_label.clone())); // net 0
+
+        let depth_after_then = self.stack_depth;
+        // Restore all compiler state for the else path
+        self.stack_depth = depth_before_branches;
+        self.stack_vars = stack_vars_before;
+        self.let_bindings = let_bindings_before;
+        self.free_slots = free_slots_before;
 
         self.asm.emit(AsmInstruction::Label(else_label));
         self.compile_expr(else_body);
 
+        let depth_after_else = self.stack_depth;
+
+        // Reconcile stack depths across branches:
+        // - If one branch halts, its depth is irrelevant — use the other's.
+        // - If neither halts, they must match.
+        if then_halts && !else_halts {
+            // Use else branch's depth (then never reaches end label)
+            self.stack_depth = depth_after_else;
+        } else if else_halts && !then_halts {
+            // Use then branch's depth (else never reaches end label)
+            self.stack_depth = depth_after_then;
+        } else if !then_halts && !else_halts {
+            debug_assert_eq!(
+                depth_after_else, depth_after_then,
+                "If branches produce different stack depths"
+            );
+        }
+        // else: both halt — depth is irrelevant, keep current
+
         self.asm.emit(AsmInstruction::Label(end_label));
+    }
+
+    /// Check if an expression is guaranteed to halt (ends with RETURN or REVERT).
+    fn expr_definitely_halts(expr: &EvmExpr) -> bool {
+        match expr {
+            EvmExpr::ReturnOp(_, _, _) | EvmExpr::Revert(_, _, _) => true,
+            EvmExpr::Concat(_, b) => Self::expr_definitely_halts(b),
+            EvmExpr::If(_, _, then_body, else_body) => {
+                Self::expr_definitely_halts(then_body) && Self::expr_definitely_halts(else_body)
+            }
+            EvmExpr::LetBind(_, _, body) => Self::expr_definitely_halts(body),
+            _ => false,
+        }
     }
 
     /// Compile a do-while loop.
@@ -493,8 +870,8 @@ impl<'a> ExprCompiler<'a> {
         self.compile_expr(inputs);
         self.asm.emit(AsmInstruction::Label(loop_label.clone()));
         self.compile_expr(pred_and_body);
-        // The predicate should be on top of stack
         self.asm.emit(AsmInstruction::JumpITo(loop_label));
+        self.stack_depth -= 1; // JumpITo: net -1 (condition consumed)
     }
 
     /// Compile a nullary environment read.
@@ -516,74 +893,88 @@ impl<'a> ExprCompiler<'a> {
             EvmEnvOp::Address => Opcode::Address,
             EvmEnvOp::CodeSize => Opcode::CodeSize,
             EvmEnvOp::ReturnDataSize => Opcode::ReturnDataSize,
-            EvmEnvOp::BlockHash | EvmEnvOp::Balance => {
-                // These are unary, shouldn't be called as nullary
-                // Emit anyway for robustness
-                Opcode::Invalid
-            }
+            EvmEnvOp::BlockHash | EvmEnvOp::Balance => Opcode::Invalid,
         };
         self.asm.emit_op(opcode);
+        // Note: depth increment handled by caller (compile_expr)
     }
 
     /// Compile a unary environment read.
     fn compile_env_read1(&mut self, op: &EvmEnvOp, arg: &RcExpr) {
-        self.compile_expr(arg);
+        self.compile_expr(arg); // depth += 1
         let opcode = match op {
             EvmEnvOp::Balance => Opcode::Balance,
             EvmEnvOp::BlockHash => Opcode::BlockHash,
             _ => {
                 // Other env ops are nullary; compile as such
                 self.compile_env_read(op);
+                self.stack_depth += 1; // env read pushes 1
                 return;
             }
         };
-        self.asm.emit_op(opcode);
+        self.asm.emit_op(opcode); // pops 1, pushes 1 → net 0
+        // Total: +1 from arg compile
     }
 
     /// Compile a LOG instruction.
-    ///
-    /// The data argument is `Concat(offset, size)` — both are compiled to
-    /// produce the memory range for the log data. The caller is responsible
-    /// for having already MSTORE'd the data into memory (via Concat side effects).
     fn compile_log(&mut self, topic_count: usize, topics: &[RcExpr], data: &RcExpr) {
-        // EVM LOGn pops from the stack top in order: offset, size, topic0, topic1, ...topicN
-        // So we push in reverse: topicN first (deepest), then ... topic0, size, offset (top).
-
-        // Push topics in reverse order (last topic is deepest in the stack)
+        // Push topics in reverse order
         for topic in topics.iter().rev() {
             self.compile_expr(topic);
         }
 
-        // Push data offset and size (offset ends up on top)
+        // Push data offset and size
         match data.as_ref() {
             EvmExpr::Concat(offset, size) => {
                 self.compile_expr(size);
                 self.compile_expr(offset);
             }
             _ => {
-                // Fallback: single expr is size=32, data was stored at offset 0
                 self.compile_expr(data);
                 self.asm.emit_op(Opcode::Push0);
+                self.stack_depth += 1;
                 self.asm.emit_op(Opcode::MStore);
+                self.stack_depth -= 2;
                 self.asm.emit_push_usize(32);
+                self.stack_depth += 1;
                 self.asm.emit_op(Opcode::Push0);
+                self.stack_depth += 1;
             }
         }
 
         self.asm.emit_op(Opcode::log_n(topic_count as u8));
+        // LOGn pops: offset + size + n topics = 2 + topic_count
+        self.stack_depth -= 2 + topic_count;
     }
 
     /// Estimate how many stack values an expression pushes.
     ///
-    /// For `Concat(a, b)` → count(a) + count(b),
-    /// most other expressions push exactly 1 value.
+    /// Must be accurate for stack-mode LetBind cleanup (SWAP+POP).
     fn count_stack_values(expr: &EvmExpr) -> usize {
         match expr {
             EvmExpr::Concat(a, b) => Self::count_stack_values(a) + Self::count_stack_values(b),
             EvmExpr::Empty(_, _) => 0,
             EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
             EvmExpr::Var(_) => 1,
-            EvmExpr::VarStore(_, _) => 0, // MSTORE consumes the value, pushes nothing
+            EvmExpr::VarStore(_, _) => 0,
+            EvmExpr::Drop(_) => 0,
+            // Side-effect ternary ops push nothing onto the stack
+            EvmExpr::Top(op, _, _, _) => match op {
+                EvmTernaryOp::SStore
+                | EvmTernaryOp::TStore
+                | EvmTernaryOp::MStore
+                | EvmTernaryOp::MStore8 => 0,
+                EvmTernaryOp::Keccak256 | EvmTernaryOp::Select => 1,
+            },
+            // Terminators don't push values (they halt execution)
+            EvmExpr::Revert(_, _, _) | EvmExpr::ReturnOp(_, _, _) => 0,
+            // Log is a side-effect, pushes nothing
+            EvmExpr::Log(_, _, _, _) => 0,
+            // If: both branches should push the same count
+            EvmExpr::If(_, _, then_body, _) => Self::count_stack_values(then_body),
+            // Function definitions don't push values at the call site
+            EvmExpr::Function(_, _, _, _) | EvmExpr::StorageField(_, _, _) => 0,
+            // Everything else pushes 1 value
             _ => 1,
         }
     }
@@ -602,7 +993,6 @@ fn minimal_be_bytes_u64(val: u64) -> Vec<u8> {
 /// Convert a hex string (without 0x prefix) to bytes.
 fn hex_string_to_bytes(hex: &str) -> Vec<u8> {
     let hex = hex.strip_prefix("0x").unwrap_or(hex);
-    // Pad to even length
     let hex = if hex.len() % 2 != 0 {
         format!("0{hex}")
     } else {

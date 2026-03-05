@@ -230,7 +230,10 @@ fn op_gte() {
 fn op_precedence() {
     let mut h = deploy_operators();
     // a + b * c = 2 + 3 * 4 = 2 + 12 = 14 (mul before add)
-    let r = h.call_fn("test_precedence(uint256,uint256,uint256)", &encode3(2, 3, 4));
+    let r = h.call_fn(
+        "test_precedence(uint256,uint256,uint256)",
+        &encode3(2, 3, 4),
+    );
     assert!(r.success);
     assert_eq!(decode(&r.output), u(14));
 }
@@ -263,7 +266,10 @@ fn fn_double() {
 #[test]
 fn fn_add_three() {
     let mut h = deploy_functions();
-    let r = h.call_fn("call_add_three(uint256,uint256,uint256)", &encode3(10, 20, 30));
+    let r = h.call_fn(
+        "call_add_three(uint256,uint256,uint256)",
+        &encode3(10, 20, 30),
+    );
     assert!(r.success);
     assert_eq!(decode(&r.output), u(60));
 }
@@ -303,7 +309,10 @@ fn fn_clamp() {
     assert_eq!(decode(&r.output), u(50));
 
     // clamp(200, 10, 100) = max(200, 10) = 200, min(200, 100) = 100
-    let r = h.call_fn("call_clamp(uint256,uint256,uint256)", &encode3(200, 10, 100));
+    let r = h.call_fn(
+        "call_clamp(uint256,uint256,uint256)",
+        &encode3(200, 10, 100),
+    );
     assert!(r.success);
     assert_eq!(decode(&r.output), u(100));
 }
@@ -357,7 +366,11 @@ fn cf_multi_branch_return() {
     for (input, expected) in cases {
         let r = h.call_fn("multi_branch_return(uint256)", &encode(input));
         assert!(r.success, "multi_branch_return({input}) failed");
-        assert_eq!(decode(&r.output), u(expected), "multi_branch_return({input})");
+        assert_eq!(
+            decode(&r.output),
+            u(expected),
+            "multi_branch_return({input})"
+        );
     }
 }
 
@@ -366,6 +379,16 @@ fn cf_storage_while_sum() {
     let mut h = deploy_control_flow();
     // sum(1..10) = 55
     let r = h.call_fn("storage_while_sum(uint256)", &encode(10));
+    println!(
+        "r: {:?}",
+        (
+            alloy_primitives::hex::encode(edge_evm_tests::fn_selector(
+                "storage_while_sum(uint256)"
+            )),
+            alloy_primitives::hex::encode(encode(10)),
+            &r
+        )
+    );
     assert!(r.success, "storage_while_sum failed: {:?}", r.output);
     assert_eq!(decode(&r.output), u(55));
 }
@@ -558,7 +581,10 @@ fn events_two_indexed() {
 #[test]
 fn events_three_indexed() {
     let mut h = deploy_events();
-    let r = h.call_fn("emit_three_indexed(uint256,uint256,uint256)", &encode3(1, 2, 3));
+    let r = h.call_fn(
+        "emit_three_indexed(uint256,uint256,uint256)",
+        &encode3(1, 2, 3),
+    );
     assert!(r.success);
     assert_eq!(r.logs.len(), 1);
     // LOG4: 4 topics (event sig + a + b + c)
