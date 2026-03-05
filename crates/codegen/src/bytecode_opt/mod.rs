@@ -145,7 +145,7 @@ fn remove_consecutive_labels(instructions: Vec<AsmInstruction>) -> Vec<AsmInstru
     let mut aliases: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut i = 0;
     while i < instructions.len() {
-        if let AsmInstruction::Label(a) = &instructions[i] {
+        if let AsmInstruction::Label(_) = &instructions[i] {
             // Find the end of a chain of consecutive labels
             let mut j = i + 1;
             while j < instructions.len() {

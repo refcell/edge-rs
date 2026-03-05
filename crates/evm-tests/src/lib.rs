@@ -5,9 +5,10 @@
 
 #![allow(missing_docs)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, Log, U256};
 use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind},
@@ -32,6 +33,8 @@ pub struct CallResult {
     pub output: Vec<u8>,
     /// Gas consumed.
     pub gas_used: u64,
+    /// Logs emitted during the call.
+    pub logs: Vec<Log>,
 }
 
 type TestDb = CacheDB<EmptyDB>;
@@ -43,7 +46,7 @@ pub struct EvmTestHost {
     evm: TestEvm,
     contract: Address,
     caller: Address,
-    nonce: u64,
+    nonces: HashMap<Address, u64>,
 }
 
 /// Result of a contract deployment.
@@ -57,9 +60,9 @@ pub struct DeployResult {
     pub deploy_gas: u64,
 }
 
-/// Fixed address where the contract is deployed for tests.
-///
-/// Must be > 0x09 to avoid Ethereum precompile addresses (0x01-0x09).
+/// Fixed address previously used for direct code insertion.
+/// Kept for potential future use.
+#[allow(dead_code)]
 const CONTRACT_ADDR: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
 ]);
@@ -92,14 +95,14 @@ impl EvmTestHost {
         DeployResult { host, init_code_size, deploy_gas: 0 }
     }
 
-    /// Deploy raw bytecode and return a test host.
+    /// Deploy raw init-code bytecode via a CREATE transaction and return a test host.
+    ///
+    /// This executes the deployment bytecode through the EVM so the constructor
+    /// runs and only the runtime code is stored at the contract address.
     pub fn deploy_bytecode(bytecode: &[u8]) -> Self {
         let caller = Address::from([0x01; 20]);
-        let code = Bytecode::new_legacy(Bytes::copy_from_slice(bytecode));
-        let account = AccountInfo::default().with_code(code);
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
 
+        let mut db = CacheDB::<EmptyDB>::default();
         // Ensure the caller account exists with a balance
         let caller_info = AccountInfo {
             balance: U256::from(1_000_000_000_000_000_000u128),
@@ -108,13 +111,34 @@ impl EvmTestHost {
         };
         db.insert_account_info(caller, caller_info);
 
-        let evm: TestEvm = Context::mainnet().with_db(db).build_mainnet();
+        let mut evm: TestEvm = Context::mainnet().with_db(db).build_mainnet();
+
+        // Issue a CREATE transaction with the init code
+        let tx = TxEnv::builder()
+            .caller(caller)
+            .kind(TxKind::Create)
+            .data(Bytes::copy_from_slice(bytecode))
+            .nonce(0)
+            .gas_limit(10_000_000)
+            .gas_price(0u128)
+            .value(U256::ZERO)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).expect("deployment transaction failed");
+        let contract = result
+            .created_address()
+            .expect("deployment should create a contract");
+        assert!(result.is_success(), "deployment should succeed");
+
+        let mut nonces = HashMap::new();
+        nonces.insert(caller, 1); // nonce 0 was used for the CREATE tx
 
         Self {
             evm,
-            contract: CONTRACT_ADDR,
+            contract,
             caller,
-            nonce: 0,
+            nonces,
         }
     }
 
@@ -148,26 +172,29 @@ impl EvmTestHost {
 
     /// Call the contract with raw calldata bytes.
     pub fn call_raw(&mut self, calldata: &[u8]) -> CallResult {
+        let nonce = self.nonces.entry(self.caller).or_insert(0);
         let tx = TxEnv::builder()
             .caller(self.caller)
             .kind(TxKind::Call(self.contract))
             .data(Bytes::copy_from_slice(calldata))
-            .nonce(self.nonce)
+            .nonce(*nonce)
             .gas_limit(10_000_000)
             .gas_price(0u128)
             .build()
             .unwrap();
 
         let result = self.evm.transact_commit(tx).expect("call transaction failed");
-        self.nonce += 1;
+        *self.nonces.entry(self.caller).or_insert(0) += 1;
 
         let success = result.is_success();
         let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
+        let logs = result.logs().to_vec();
 
         CallResult {
             success,
             output,
             gas_used: 0,
+            logs,
         }
     }
 
@@ -187,14 +214,18 @@ impl EvmTestHost {
     }
 
     /// Set the caller address for subsequent transactions.
-    /// Ensures the new caller has account info in the DB.
+    /// Ensures the new caller has account info in the DB (only inserts if not already present).
     pub fn set_caller(&mut self, caller: Address) {
-        let caller_info = AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u128),
-            nonce: 0,
-            ..Default::default()
-        };
-        self.evm.ctx.db_mut().insert_account_info(caller, caller_info);
+        // Only insert a new account if it doesn't already exist in the DB cache
+        let exists = self.evm.ctx.db().cache.accounts.contains_key(&caller);
+        if !exists {
+            let caller_info = AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                nonce: 0,
+                ..Default::default()
+            };
+            self.evm.ctx.db_mut().insert_account_info(caller, caller_info);
+        }
         self.caller = caller;
     }
 }

@@ -19,6 +19,7 @@ use crate::{
 
 /// Tracks a variable binding during lowering.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct VarBinding {
     /// The current value expression
     value: RcExpr,
