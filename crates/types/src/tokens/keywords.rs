@@ -75,6 +75,47 @@ pub enum Keyword {
 }
 
 impl Keyword {
+    /// Map a raw identifier string to a keyword without any heap allocation.
+    ///
+    /// Returns `None` when the string is not a reserved keyword.
+    pub fn from_word(word: &str) -> Option<Keyword> {
+        match word {
+            "contract" => Some(Keyword::Contract),
+            "type" => Some(Keyword::Type),
+            "const" => Some(Keyword::Const),
+            "fn" => Some(Keyword::Fn),
+            "packed" => Some(Keyword::Packed),
+            "trait" => Some(Keyword::Trait),
+            "impl" => Some(Keyword::Impl),
+            "mod" => Some(Keyword::Module),
+            "use" => Some(Keyword::Use),
+            "Self" => Some(Keyword::Self_),
+            "abi" => Some(Keyword::Abi),
+            "return" => Some(Keyword::Return),
+            "match" => Some(Keyword::Match),
+            "if" => Some(Keyword::If),
+            "else" => Some(Keyword::Else),
+            "for" => Some(Keyword::For),
+            "while" => Some(Keyword::While),
+            "let" => Some(Keyword::Let),
+            "mut" => Some(Keyword::Mut),
+            "pub" => Some(Keyword::Pub),
+            "loop" => Some(Keyword::Loop),
+            "do" => Some(Keyword::Do),
+            "break" => Some(Keyword::Break),
+            "continue" => Some(Keyword::Continue),
+            "comptime" => Some(Keyword::Comptime),
+            "event" => Some(Keyword::Event),
+            "indexed" => Some(Keyword::Indexed),
+            "ext" => Some(Keyword::Ext),
+            "anon" => Some(Keyword::Anon),
+            "matches" => Some(Keyword::Matches),
+            "super" => Some(Keyword::Super),
+            "emit" => Some(Keyword::Emit),
+            _ => None,
+        }
+    }
+
     /// Returns a list of all the keyword variants.
     pub fn all() -> Vec<Keyword> {
         // todo: use strum to return an iterator over the variants

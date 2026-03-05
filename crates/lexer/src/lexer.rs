@@ -79,7 +79,8 @@ impl<'a> Lexer<'a> {
         // This function is only called when we want to continue consuming a character of the same
         // type. For example, we see a digit and we want to consume the whole integer
         // Therefore, the current character which triggered this function will need to be appended
-        let mut word = String::new();
+        // Pre-allocate a small buffer; most tokens are short identifiers/keywords.
+        let mut word = String::with_capacity(16);
         if let Some(init_char) = initial_char {
             word.push(init_char)
         }
@@ -472,14 +473,8 @@ impl<'a> Lexer<'a> {
 
                 // If not a type, check for keywords
                 if found_kind.is_none() {
-                    let keys = Keyword::all();
-                    for kind in keys.into_iter() {
-                        let key = kind.to_string();
-                        let peeked = word.clone();
-                        if key == peeked {
-                            found_kind = Some(TokenKind::Keyword(kind));
-                            break;
-                        }
+                    if let Some(kw) = Keyword::from_word(&word) {
+                        found_kind = Some(TokenKind::Keyword(kw));
                     }
                 }
 
