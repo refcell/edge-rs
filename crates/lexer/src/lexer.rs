@@ -104,24 +104,13 @@ impl<'a> Lexer<'a> {
     }
 
     /// Lexes a hexadecimal integer literal starting with the given initial character.
+    ///
+    /// By the time this is called the `0x` prefix has already been consumed, so only
+    /// pure hex digits are accepted — strings like `0x56x34` are rejected by
+    /// `str_to_bytes32` and surfaced as `InvalidHexLiteral`.
     pub fn eat_hex_digit(&mut self, initial_char: char) -> TokenResult {
-        let (integer_str, mut start, end) = self.eat_while(Some(initial_char), |ch| {
-            ch.is_ascii_hexdigit() | (ch == 'x')
-        });
-
-        // // TODO: check for sure that we have a correct hex string, eg. 0x56 and not 0x56x34
-        // let kind = if self.context == Context::CodeTableBody {
-        //     // In codetables, the bytecode provided is of arbitrary length. We pass
-        //     // the code as an Ident, and it is appended to the end of the runtime
-        //     // bytecode in codegen.
-        //     if &integer_str[0..2] == "0x" {
-        //         TokenKind::Ident(integer_str[2..].to_owned())
-        //     } else {
-        //         TokenKind::Ident(integer_str)
-        //     }
-        // } else {
-        //     TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()))
-        // };
+        let (integer_str, mut start, end) =
+            self.eat_while(Some(initial_char), |ch| ch.is_ascii_hexdigit());
 
         start += 2;
         let span = Span {
@@ -367,61 +356,68 @@ impl<'a> Lexer<'a> {
 
         let token = match ch {
             '/' => {
-                let mut comment_string = String::new();
                 let start = self.position;
-                comment_string.push(ch);
-                if let Some(ch2) = self.peek() {
-                    match ch2 {
-                        // TODO: Add support for /// and //! comments
-                        '/' => {
-                            // Consume until newline
-                            comment_string.push(ch2);
-                            let (comment_string, start, end) =
-                                self.eat_while(Some(ch), |c| c != '\n');
-                            Ok(TokenKind::Comment(comment_string).into_span(start, end))
+                match self.peek() {
+                    Some('/') => {
+                        self.consume(); // consume second '/'
+                        match self.peek() {
+                            // Outer doc comment: ///
+                            Some('/') => {
+                                self.consume(); // consume third '/'
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::DocComment(format!("///{body}"))
+                                    .into_span(start, end))
+                            }
+                            // Inner doc comment: //!
+                            Some('!') => {
+                                self.consume(); // consume '!'
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::DocComment(format!("//!{body}"))
+                                    .into_span(start, end))
+                            }
+                            // Regular line comment: //
+                            _ => {
+                                let (body, _, end) = self.eat_while(None, |c| c != '\n');
+                                Ok(TokenKind::Comment(format!("//{body}")).into_span(start, end))
+                            }
                         }
-                        '*' => {
-                            let c = self.consume();
-                            comment_string.push(c.unwrap());
-                            let mut depth = 1usize;
-                            while let Some(c) = self.consume() {
-                                match c {
-                                    '/' if self.peek() == Some('*') => {
-                                        comment_string.push(c);
-                                        let c2 = self.consume();
-                                        comment_string.push(c2.unwrap());
-                                        depth += 1;
-                                    }
-                                    '*' if self.peek() == Some('/') => {
-                                        comment_string.push(c);
-                                        let c2 = self.consume();
-                                        comment_string.push(c2.unwrap());
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            // This block comment is closed, so for a
-                                            // construction like "/* */ */"
-                                            // there will be a successfully parsed block comment
-                                            // "/* */"
-                                            // and " */" will be processed separately.
-                                            break;
-                                        }
-                                    }
-                                    _ => {
-                                        comment_string.push(c);
+                    }
+                    Some('*') => {
+                        let mut comment_string = String::from("/*");
+                        self.consume(); // consume '*'
+                        let mut depth = 1usize;
+                        while let Some(c) = self.consume() {
+                            match c {
+                                '/' if self.peek() == Some('*') => {
+                                    comment_string.push(c);
+                                    let c2 = self.consume();
+                                    comment_string.push(c2.unwrap());
+                                    depth += 1;
+                                }
+                                '*' if self.peek() == Some('/') => {
+                                    comment_string.push(c);
+                                    let c2 = self.consume();
+                                    comment_string.push(c2.unwrap());
+                                    depth -= 1;
+                                    if depth == 0 {
+                                        // This block comment is closed, so for a
+                                        // construction like "/* */ */"
+                                        // there will be a successfully parsed block comment
+                                        // "/* */"
+                                        // and " */" will be processed separately.
+                                        break;
                                     }
                                 }
+                                _ => {
+                                    comment_string.push(c);
+                                }
                             }
-
-                            Ok(TokenKind::Comment(comment_string).into_span(start, self.position))
                         }
-                        _ => self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
-                            ArithmeticOperator::Div,
-                        ))),
+                        Ok(TokenKind::Comment(comment_string).into_span(start, self.position))
                     }
-                } else {
-                    self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
+                    _ => self.single_char_token(TokenKind::Operator(Operator::Arithmetic(
                         ArithmeticOperator::Div,
-                    )))
+                    ))),
                 }
             }
 

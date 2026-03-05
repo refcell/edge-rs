@@ -55,17 +55,18 @@ See the [`examples/`](./examples/) directory for complete Edge programs. The int
 
 ### Compiling a contract
 
+Pass a source file directly to compile it — `edgec` prints the bytecode as a hex string to stdout:
+
 ```sh
-# Compile to EVM bytecode (default)
-edgec build examples/counter.edge
-# Bytecode (127 bytes):
+# Compile to EVM bytecode (prints hex to stdout)
+edgec examples/counter.edge
 # 0x60003560e01c8063d09de08a146100365780632baeceb7146100...
 
-# Write bytecode to a file
-edgec build examples/counter.edge --output counter.bin
+# Write raw bytecode bytes to a file
+edgec examples/counter.edge -o counter.bin
 
-# Compile with verbose output
-edgec build examples/expressions.edge --verbose
+# Enable compiler tracing (-v warn, -vv info, -vvv debug, -vvvv trace)
+edgec -v examples/expressions.edge
 ```
 
 ### Debugging the pipeline
@@ -104,9 +105,8 @@ contract Counter {
 ```
 
 ```sh
-edgec build examples/counter.edge
-# Bytecode (127 bytes):
-# 0x60003560e01c8063d09de08a14610036578063...
+edgec examples/counter.edge
+# 0x60003560e01c8063d09de08a14610036578063...  (127 bytes)
 ```
 
 The compiled bytecode includes a selector dispatcher, storage reads/writes via `SLOAD`/`SSTORE`, and a revert fallback for unknown selectors — all verified against a live EVM in the [integration tests](./crates/e2e/).
@@ -115,10 +115,10 @@ The compiled bytecode includes a selector dispatcher, storage reads/writes via `
 
 ```sh
 # Arithmetic, comparisons, bitwise ops, operator precedence
-edgec build examples/expressions.edge   # 329 bytes
+edgec examples/expressions.edge         # 329 bytes
 
 # ERC-20 token contract
-edgec build examples/erc20.edge         # 334 bytes
+edgec examples/erc20.edge               # 334 bytes
 
 # Composable library modules
 edgec parse examples/lib/math.edge

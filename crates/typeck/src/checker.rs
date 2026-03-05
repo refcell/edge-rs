@@ -167,9 +167,9 @@ impl TypeChecker {
         let consts = contract
             .consts
             .iter()
-            .map(|(decl, _expr)| ConstValue {
+            .map(|(decl, expr)| ConstValue {
                 name: decl.name.name.clone(),
-                value: 0, // TODO: Evaluate simple expressions
+                value: Self::eval_const_expr(expr),
             })
             .collect();
 
@@ -195,6 +195,29 @@ impl TypeChecker {
         }
 
         StorageLayout { slots }
+    }
+
+    /// Evaluate a simple constant expression to a `u64`.
+    ///
+    /// Handles literal integers, hex/binary bytes, booleans, and parenthesised
+    /// wrappers.  All other expression forms evaluate to `0`.
+    fn eval_const_expr(expr: &edge_ast::expr::Expr) -> u64 {
+        use edge_ast::lit::Lit;
+        match expr {
+            edge_ast::expr::Expr::Literal(lit) => match lit.as_ref() {
+                Lit::Int(n, _, _) => *n,
+                Lit::Bool(b, _) => u64::from(*b),
+                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
+                    let start = bytes.len().saturating_sub(8);
+                    bytes[start..]
+                        .iter()
+                        .fold(0u64, |acc, &b| (acc << 8) | u64::from(b))
+                }
+                Lit::Str(_, _) => 0,
+            },
+            edge_ast::expr::Expr::Paren(inner, _) => Self::eval_const_expr(inner),
+            _ => 0,
+        }
     }
 
     /// Check if a type is a stack pointer (&s T)

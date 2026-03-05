@@ -1,5 +1,6 @@
 use edge_lexer::lexer::Lexer;
 use edge_types::prelude::*;
+use rstest::rstest;
 
 /// Helper: collect all non-whitespace token kinds from source.
 fn lex_non_ws(source: &str) -> Vec<TokenKind> {
@@ -108,164 +109,61 @@ fn lex_bit_type() {
 
 // ─── Arithmetic Operators ───────────────────────────────────────────
 
-#[test]
-fn lex_add_operator() {
-    let mut lexer = Lexer::new("+");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Add))
-    );
-    assert_eq!(tok.span, Span::new(0..0, None));
-}
-
-#[test]
-fn lex_sub_operator() {
-    let mut lexer = Lexer::new("-");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Sub))
-    );
-}
-
-#[test]
-fn lex_mul_operator() {
-    let mut lexer = Lexer::new("*");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Mul))
-    );
-}
-
-#[test]
-fn lex_div_operator() {
-    let mut lexer = Lexer::new("/");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Div))
-    );
-}
-
-#[test]
-fn lex_mod_operator() {
-    let mut lexer = Lexer::new("%");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Mod))
-    );
-}
-
-#[test]
-fn lex_exp_operator() {
-    let mut lexer = Lexer::new("**");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Exp))
-    );
+#[rstest]
+#[case("+", ArithmeticOperator::Add)]
+#[case("-", ArithmeticOperator::Sub)]
+#[case("*", ArithmeticOperator::Mul)]
+#[case("/", ArithmeticOperator::Div)]
+#[case("%", ArithmeticOperator::Mod)]
+#[case("**", ArithmeticOperator::Exp)]
+fn lex_arithmetic_operator(#[case] input: &str, #[case] op: ArithmeticOperator) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
+    assert_eq!(tok.kind, TokenKind::Operator(Operator::Arithmetic(op)));
 }
 
 // ─── Compound Assignment Operators ──────────────────────────────────
 
-#[test]
-fn lex_add_assign() {
-    let mut lexer = Lexer::new("+=");
-    let tok = lexer.next().unwrap().unwrap();
+#[rstest]
+#[case("+=", CompoundAssignmentOperator::AddAssign)]
+#[case("-=", CompoundAssignmentOperator::SubAssign)]
+#[case("*=", CompoundAssignmentOperator::MulAssign)]
+#[case("%=", CompoundAssignmentOperator::ModAssign)]
+#[case("**=", CompoundAssignmentOperator::ExpAssign)]
+#[case("&=", CompoundAssignmentOperator::AndAssign)]
+#[case("|=", CompoundAssignmentOperator::OrAssign)]
+#[case("^=", CompoundAssignmentOperator::XorAssign)]
+#[case(">>=", CompoundAssignmentOperator::ShrAssign)]
+#[case("<<=", CompoundAssignmentOperator::ShlAssign)]
+fn lex_compound_assignment(#[case] input: &str, #[case] op: CompoundAssignmentOperator) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
     assert_eq!(
         tok.kind,
-        TokenKind::Operator(Operator::CompoundAssignment(
-            CompoundAssignmentOperator::AddAssign
-        ))
-    );
-}
-
-#[test]
-fn lex_sub_assign() {
-    let mut lexer = Lexer::new("-=");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::CompoundAssignment(
-            CompoundAssignmentOperator::SubAssign
-        ))
-    );
-}
-
-#[test]
-fn lex_mul_assign() {
-    let mut lexer = Lexer::new("*=");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::CompoundAssignment(
-            CompoundAssignmentOperator::MulAssign
-        ))
+        TokenKind::Operator(Operator::CompoundAssignment(op))
     );
 }
 
 #[test]
 fn lex_div_is_not_compound() {
-    // The lexer does not currently implement /= as compound assignment;
+    // The lexer does not implement /= as compound assignment;
     // "/" is always lexed as Div regardless of what follows.
-    let mut lexer = Lexer::new("/=");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("/=").next().unwrap().unwrap();
     assert_eq!(
         tok.kind,
         TokenKind::Operator(Operator::Arithmetic(ArithmeticOperator::Div))
     );
 }
 
-#[test]
-fn lex_mod_assign() {
-    let mut lexer = Lexer::new("%=");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::CompoundAssignment(
-            CompoundAssignmentOperator::ModAssign
-        ))
-    );
-}
-
 // ─── Data Location Annotations ──────────────────────────────────────
 
-#[test]
-fn lex_storage_pointer() {
-    let mut lexer = Lexer::new("&s");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Pointer(Location::PersistentStorage));
-}
-
-#[test]
-fn lex_memory_pointer() {
-    let mut lexer = Lexer::new("&m");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Pointer(Location::Memory));
-}
-
-#[test]
-fn lex_calldata_pointer() {
-    let mut lexer = Lexer::new("&cd");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Pointer(Location::Calldata));
-}
-
-#[test]
-fn lex_transient_storage_pointer() {
-    let mut lexer = Lexer::new("&t");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Pointer(Location::TransientStorage));
-}
-
-#[test]
-fn lex_returndata_pointer() {
-    let mut lexer = Lexer::new("&rd");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(tok.kind, TokenKind::Pointer(Location::Returndata));
+#[rstest]
+#[case("&s", Location::PersistentStorage)]
+#[case("&t", Location::TransientStorage)]
+#[case("&m", Location::Memory)]
+#[case("&cd", Location::Calldata)]
+#[case("&rd", Location::Returndata)]
+fn lex_data_location_pointer(#[case] input: &str, #[case] loc: Location) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
+    assert_eq!(tok.kind, TokenKind::Pointer(loc));
 }
 
 // ─── String Literals ────────────────────────────────────────────────
@@ -302,16 +200,13 @@ fn lex_string_literal_with_escape() {
 
 #[test]
 fn lex_hex_literal() {
-    let mut lexer = Lexer::new("0xff");
-    let tok = lexer.next().unwrap().unwrap();
-    // The lexer produces a Literal token for hex values.
+    let tok = Lexer::new("0xff").next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
 }
 
 #[test]
 fn lex_hex_literal_single_digit() {
-    let mut lexer = Lexer::new("0x01");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("0x01").next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
 }
 
@@ -319,8 +214,7 @@ fn lex_hex_literal_single_digit() {
 
 #[test]
 fn lex_decimal_literal() {
-    let mut lexer = Lexer::new("42");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("42").next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
     // "42" in hex is "2a", so str_to_bytes32("42") pads it into [u8; 32]
     assert_eq!(tok.kind, TokenKind::Literal(str_to_bytes32("42").unwrap()));
@@ -372,69 +266,68 @@ fn lex_keyword_comptime() {
     assert_eq!(tok.span, Span::new(0..7, None));
 }
 
-// ─── Comparison and Logical Operators ───────────────────────────────
+// ─── Comparison Operators ────────────────────────────────────────────
 
-#[test]
-fn lex_equal_operator() {
-    let mut lexer = Lexer::new("==");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Comparison(ComparisonOperator::Equal))
-    );
+#[rstest]
+#[case("==", ComparisonOperator::Equal)]
+#[case("!=", ComparisonOperator::NotEqual)]
+#[case("<", ComparisonOperator::LessThan)]
+#[case("<=", ComparisonOperator::LessThanOrEqual)]
+#[case(">", ComparisonOperator::GreaterThan)]
+#[case(">=", ComparisonOperator::GreaterThanOrEqual)]
+fn lex_comparison_operator(#[case] input: &str, #[case] op: ComparisonOperator) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
+    assert_eq!(tok.kind, TokenKind::Operator(Operator::Comparison(op)));
 }
 
-#[test]
-fn lex_not_equal_operator() {
-    let mut lexer = Lexer::new("!=");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Comparison(ComparisonOperator::NotEqual))
-    );
-}
+// ─── Logical Operators ───────────────────────────────────────────────
 
-#[test]
-fn lex_logical_and() {
-    let mut lexer = Lexer::new("&&");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Logical(LogicalOperator::And))
-    );
-}
-
-#[test]
-fn lex_logical_or() {
-    let mut lexer = Lexer::new("||");
-    let tok = lexer.next().unwrap().unwrap();
-    assert_eq!(
-        tok.kind,
-        TokenKind::Operator(Operator::Logical(LogicalOperator::Or))
-    );
+#[rstest]
+#[case("&&", LogicalOperator::And)]
+#[case("||", LogicalOperator::Or)]
+#[case("!", LogicalOperator::Not)]
+fn lex_logical_operator(#[case] input: &str, #[case] op: LogicalOperator) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
+    assert_eq!(tok.kind, TokenKind::Operator(Operator::Logical(op)));
 }
 
 // ─── Punctuation ────────────────────────────────────────────────────
 
 #[test]
 fn lex_arrow() {
-    let mut lexer = Lexer::new("->");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("->").next().unwrap().unwrap();
     assert_eq!(tok.kind, TokenKind::Arrow);
 }
 
 #[test]
 fn lex_fat_arrow() {
-    let mut lexer = Lexer::new("=>");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("=>").next().unwrap().unwrap();
     assert_eq!(tok.kind, TokenKind::FatArrow);
 }
 
 #[test]
 fn lex_double_colon() {
-    let mut lexer = Lexer::new("::");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("::").next().unwrap().unwrap();
     assert_eq!(tok.kind, TokenKind::DoubleColon);
+}
+
+// ─── Doc Comments ───────────────────────────────────────────────────
+
+#[rstest]
+#[case("/// outer doc", "/// outer doc")]
+#[case("//! inner doc", "//! inner doc")]
+fn lex_doc_comment(#[case] input: &str, #[case] expected_content: &str) {
+    let tok = Lexer::new(input).next().unwrap().unwrap();
+    assert_eq!(
+        tok.kind,
+        TokenKind::DocComment(expected_content.to_string())
+    );
+}
+
+#[test]
+fn lex_regular_comment_is_not_doc() {
+    let tok = Lexer::new("// plain comment").next().unwrap().unwrap();
+    assert!(matches!(tok.kind, TokenKind::Comment(_)));
 }
 
 // ─── Combined Token Sequences ───────────────────────────────────────
@@ -488,8 +381,7 @@ fn lex_comment_skipped_in_non_ws() {
 
 #[test]
 fn lex_assignment_operator() {
-    let mut lexer = Lexer::new("=");
-    let tok = lexer.next().unwrap().unwrap();
+    let tok = Lexer::new("=").next().unwrap().unwrap();
     assert_eq!(tok.kind, TokenKind::Operator(Operator::Assignment));
 }
 

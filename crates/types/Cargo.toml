@@ -12,6 +12,7 @@ description = "Common types used across the Edge Language compiler"
 keywords = ["edge", "rust", "evm", "bytecode", "compiler"]
 
 [dependencies]
+derive_more = { workspace = true }
 anyhow = "1.0.79"
 tracing = "0.1.40"
 serde = { version = "1.0.196", features = [ "derive", "rc" ] }
