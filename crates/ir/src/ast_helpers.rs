@@ -6,8 +6,8 @@
 use std::rc::Rc;
 
 use crate::schema::{
-    EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType,
-    EvmUnaryOp, RcExpr,
+    EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, EvmUnaryOp,
+    RcExpr,
 };
 
 // ---- Constants ----
@@ -207,12 +207,12 @@ pub fn let_bind(name: String, value: RcExpr, body: RcExpr) -> RcExpr {
     Rc::new(EvmExpr::LetBind(name, value, body))
 }
 
-/// Variable reference to a LetBind.
+/// Variable reference to a `LetBind`.
 pub fn var(name: String) -> RcExpr {
     Rc::new(EvmExpr::Var(name))
 }
 
-/// Write to a LetBind variable's memory slot. Pushes 0 values to stack.
+/// Write to a `LetBind` variable's memory slot. Pushes 0 values to stack.
 pub fn var_store(name: String, value: RcExpr) -> RcExpr {
     Rc::new(EvmExpr::VarStore(name, value))
 }

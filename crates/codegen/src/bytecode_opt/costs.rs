@@ -9,23 +9,11 @@
 /// in the egglog schema when optimizing for gas.
 pub(crate) fn inst_gas_cost(name: &str) -> u32 {
     match name {
-        // Gzero (0)
-        "IStop" | "IReturn" | "IRevert" => 0,
-
         // Gbase (2)
-        "IPop" | "IAddress" | "IOrigin" | "ICaller" | "ICallValue"
-        | "ICallDataSize" | "ICodeSize" | "IGasPrice"
-        | "ICoinbase" | "ITimestamp" | "INumber" | "IPrevrandao"
-        | "IGasLimit" | "IChainId" | "ISelfBalance" | "IBaseFee"
-        | "IReturnDataSize" | "IPc" | "IMSize" | "IGas" => 2,
-
-        // Gverylow (3) — arithmetic, comparison, bitwise, memory, stack
-        "IAdd" | "ISub" | "ILt" | "IGt" | "ISLt" | "ISGt" | "IEq"
-        | "IIsZero" | "IAnd" | "IOr" | "IXor" | "INot" | "IByte"
-        | "IShl" | "IShr" | "ISar"
-        | "ICallDataLoad" | "IPush0"
-        | "IMLoad" | "IMStore" | "IMStore8"
-        | "IDup" | "ISwap" => 3,
+        "IPop" | "IAddress" | "IOrigin" | "ICaller" | "ICallValue" | "ICallDataSize"
+        | "ICodeSize" | "IGasPrice" | "ICoinbase" | "ITimestamp" | "INumber" | "IPrevrandao"
+        | "IGasLimit" | "IChainId" | "ISelfBalance" | "IBaseFee" | "IReturnDataSize" | "IPc"
+        | "IMSize" | "IGas" => 2,
 
         // Glow (5) — mul, div, mod, signextend
         "IMul" | "IDiv" | "ISDiv" | "IMod" | "ISMod" | "ISignExtend" => 5,
@@ -39,33 +27,30 @@ pub(crate) fn inst_gas_cost(name: &str) -> u32 {
         // Keccak256 (30 + 6 per word)
         "IKeccak256" => 36,
 
-        // Balance / ext (warm = 100)
-        "IBalance" | "IExtCodeSize" | "IExtCodeHash" => 100,
+        // Balance / ext / transient storage / system calls (warm = 100)
+        "IBalance" | "IExtCodeSize" | "IExtCodeHash" | "ITLoad" | "ITStore" | "ICall"
+        | "ICallCode" | "IDelegateCall" | "IStaticCall" => 100,
 
         // Block hash (20)
         "IBlockHash" => 20,
-
-        // Transient storage (100)
-        "ITLoad" | "ITStore" => 100,
 
         // MCopy (3 base + 3 per word — approximate)
         "IMCopy" => 6,
 
         // Storage (warm)
         "ISLoad" => 2100,
-        "ISStore" => 5000,
+        "ISStore" | "ISelfDestruct" => 5000,
 
         // LOG (375 base + 375 per topic + 8 per data byte)
         "ILog" => 750, // approximate: log1
 
         // System ops
-        "ICreate" => 32000,
-        "ICreate2" => 32000,
-        "ICall" | "ICallCode" | "IDelegateCall" | "IStaticCall" => 100,
-        "ISelfDestruct" => 5000,
-        "IInvalid" => 0,
+        "ICreate" | "ICreate2" => 32000,
 
-        // Default
+        // Gzero (0)
+        "IStop" | "IReturn" | "IRevert" | "IInvalid" => 0,
+
+        // Default — Gverylow (3): arithmetic, comparison, bitwise, memory, stack
         _ => 3,
     }
 }

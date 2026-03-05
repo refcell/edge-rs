@@ -1,4 +1,4 @@
-//! Semantic tests for loop_extraction.edge
+//! Semantic tests for `loop_extraction.edge`
 //!
 //! Tests storage-to-local hoisting (LICM) for loops with storage operations.
 
@@ -98,7 +98,7 @@ fn sel_storage_no_loop() -> [u8; 4] {
     fn_selector("storage_no_loop(uint256)")
 }
 
-/// storage_no_loop(n):
+/// `storage_no_loop(n)`:
 ///   accumulator = 0; counter = 1;
 ///   accumulator += counter;  // = 1
 ///   counter += 1;            // = 2

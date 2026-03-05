@@ -6,16 +6,10 @@
 //! 2. **Runtime**: The persistent bytecode that handles function calls
 //!    via the dispatcher.
 
-use edge_ir::schema::EvmContract;
-use edge_ir::var_opt;
-use edge_ir::OptimizeFor;
+use edge_ir::{schema::EvmContract, var_opt, OptimizeFor};
 
 use crate::{
-    assembler::Assembler,
-    bytecode_opt,
-    dispatcher,
-    expr_compiler::ExprCompiler,
-    opcode::Opcode,
+    assembler::Assembler, bytecode_opt, dispatcher, expr_compiler::ExprCompiler, opcode::Opcode,
     CodegenError,
 };
 
@@ -32,7 +26,12 @@ pub fn generate_contract_bytecode(
     let runtime_bytecode = generate_runtime_bytecode(contract, optimization_level, optimize_for)?;
 
     // 2. Generate constructor that deploys the runtime
-    Ok(generate_constructor(contract, &runtime_bytecode, optimization_level, optimize_for)?)
+    generate_constructor(
+        contract,
+        &runtime_bytecode,
+        optimization_level,
+        optimize_for,
+    )
 }
 
 /// Generate the constructor (init code) that deploys the runtime.
@@ -201,6 +200,9 @@ fn minimal_byte_count(val: usize) -> usize {
         return 0; // PUSH0
     }
     let bytes = val.to_be_bytes();
-    let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+    let start = bytes
+        .iter()
+        .position(|&b| b != 0)
+        .unwrap_or(bytes.len() - 1);
     bytes.len() - start
 }

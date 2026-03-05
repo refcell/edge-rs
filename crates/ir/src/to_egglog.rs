@@ -4,8 +4,7 @@
 //! and producing IR nodes. This follows the pattern from eggcc's
 //! `TreeToEgglog` but targets EVM-specific IR constructs.
 
-use std::collections::HashSet;
-use std::rc::Rc;
+use std::{collections::HashSet, rc::Rc};
 
 use indexmap::IndexMap;
 
@@ -20,8 +19,8 @@ use crate::{
 
 /// Check if an expression references any variable from a set of names.
 ///
-/// Used during lowering to ensure a LetBind init expression doesn't reference
-/// variables whose LetBinds are inner (not yet allocated).
+/// Used during lowering to ensure a `LetBind` init expression doesn't reference
+/// variables whose `LetBinds` are inner (not yet allocated).
 fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
     match expr.as_ref() {
         EvmExpr::Var(n) => names.contains(n.as_str()),
@@ -51,19 +50,15 @@ fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
             references_any_var(init, names) || references_any_var(body, names)
         }
         EvmExpr::EnvRead(_, s) => references_any_var(s, names),
-        EvmExpr::EnvRead1(_, a, s) => {
-            references_any_var(a, names) || references_any_var(s, names)
-        }
+        EvmExpr::EnvRead1(_, a, s) => references_any_var(a, names) || references_any_var(s, names),
         EvmExpr::Log(_, topics, data, state) => {
             topics.iter().any(|t| references_any_var(t, names))
                 || references_any_var(data, names)
                 || references_any_var(state, names)
         }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            [a, b, c, d, e, f, g]
-                .iter()
-                .any(|x| references_any_var(x, names))
-        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
+            .iter()
+            .any(|x| references_any_var(x, names)),
         EvmExpr::Call(_, args) => references_any_var(args, names),
         EvmExpr::Function(_, _, _, body) => references_any_var(body, names),
     }
@@ -79,8 +74,8 @@ struct VarBinding {
     /// For storage variables, the slot index
     storage_slot: Option<usize>,
     /// The type
-    ty: EvmType,
-    /// For memory-backed local variables, the LetBind variable name
+    _ty: EvmType,
+    /// For memory-backed local variables, the `LetBind` variable name
     let_bind_name: Option<String>,
 }
 
@@ -99,6 +94,13 @@ impl Scope {
     }
 }
 
+/// A contract function: (name, params, body).
+type ContractFunction = (
+    String,
+    Vec<(String, edge_ast::ty::TypeSig)>,
+    edge_ast::CodeBlock,
+);
+
 /// Converts Edge AST to the egglog-based EVM IR.
 #[derive(Debug)]
 pub struct AstToEgglog {
@@ -115,12 +117,18 @@ pub struct AstToEgglog {
     /// Storage field IR nodes for the current contract
     storage_fields: Vec<RcExpr>,
     /// Internal functions available for inlining in the current contract
-    /// Maps function name -> (fn_decl ref data, body)
-    contract_functions: Vec<(String, Vec<(String, edge_ast::ty::TypeSig)>, edge_ast::CodeBlock)>,
+    /// Maps function name -> (`fn_decl` ref data, body)
+    contract_functions: Vec<ContractFunction>,
     /// Events declared in the program (name -> (params with indexed info and type))
     events: IndexMap<String, Vec<(String, bool, edge_ast::ty::TypeSig)>>,
     /// Inline call depth — when > 0, `return` produces just the value (no RETURN opcode)
     inline_depth: usize,
+}
+
+impl Default for AstToEgglog {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AstToEgglog {
@@ -223,7 +231,7 @@ impl AstToEgglog {
                 ),
                 location,
                 storage_slot: Some(slot),
-                ty,
+                _ty: ty,
                 let_bind_name: None,
             };
             self.scopes
@@ -242,11 +250,8 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                self.contract_functions.push((
-                    fn_decl.name.name.clone(),
-                    params,
-                    body.clone(),
-                ));
+                self.contract_functions
+                    .push((fn_decl.name.name.clone(), params, body.clone()));
             }
         }
 
@@ -254,8 +259,7 @@ impl AstToEgglog {
         let mut fn_bodies: Vec<(&edge_ast::ContractFnDecl, Option<RcExpr>)> = Vec::new();
         for fn_decl in &contract.functions {
             if let Some(body) = &fn_decl.body {
-                let body_ir =
-                    self.lower_contract_fn_body(&contract_name, fn_decl, body)?;
+                let body_ir = self.lower_contract_fn_body(&contract_name, fn_decl, body)?;
                 fn_bodies.push((fn_decl, Some(body_ir)));
             } else {
                 fn_bodies.push((fn_decl, None));
@@ -285,10 +289,7 @@ impl AstToEgglog {
             })
             .collect();
         let constructor = if persistent_slots.is_empty() {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                constructor_ctx,
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx)
         } else {
             let mut sstores: Vec<RcExpr> = Vec::new();
             let init_state = Rc::new(EvmExpr::Arg(
@@ -300,14 +301,14 @@ impl AstToEgglog {
                 let store = ast_helpers::sstore(
                     ast_helpers::const_int(slot as i64, constructor_ctx.clone()),
                     ast_helpers::const_int(0, constructor_ctx.clone()),
-                    ctor_state.clone(),
+                    Rc::clone(&ctor_state),
                 );
-                ctor_state = store.clone();
+                ctor_state = Rc::clone(&store);
                 sstores.push(store);
             }
-            let mut result = sstores[0].clone();
+            let mut result = Rc::clone(&sstores[0]);
             for store in &sstores[1..] {
-                result = ast_helpers::concat(result, store.clone());
+                result = ast_helpers::concat(result, Rc::clone(store));
             }
             result
         };
@@ -346,7 +347,7 @@ impl AstToEgglog {
             let raw_val = Rc::new(EvmExpr::Bop(
                 EvmBinaryOp::CalldataLoad,
                 ast_helpers::const_int(calldata_offset as i64, self.current_ctx.clone()),
-                self.current_state.clone(),
+                Rc::clone(&self.current_state),
             ));
             // Mask address-typed params to 20 bytes to clean dirty upper bits
             let param_val = if ty == EvmType::Base(EvmBaseType::AddrT) {
@@ -365,7 +366,7 @@ impl AstToEgglog {
                 value: param_val,
                 location: DataLocation::Stack,
                 storage_slot: None,
-                ty,
+                _ty: ty,
                 let_bind_name: None,
             };
             self.scopes
@@ -385,12 +386,9 @@ impl AstToEgglog {
         let stop = ast_helpers::return_op(
             ast_helpers::const_int(0, self.current_ctx.clone()),
             ast_helpers::const_int(0, self.current_ctx.clone()),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        Ok(ast_helpers::concat(
-            body_ir,
-            stop,
-        ))
+        Ok(ast_helpers::concat(body_ir, stop))
     }
 
     /// Lower a standalone function.
@@ -419,15 +417,15 @@ impl AstToEgglog {
         for (i, (ident, type_sig)) in fn_decl.params.iter().enumerate() {
             let ty = self.lower_type_sig(type_sig);
             let param_val = if fn_decl.params.len() == 1 {
-                arg_expr.clone()
+                Rc::clone(&arg_expr)
             } else {
-                ast_helpers::get(arg_expr.clone(), i)
+                ast_helpers::get(Rc::clone(&arg_expr), i)
             };
             let binding = VarBinding {
                 value: param_val,
                 location: DataLocation::Stack,
                 storage_slot: None,
-                ty,
+                _ty: ty,
                 let_bind_name: None,
             };
             self.scopes
@@ -498,9 +496,9 @@ impl AstToEgglog {
             let var_name = format!("__local_{name}");
 
             // Find the first VarStore for this variable
-            let idx = stmts.iter().position(|s| {
-                matches!(s.as_ref(), EvmExpr::VarStore(n, _) if n == &var_name)
-            });
+            let idx = stmts
+                .iter()
+                .position(|s| matches!(s.as_ref(), EvmExpr::VarStore(n, _) if n == &var_name));
             let Some(idx) = idx else { continue };
 
             // All preceding statements must be Empty (pure VarDecl placeholders).
@@ -513,7 +511,7 @@ impl AstToEgglog {
 
             // Extract the init value
             let init_val = match stmts[idx].as_ref() {
-                EvmExpr::VarStore(_, val) => val.clone(),
+                EvmExpr::VarStore(_, val) => Rc::clone(val),
                 _ => unreachable!(),
             };
 
@@ -532,9 +530,9 @@ impl AstToEgglog {
             stmts.remove(idx);
         }
 
-        let mut result = stmts[0].clone();
+        let mut result = Rc::clone(&stmts[0]);
         for stmt in &stmts[1..] {
-            result = ast_helpers::concat(result, stmt.clone());
+            result = ast_helpers::concat(result, Rc::clone(stmt));
         }
 
         // Wrap the result in LetBinds for memory-backed locals (innermost first).
@@ -564,10 +562,10 @@ impl AstToEgglog {
                 let zero = ast_helpers::const_int(0, self.current_ctx.clone());
                 let var_name = format!("__local_{}", ident.name);
                 let binding = VarBinding {
-                    value: zero.clone(),
+                    value: zero,
                     location: DataLocation::Memory,
                     storage_slot: None,
-                    ty,
+                    _ty: ty,
                     let_bind_name: Some(var_name),
                 };
                 self.scopes
@@ -596,10 +594,10 @@ impl AstToEgglog {
                     .map(|ts| self.lower_type_sig(ts))
                     .unwrap_or(EvmType::Base(EvmBaseType::UIntT(256)));
                 let binding = VarBinding {
-                    value: val.clone(),
+                    value: Rc::clone(&val),
                     location: DataLocation::Stack,
                     storage_slot: None,
-                    ty,
+                    _ty: ty,
                     let_bind_name: None,
                 };
                 self.scopes
@@ -628,29 +626,22 @@ impl AstToEgglog {
                     let size = ast_helpers::const_int(32, self.current_ctx.clone());
                     // Store value at memory offset 0 (as a separate compiled expression)
                     let mstore_expr = ast_helpers::mstore(
-                        offset.clone(),
+                        Rc::clone(&offset),
                         val,
-                        self.current_state.clone(),
+                        Rc::clone(&self.current_state),
                     );
-                    self.current_state = mstore_expr.clone();
-                    let ret = ast_helpers::return_op(
-                        offset,
-                        size,
-                        self.current_state.clone(),
-                    );
+                    self.current_state = Rc::clone(&mstore_expr);
+                    let ret = ast_helpers::return_op(offset, size, Rc::clone(&self.current_state));
                     // Emit MStore first, then RETURN — the codegen ignores
                     // state parameters, so MStore must be a separate expression
-                    Ok(ast_helpers::concat(
-                        mstore_expr,
-                        ret,
-                    ))
+                    Ok(ast_helpers::concat(mstore_expr, ret))
                 } else {
                     let offset = ast_helpers::const_int(0, self.current_ctx.clone());
                     let size = ast_helpers::const_int(0, self.current_ctx.clone());
                     Ok(ast_helpers::return_op(
                         offset,
                         size,
-                        self.current_state.clone(),
+                        Rc::clone(&self.current_state),
                     ))
                 }
             }
@@ -659,25 +650,20 @@ impl AstToEgglog {
                 self.lower_if_else(branches, else_block.as_ref())
             }
 
-            edge_ast::Stmt::WhileLoop(cond, loop_block) => {
-                self.lower_while_loop(cond, loop_block)
-            }
+            edge_ast::Stmt::WhileLoop(cond, loop_block) => self.lower_while_loop(cond, loop_block),
 
-            edge_ast::Stmt::ForLoop(init, cond, update, loop_block) => {
-                self.lower_for_loop(init.as_deref(), cond.as_ref(), update.as_deref(), loop_block)
-            }
+            edge_ast::Stmt::ForLoop(init, cond, update, loop_block) => self.lower_for_loop(
+                init.as_deref(),
+                cond.as_ref(),
+                update.as_deref(),
+                loop_block,
+            ),
 
-            edge_ast::Stmt::Loop(loop_block) => {
-                self.lower_infinite_loop(loop_block)
-            }
+            edge_ast::Stmt::Loop(loop_block) => self.lower_infinite_loop(loop_block),
 
-            edge_ast::Stmt::DoWhile(loop_block, cond) => {
-                self.lower_do_while(loop_block, cond)
-            }
+            edge_ast::Stmt::DoWhile(loop_block, cond) => self.lower_do_while(loop_block, cond),
 
-            edge_ast::Stmt::Emit(event_name, args, _span) => {
-                self.lower_emit(event_name, args)
-            }
+            edge_ast::Stmt::Emit(event_name, args, _span) => self.lower_emit(event_name, args),
 
             edge_ast::Stmt::Expr(expr) => self.lower_expr(expr),
 
@@ -761,11 +747,10 @@ impl AstToEgglog {
 
             edge_ast::Expr::Path(components, _span) => {
                 // Qualified path like Module::Item
-                if let Some(last) = components.last() {
-                    self.lower_ident(&last.name)
-                } else {
-                    Err(IrError::Lowering("empty path".to_owned()))
-                }
+                components.last().map_or_else(
+                    || Err(IrError::Lowering("empty path".to_owned())),
+                    |last| self.lower_ident(&last.name),
+                )
             }
 
             // TODO: implement remaining expression types
@@ -789,44 +774,32 @@ impl AstToEgglog {
                     self.current_ctx.clone(),
                 )))
             }
-            edge_ast::Lit::Bool(val, _span) => Ok(ast_helpers::const_bool(
-                *val,
-                self.current_ctx.clone(),
-            )),
+            edge_ast::Lit::Bool(val, _span) => {
+                Ok(ast_helpers::const_bool(*val, self.current_ctx.clone()))
+            }
             edge_ast::Lit::Hex(bytes, _span) => {
-                let hex_str = bytes
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
             edge_ast::Lit::Bin(bytes, _span) => {
-                let hex_str = bytes
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
             edge_ast::Lit::Str(s, _span) => {
                 // Strings become their keccak256 hash in most EVM contexts
                 // For now, store as BigInt of the raw bytes
-                let hex_str = s.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>();
-                Ok(ast_helpers::const_bigint(
-                    hex_str,
-                    self.current_ctx.clone(),
-                ))
+                let hex_str = s
+                    .as_bytes()
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>();
+                Ok(ast_helpers::const_bigint(hex_str, self.current_ctx.clone()))
             }
         }
     }
 
     /// Lower an identifier reference.
-    fn lower_ident(&mut self, name: &str) -> Result<RcExpr, IrError> {
+    fn lower_ident(&self, name: &str) -> Result<RcExpr, IrError> {
         // Search scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.bindings.get(name) {
@@ -837,7 +810,7 @@ impl AstToEgglog {
                             binding.storage_slot.unwrap_or(0) as i64,
                             self.current_ctx.clone(),
                         );
-                        Ok(ast_helpers::sload(slot, self.current_state.clone()))
+                        Ok(ast_helpers::sload(slot, Rc::clone(&self.current_state)))
                     }
                     DataLocation::Transient => {
                         // Transient storage variable: emit TLOAD
@@ -845,16 +818,15 @@ impl AstToEgglog {
                             binding.storage_slot.unwrap_or(0) as i64,
                             self.current_ctx.clone(),
                         );
-                        Ok(ast_helpers::tload(slot, self.current_state.clone()))
+                        Ok(ast_helpers::tload(slot, Rc::clone(&self.current_state)))
                     }
                     _ => {
-                        if let Some(ref var_name) = binding.let_bind_name {
-                            // Memory-backed local: emit Var(name) to read from memory
-                            Ok(ast_helpers::var(var_name.clone()))
-                        } else {
+                        binding.let_bind_name.as_ref().map_or_else(
                             // Stack/compile-time variable: return the value directly
-                            Ok(binding.value.clone())
-                        }
+                            || Ok(Rc::clone(&binding.value)),
+                            // Memory-backed local: emit Var(name) to read from memory
+                            |var_name| Ok(ast_helpers::var(var_name.clone())),
+                        )
                     }
                 };
             }
@@ -882,10 +854,10 @@ impl AstToEgglog {
                                 );
                                 let new_state = ast_helpers::sstore(
                                     slot,
-                                    rhs_ir.clone(),
-                                    self.current_state.clone(),
+                                    rhs_ir,
+                                    Rc::clone(&self.current_state),
                                 );
-                                self.current_state = new_state.clone();
+                                self.current_state = Rc::clone(&new_state);
                                 Ok(new_state)
                             }
                             DataLocation::Transient => {
@@ -895,10 +867,10 @@ impl AstToEgglog {
                                 );
                                 let new_state = ast_helpers::tstore(
                                     slot,
-                                    rhs_ir.clone(),
-                                    self.current_state.clone(),
+                                    rhs_ir,
+                                    Rc::clone(&self.current_state),
                                 );
-                                self.current_state = new_state.clone();
+                                self.current_state = Rc::clone(&new_state);
                                 Ok(new_state)
                             }
                             _ => {
@@ -907,7 +879,7 @@ impl AstToEgglog {
                                     Ok(ast_helpers::var_store(var_name.clone(), rhs_ir))
                                 } else {
                                     // Compile-time variable (const/param): replace value
-                                    binding.value = rhs_ir.clone();
+                                    binding.value = Rc::clone(&rhs_ir);
                                     Ok(rhs_ir)
                                 }
                             }
@@ -979,11 +951,7 @@ impl AstToEgglog {
     }
 
     /// Lower a unary operator.
-    fn lower_unary_op(
-        &self,
-        op: &edge_ast::UnaryOp,
-        expr: RcExpr,
-    ) -> Result<RcExpr, IrError> {
+    fn lower_unary_op(&self, op: &edge_ast::UnaryOp, expr: RcExpr) -> Result<RcExpr, IrError> {
         let ir_op = match op {
             edge_ast::UnaryOp::Neg => EvmUnaryOp::Neg,
             edge_ast::UnaryOp::BitwiseNot => EvmUnaryOp::Not,
@@ -1034,14 +1002,15 @@ impl AstToEgglog {
             self.scopes.push(Scope::new());
             for (i, (param_name, param_ty)) in params.iter().enumerate() {
                 let ty = self.lower_type_sig(param_ty);
-                let val = args_ir.get(i).cloned().unwrap_or_else(|| {
-                    ast_helpers::const_int(0, self.current_ctx.clone())
-                });
+                let val = args_ir
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
                 let binding = VarBinding {
                     value: val,
                     location: DataLocation::Stack,
                     storage_slot: None,
-                    ty,
+                    _ty: ty,
                     let_bind_name: None,
                 };
                 self.scopes
@@ -1066,15 +1035,12 @@ impl AstToEgglog {
             .collect::<Result<_, _>>()?;
 
         let arg_tuple = match args_ir.len() {
-            0 => ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            ),
+            0 => ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone()),
             1 => args_ir.into_iter().next().expect("checked len"),
             _ => {
-                let mut result = args_ir[0].clone();
+                let mut result = Rc::clone(&args_ir[0]);
                 for arg in &args_ir[1..] {
-                    result = ast_helpers::concat(result, arg.clone());
+                    result = ast_helpers::concat(result, Rc::clone(arg));
                 }
                 result
             }
@@ -1084,11 +1050,7 @@ impl AstToEgglog {
     }
 
     /// Lower a builtin call (@caller, @callvalue, etc.).
-    fn lower_builtin(
-        &mut self,
-        name: &str,
-        _args: &[edge_ast::Expr],
-    ) -> Result<RcExpr, IrError> {
+    fn lower_builtin(&self, name: &str, _args: &[edge_ast::Expr]) -> Result<RcExpr, IrError> {
         let env_op = match name {
             "caller" => EvmEnvOp::Caller,
             "callvalue" | "value" => EvmEnvOp::CallValue,
@@ -1107,14 +1069,12 @@ impl AstToEgglog {
             "codesize" => EvmEnvOp::CodeSize,
             "returndatasize" => EvmEnvOp::ReturnDataSize,
             _ => {
-                return Err(IrError::Unsupported(format!(
-                    "unknown builtin: @{name}"
-                )));
+                return Err(IrError::Unsupported(format!("unknown builtin: @{name}")));
             }
         };
         Ok(Rc::new(EvmExpr::EnvRead(
             env_op,
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         )))
     }
 
@@ -1144,16 +1104,11 @@ impl AstToEgglog {
         } else if let Some(block) = else_block {
             self.lower_code_block(block)?
         } else {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone())
         };
 
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::if_then_else(cond_ir, inputs, then_ir, else_ir))
     }
 
@@ -1167,19 +1122,11 @@ impl AstToEgglog {
         let body_ir = self.lower_loop_block(loop_block)?;
         // while(cond) { body } -> if(cond) { do { body; cond } while(top) }
         // Body side effects (SSTORE) must run BEFORE condition is re-evaluated
-        let pred_and_body = ast_helpers::concat(
-            body_ir,
-            cond_ir.clone(),
-        );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
-        let loop_ir = ast_helpers::do_while(inputs.clone(), pred_and_body);
-        let empty = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let pred_and_body = ast_helpers::concat(body_ir, Rc::clone(&cond_ir));
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+        let loop_ir = ast_helpers::do_while(Rc::clone(&inputs), pred_and_body);
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::if_then_else(cond_ir, inputs, loop_ir, empty))
     }
 
@@ -1210,31 +1157,18 @@ impl AstToEgglog {
         let update_ir = if let Some(update_stmt) = update {
             self.lower_stmt(update_stmt)?
         } else {
-            ast_helpers::empty(
-                EvmType::Base(EvmBaseType::UnitT),
-                self.current_ctx.clone(),
-            )
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone())
         };
 
         // Combine: pred_and_body = (body, update, cond)
         // Body + update run BEFORE condition is re-evaluated
-        let pred_and_body = ast_helpers::concat(
-            ast_helpers::concat(
-                body_ir,
-                update_ir,
-            ),
-            cond_ir.clone(),
-        );
+        let pred_and_body =
+            ast_helpers::concat(ast_helpers::concat(body_ir, update_ir), Rc::clone(&cond_ir));
 
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
-        let loop_ir = ast_helpers::do_while(inputs.clone(), pred_and_body);
-        let empty = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+        let loop_ir = ast_helpers::do_while(Rc::clone(&inputs), pred_and_body);
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
 
         self.scopes.pop();
 
@@ -1242,21 +1176,13 @@ impl AstToEgglog {
     }
 
     /// Lower an infinite loop.
-    fn lower_infinite_loop(
-        &mut self,
-        loop_block: &edge_ast::LoopBlock,
-    ) -> Result<RcExpr, IrError> {
+    fn lower_infinite_loop(&mut self, loop_block: &edge_ast::LoopBlock) -> Result<RcExpr, IrError> {
         let body_ir = self.lower_loop_block(loop_block)?;
         let true_const = ast_helpers::const_bool(true, self.current_ctx.clone());
         // Body runs first, then always-true condition
-        let pred_and_body = ast_helpers::concat(
-            body_ir,
-            true_const,
-        );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let pred_and_body = ast_helpers::concat(body_ir, true_const);
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::do_while(inputs, pred_and_body))
     }
 
@@ -1269,26 +1195,16 @@ impl AstToEgglog {
         let body_ir = self.lower_loop_block(loop_block)?;
         let cond_ir = self.lower_expr(cond)?;
         // Body runs first, then condition is evaluated
-        let pred_and_body = ast_helpers::concat(
-            body_ir,
-            cond_ir,
-        );
-        let inputs = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let pred_and_body = ast_helpers::concat(body_ir, cond_ir);
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         Ok(ast_helpers::do_while(inputs, pred_and_body))
     }
 
     /// Lower a loop block.
-    fn lower_loop_block(
-        &mut self,
-        block: &edge_ast::LoopBlock,
-    ) -> Result<RcExpr, IrError> {
-        let mut result = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+    fn lower_loop_block(&mut self, block: &edge_ast::LoopBlock) -> Result<RcExpr, IrError> {
+        let mut result =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
 
         for item in &block.items {
             let item_ir = match item {
@@ -1322,17 +1238,20 @@ impl AstToEgglog {
         // Compute event signature for topic[0]
         // Build the event signature string: "EventName(type1,type2,...)"
         let event_info = self.events.get(&event_name.name).cloned();
-        let sig = if let Some(ref fields) = event_info {
-            let types: Vec<String> = fields
-                .iter()
-                .map(|(_, _, ty)| self.type_sig_to_abi_string(ty))
-                .collect();
-            format!("{}({})", event_name.name, types.join(","))
-        } else {
-            // Fallback: build signature from arg count
-            let types: Vec<&str> = args.iter().map(|_| "uint256").collect();
-            format!("{}({})", event_name.name, types.join(","))
-        };
+        let sig = event_info.as_ref().map_or_else(
+            || {
+                // Fallback: build signature from arg count
+                let types: Vec<&str> = args.iter().map(|_| "uint256").collect();
+                format!("{}({})", event_name.name, types.join(","))
+            },
+            |fields| {
+                let types: Vec<String> = fields
+                    .iter()
+                    .map(|(_, _, ty)| Self::type_sig_to_abi_string(ty))
+                    .collect();
+                format!("{}({})", event_name.name, types.join(","))
+            },
+        );
         // Event topic0 must be the full 32-byte keccak256 hash (not a 4-byte selector)
         let mut hash = [0u8; 32];
         edge_types::bytes::hash_bytes(&mut hash, &sig);
@@ -1363,22 +1282,22 @@ impl AstToEgglog {
         let (data_offset, data_size) = if data_exprs.is_empty() {
             (
                 ast_helpers::const_int(0, ctx.clone()),
-                ast_helpers::const_int(0, ctx.clone()),
+                ast_helpers::const_int(0, ctx),
             )
         } else {
             for (i, data_expr) in data_exprs.iter().enumerate() {
                 let offset = (i * 32) as i64;
                 let mstore = ast_helpers::mstore(
                     ast_helpers::const_int(offset, ctx.clone()),
-                    data_expr.clone(),
-                    self.current_state.clone(),
+                    Rc::clone(data_expr),
+                    Rc::clone(&self.current_state),
                 );
-                self.current_state = mstore.clone();
+                self.current_state = Rc::clone(&mstore);
                 side_effects.push(mstore);
             }
             (
                 ast_helpers::const_int(0, ctx.clone()),
-                ast_helpers::const_int((data_exprs.len() * 32) as i64, ctx.clone()),
+                ast_helpers::const_int((data_exprs.len() * 32) as i64, ctx),
             )
         };
 
@@ -1387,17 +1306,17 @@ impl AstToEgglog {
             topic_count,
             topics,
             ast_helpers::concat(data_offset, data_size),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         ));
-        self.current_state = log.clone();
+        self.current_state = Rc::clone(&log);
 
         // Build concat of side effects + log
         if side_effects.is_empty() {
             Ok(log)
         } else {
-            let mut result = side_effects[0].clone();
+            let mut result = Rc::clone(&side_effects[0]);
             for effect in &side_effects[1..] {
-                result = ast_helpers::concat(result, effect.clone());
+                result = ast_helpers::concat(result, Rc::clone(effect));
             }
             Ok(ast_helpers::concat(result, log))
         }
@@ -1409,7 +1328,7 @@ impl AstToEgglog {
     ///   `keccak256(abi.encode(key, s))` where key is left-padded to 32 bytes
     ///   at memory[0..32] and s is at memory[32..64].
     ///
-    /// Returns `(side_effects_expr, computed_slot_expr)` where side_effects_expr
+    /// Returns `(side_effects_expr, computed_slot_expr)` where `side_effects_expr`
     /// is a Concat of MSTOREs that must be emitted before the slot is used.
     fn compute_mapping_slot(&mut self, key: RcExpr, base_slot: i64) -> (RcExpr, RcExpr) {
         let ctx = self.current_ctx.clone();
@@ -1417,26 +1336,23 @@ impl AstToEgglog {
         let mstore_key = ast_helpers::mstore(
             ast_helpers::const_int(0, ctx.clone()),
             key,
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_key.clone();
+        self.current_state = Rc::clone(&mstore_key);
         // MSTORE(32, base_slot)
         let mstore_slot = ast_helpers::mstore(
             ast_helpers::const_int(32, ctx.clone()),
             ast_helpers::const_int(base_slot, ctx.clone()),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_slot.clone();
+        self.current_state = Rc::clone(&mstore_slot);
         // KECCAK256(0, 64, state) — state captures the memory contents
         let computed_slot = ast_helpers::keccak256(
             ast_helpers::const_int(0, ctx.clone()),
             ast_helpers::const_int(64, ctx),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        let side_effects = ast_helpers::concat(
-            mstore_key,
-            mstore_slot,
-        );
+        let side_effects = ast_helpers::concat(mstore_key, mstore_slot);
         (side_effects, computed_slot)
     }
 
@@ -1458,49 +1374,43 @@ impl AstToEgglog {
         let mstore_key1 = ast_helpers::mstore(
             ast_helpers::const_int(0, ctx.clone()),
             outer_key,
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_key1.clone();
+        self.current_state = Rc::clone(&mstore_key1);
         let mstore_slot1 = ast_helpers::mstore(
             ast_helpers::const_int(32, ctx.clone()),
             ast_helpers::const_int(base_slot, ctx.clone()),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_slot1.clone();
+        self.current_state = Rc::clone(&mstore_slot1);
         // inner_slot — KECCAK256(0, 64, state) reads memory[0..64]
         let inner_slot = ast_helpers::keccak256(
             ast_helpers::const_int(0, ctx.clone()),
             ast_helpers::const_int(64, ctx.clone()),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
         // Second level: keccak256(key2 . inner_slot) at memory[64..128]
         // Using offset 64 avoids overwriting memory[0..64] before KECCAK256 reads it
         let mstore_key2 = ast_helpers::mstore(
             ast_helpers::const_int(64, ctx.clone()),
             inner_key,
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_key2.clone();
+        self.current_state = Rc::clone(&mstore_key2);
         let mstore_slot2 = ast_helpers::mstore(
             ast_helpers::const_int(96, ctx.clone()),
             inner_slot,
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
-        self.current_state = mstore_slot2.clone();
+        self.current_state = Rc::clone(&mstore_slot2);
         let computed_slot = ast_helpers::keccak256(
             ast_helpers::const_int(64, ctx.clone()),
             ast_helpers::const_int(64, ctx),
-            self.current_state.clone(),
+            Rc::clone(&self.current_state),
         );
         let side_effects = ast_helpers::concat(
-            ast_helpers::concat(
-                mstore_key1,
-                mstore_slot1,
-            ),
-            ast_helpers::concat(
-                mstore_key2,
-                mstore_slot2,
-            ),
+            ast_helpers::concat(mstore_key1, mstore_slot1),
+            ast_helpers::concat(mstore_key2, mstore_slot2),
         );
         (side_effects, computed_slot)
     }
@@ -1528,8 +1438,10 @@ impl AstToEgglog {
             let (side_effects, computed_slot) =
                 self.compute_nested_mapping_slot(outer_key, inner_key, base_slot as i64);
             let load = match location {
-                DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
-                _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
+                DataLocation::Transient => {
+                    ast_helpers::tload(computed_slot, Rc::clone(&self.current_state))
+                }
+                _ => ast_helpers::sload(computed_slot, Rc::clone(&self.current_state)),
             };
             return Ok(ast_helpers::concat(side_effects, load));
         }
@@ -1545,11 +1457,12 @@ impl AstToEgglog {
         };
         let (base_slot, location) = self.find_storage_slot(field_name)?;
         let key = self.lower_expr(index)?;
-        let (side_effects, computed_slot) =
-            self.compute_mapping_slot(key, base_slot as i64);
+        let (side_effects, computed_slot) = self.compute_mapping_slot(key, base_slot as i64);
         let load = match location {
-            DataLocation::Transient => ast_helpers::tload(computed_slot, self.current_state.clone()),
-            _ => ast_helpers::sload(computed_slot, self.current_state.clone()),
+            DataLocation::Transient => {
+                ast_helpers::tload(computed_slot, Rc::clone(&self.current_state))
+            }
+            _ => ast_helpers::sload(computed_slot, Rc::clone(&self.current_state)),
         };
         Ok(ast_helpers::concat(side_effects, load))
     }
@@ -1577,10 +1490,12 @@ impl AstToEgglog {
             let (side_effects, computed_slot) =
                 self.compute_nested_mapping_slot(outer_key, inner_key, base_slot as i64);
             let store = match location {
-                DataLocation::Transient => ast_helpers::tstore(computed_slot, value, self.current_state.clone()),
-                _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
+                DataLocation::Transient => {
+                    ast_helpers::tstore(computed_slot, value, Rc::clone(&self.current_state))
+                }
+                _ => ast_helpers::sstore(computed_slot, value, Rc::clone(&self.current_state)),
             };
-            self.current_state = store.clone();
+            self.current_state = Rc::clone(&store);
             return Ok(ast_helpers::concat(side_effects, store));
         }
 
@@ -1595,13 +1510,14 @@ impl AstToEgglog {
         };
         let (base_slot, location) = self.find_storage_slot(field_name)?;
         let key = self.lower_expr(index)?;
-        let (side_effects, computed_slot) =
-            self.compute_mapping_slot(key, base_slot as i64);
+        let (side_effects, computed_slot) = self.compute_mapping_slot(key, base_slot as i64);
         let store = match location {
-            DataLocation::Transient => ast_helpers::tstore(computed_slot, value, self.current_state.clone()),
-            _ => ast_helpers::sstore(computed_slot, value, self.current_state.clone()),
+            DataLocation::Transient => {
+                ast_helpers::tstore(computed_slot, value, Rc::clone(&self.current_state))
+            }
+            _ => ast_helpers::sstore(computed_slot, value, Rc::clone(&self.current_state)),
         };
-        self.current_state = store.clone();
+        self.current_state = Rc::clone(&store);
         Ok(ast_helpers::concat(side_effects, store))
     }
 
@@ -1626,7 +1542,7 @@ impl AstToEgglog {
     /// functions, builds a balanced binary search tree sorted by selector value
     /// for O(log N) dispatch instead of O(N).
     ///
-    /// Uses LetBind to compute the calldata selector once, then Var references
+    /// Uses `LetBind` to compute the calldata selector once, then Var references
     /// in each condition to avoid redundant CALLDATALOAD+SHR per branch.
     fn build_dispatcher(
         &self,
@@ -1647,12 +1563,12 @@ impl AstToEgglog {
 
         // Collect dispatchable functions with their selector values
         let mut entries: Vec<(u32, String, RcExpr)> = Vec::new();
-        for (fn_decl, body_ir) in fn_bodies.iter() {
+        for (fn_decl, body_ir) in fn_bodies {
             if !fn_decl.is_ext && !fn_decl.is_pub {
                 continue;
             }
             let body = match body_ir {
-                Some(b) => b.clone(),
+                Some(b) => Rc::clone(b),
                 None => continue,
             };
             let sig = self.compute_function_signature(&fn_decl.name.name, &fn_decl.params);
@@ -1691,17 +1607,21 @@ impl AstToEgglog {
         // IR convention: Bop(Shr, shift_amount, value)
         let shifted = ast_helpers::bop(
             EvmBinaryOp::Shr,
-            ast_helpers::const_int(224, ctx.clone()),
+            ast_helpers::const_int(224, ctx),
             calldataload,
         );
 
-        Ok(ast_helpers::let_bind("__selector".to_string(), shifted, result))
+        Ok(ast_helpers::let_bind(
+            "__selector".to_string(),
+            shifted,
+            result,
+        ))
     }
 
     /// Compute the numeric 4-byte selector value for a function signature.
     fn compute_selector_value(sig: &str) -> u32 {
         let mut hash = [0u8; 32];
-        edge_types::bytes::hash_bytes(&mut hash, &sig.to_owned());
+        edge_types::bytes::hash_bytes(&mut hash, sig);
         u32::from_be_bytes([hash[0], hash[1], hash[2], hash[3]])
     }
 
@@ -1712,12 +1632,12 @@ impl AstToEgglog {
         fallback: &RcExpr,
         ctx: &EvmContext,
     ) -> RcExpr {
-        let mut result = fallback.clone();
+        let mut result = Rc::clone(fallback);
         for (_sel_val, sig, body) in entries.iter().rev() {
             let selector_expr = ast_helpers::selector(sig.clone());
-            let cond = ast_helpers::eq(selector_var.clone(), selector_expr);
+            let cond = ast_helpers::eq(Rc::clone(selector_var), selector_expr);
             let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
-            result = ast_helpers::if_then_else(cond, inputs, body.clone(), result);
+            result = ast_helpers::if_then_else(cond, inputs, Rc::clone(body), result);
         }
         result
     }
@@ -1733,30 +1653,29 @@ impl AstToEgglog {
         ctx: &EvmContext,
     ) -> RcExpr {
         match entries.len() {
-            0 => fallback.clone(),
+            0 => Rc::clone(fallback),
             1 => {
                 // Leaf: single EQ check
                 let (_, sig, body) = &entries[0];
                 let selector_expr = ast_helpers::selector(sig.clone());
-                let cond = ast_helpers::eq(selector_var.clone(), selector_expr);
+                let cond = ast_helpers::eq(Rc::clone(selector_var), selector_expr);
                 let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
-                ast_helpers::if_then_else(cond, inputs, body.clone(), fallback.clone())
+                ast_helpers::if_then_else(cond, inputs, Rc::clone(body), Rc::clone(fallback))
             }
             2 => {
                 // Two entries: linear chain (no benefit from GT)
                 let right = {
                     let (_, sig, body) = &entries[1];
                     let selector_expr = ast_helpers::selector(sig.clone());
-                    let cond = ast_helpers::eq(selector_var.clone(), selector_expr);
-                    let inputs =
-                        ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
-                    ast_helpers::if_then_else(cond, inputs, body.clone(), fallback.clone())
+                    let cond = ast_helpers::eq(Rc::clone(selector_var), selector_expr);
+                    let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
+                    ast_helpers::if_then_else(cond, inputs, Rc::clone(body), Rc::clone(fallback))
                 };
                 let (_, sig, body) = &entries[0];
                 let selector_expr = ast_helpers::selector(sig.clone());
-                let cond = ast_helpers::eq(selector_var.clone(), selector_expr);
+                let cond = ast_helpers::eq(Rc::clone(selector_var), selector_expr);
                 let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
-                ast_helpers::if_then_else(cond, inputs, body.clone(), right)
+                ast_helpers::if_then_else(cond, inputs, Rc::clone(body), right)
             }
             _ => {
                 // Split at midpoint
@@ -1765,15 +1684,12 @@ impl AstToEgglog {
 
                 // EQ check with pivot
                 let pivot_selector = ast_helpers::selector(pivot_sig.clone());
-                let eq_cond = ast_helpers::eq(selector_var.clone(), pivot_selector);
+                let eq_cond = ast_helpers::eq(Rc::clone(selector_var), pivot_selector);
 
                 // GT comparison for branching
                 let pivot_const = ast_helpers::const_int(*pivot_val as i64, ctx.clone());
-                let gt_cond = ast_helpers::bop(
-                    EvmBinaryOp::Gt,
-                    selector_var.clone(),
-                    pivot_const,
-                );
+                let gt_cond =
+                    ast_helpers::bop(EvmBinaryOp::Gt, Rc::clone(selector_var), pivot_const);
 
                 let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
 
@@ -1784,15 +1700,11 @@ impl AstToEgglog {
                     Self::build_bst_dispatch(&entries[mid + 1..], selector_var, fallback, ctx);
 
                 // If GT(sel, pivot) then right_tree else left_tree
-                let gt_branch = ast_helpers::if_then_else(
-                    gt_cond,
-                    inputs.clone(),
-                    right_tree,
-                    left_tree,
-                );
+                let gt_branch =
+                    ast_helpers::if_then_else(gt_cond, Rc::clone(&inputs), right_tree, left_tree);
 
                 // If EQ(sel, pivot) then pivot_body else gt_branch
-                ast_helpers::if_then_else(eq_cond, inputs, pivot_body.clone(), gt_branch)
+                ast_helpers::if_then_else(eq_cond, inputs, Rc::clone(pivot_body), gt_branch)
             }
         }
     }
@@ -1805,23 +1717,24 @@ impl AstToEgglog {
     ) -> String {
         let param_types: Vec<String> = params
             .iter()
-            .map(|(_, ty)| self.type_sig_to_abi_string(ty))
+            .map(|(_, ty)| Self::type_sig_to_abi_string(ty))
             .collect();
         format!("{name}({})", param_types.join(","))
     }
 
     /// Convert a type signature to its ABI string representation.
-    fn type_sig_to_abi_string(&self, ty: &edge_ast::ty::TypeSig) -> String {
+    fn type_sig_to_abi_string(ty: &edge_ast::ty::TypeSig) -> String {
         match ty {
             edge_ast::ty::TypeSig::Primitive(prim) => match prim {
                 edge_ast::ty::PrimitiveType::UInt(bits) => format!("uint{bits}"),
                 edge_ast::ty::PrimitiveType::Int(bits) => format!("int{bits}"),
                 edge_ast::ty::PrimitiveType::FixedBytes(bytes) => format!("bytes{bytes}"),
                 edge_ast::ty::PrimitiveType::Address => "address".to_owned(),
-                edge_ast::ty::PrimitiveType::Bool => "bool".to_owned(),
-                edge_ast::ty::PrimitiveType::Bit => "bool".to_owned(),
+                edge_ast::ty::PrimitiveType::Bool | edge_ast::ty::PrimitiveType::Bit => {
+                    "bool".to_owned()
+                }
             },
-            edge_ast::ty::TypeSig::Pointer(_, inner) => self.type_sig_to_abi_string(inner),
+            edge_ast::ty::TypeSig::Pointer(_, inner) => Self::type_sig_to_abi_string(inner),
             _ => "uint256".to_owned(), // fallback
         }
     }
@@ -1830,13 +1743,13 @@ impl AstToEgglog {
 
     /// Extract the data location from a contract field's type signature.
     /// `&s T` → Storage (persistent), `&t T` → Transient, bare `T` → Storage (default).
-    fn extract_data_location(ty: &edge_ast::ty::TypeSig) -> DataLocation {
+    const fn extract_data_location(ty: &edge_ast::ty::TypeSig) -> DataLocation {
         match ty {
-            edge_ast::ty::TypeSig::Pointer(loc, _) => match loc {
-                edge_ast::ty::Location::Transient => DataLocation::Transient,
-                // &s (Stack in AST) means persistent storage for contract fields
-                _ => DataLocation::Storage,
-            },
+            // &t T → Transient storage
+            edge_ast::ty::TypeSig::Pointer(edge_ast::ty::Location::Transient, _) => {
+                DataLocation::Transient
+            }
+            // &s T or bare T → persistent storage
             _ => DataLocation::Storage,
         }
     }
@@ -1849,11 +1762,13 @@ impl AstToEgglog {
             }
             edge_ast::ty::TypeSig::Pointer(_, inner) => self.lower_type_sig(inner),
             edge_ast::ty::TypeSig::Tuple(types) => {
-                let base_types: Vec<EvmBaseType> =
-                    types.iter().map(|t| match self.lower_type_sig(t) {
+                let base_types: Vec<EvmBaseType> = types
+                    .iter()
+                    .map(|t| match self.lower_type_sig(t) {
                         EvmType::Base(b) => b,
                         EvmType::TupleT(_) => EvmBaseType::UIntT(256), // flatten nested tuples
-                    }).collect();
+                    })
+                    .collect();
                 EvmType::TupleT(base_types)
             }
             _ => EvmType::Base(EvmBaseType::UIntT(256)), // fallback for unhandled types
@@ -1861,19 +1776,20 @@ impl AstToEgglog {
     }
 
     /// Lower a primitive type to an EVM base type.
-    fn lower_primitive_type(&self, prim: &edge_ast::ty::PrimitiveType) -> EvmType {
+    const fn lower_primitive_type(&self, prim: &edge_ast::ty::PrimitiveType) -> EvmType {
         EvmType::Base(self.lower_primitive_base_type(prim))
     }
 
     /// Lower a primitive type to an EVM base type.
-    fn lower_primitive_base_type(&self, prim: &edge_ast::ty::PrimitiveType) -> EvmBaseType {
+    const fn lower_primitive_base_type(&self, prim: &edge_ast::ty::PrimitiveType) -> EvmBaseType {
         match prim {
             edge_ast::ty::PrimitiveType::UInt(bits) => EvmBaseType::UIntT(*bits),
             edge_ast::ty::PrimitiveType::Int(bits) => EvmBaseType::IntT(*bits),
             edge_ast::ty::PrimitiveType::FixedBytes(bytes) => EvmBaseType::BytesT(*bytes),
             edge_ast::ty::PrimitiveType::Address => EvmBaseType::AddrT,
-            edge_ast::ty::PrimitiveType::Bool => EvmBaseType::BoolT,
-            edge_ast::ty::PrimitiveType::Bit => EvmBaseType::BoolT,
+            edge_ast::ty::PrimitiveType::Bool | edge_ast::ty::PrimitiveType::Bit => {
+                EvmBaseType::BoolT
+            }
         }
     }
 

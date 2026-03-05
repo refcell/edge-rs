@@ -5,8 +5,7 @@
 //! SLoad/SStore with Var/VarStore inside the loop. Write-backs are
 //! emitted after the loop exits.
 
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::schema::{
     EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, RcExpr,
@@ -45,8 +44,8 @@ pub fn hoist_program(program: &mut crate::schema::EvmProgram) {
 // General SStore→SLoad forwarding + dead store elimination
 // ============================================================
 
-/// Forward SStore values through subsequent SLoads in straight-line code
-/// and eliminate dead intermediate SStores.
+/// Forward `SStore` values through subsequent `SLoads` in straight-line code
+/// and eliminate dead intermediate `SStores`.
 ///
 /// For a sequence like:
 ///   `SStore(0, 0); SStore(0, SLoad(0) + 1); return SLoad(0)`
@@ -70,8 +69,10 @@ fn forward_stores_expr(expr: &RcExpr) -> RcExpr {
             let processed = forward_chain(stmts);
 
             // Phase 3: Recurse into structural sub-bodies of each statement
-            let recursed: Vec<RcExpr> =
-                processed.into_iter().map(|s| recurse_substructures(&s)).collect();
+            let recursed: Vec<RcExpr> = processed
+                .into_iter()
+                .map(|s| recurse_substructures(&s))
+                .collect();
 
             rebuild_concat(&recursed)
         }
@@ -80,19 +81,16 @@ fn forward_stores_expr(expr: &RcExpr) -> RcExpr {
     }
 }
 
-/// Recurse into structural sub-bodies (If branches, DoWhile body, LetBind body).
+/// Recurse into structural sub-bodies (If branches, `DoWhile` body, `LetBind` body).
 /// These get their own independent forwarding context.
 fn recurse_substructures(expr: &RcExpr) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::If(c, i, t, e) => Rc::new(EvmExpr::If(
-            c.clone(),
-            i.clone(),
+            Rc::clone(c),
+            Rc::clone(i),
             forward_stores_expr(t),
             forward_stores_expr(e),
         )),
-        // Don't forward inside DoWhile bodies — they're cyclic (SStores from
-        // iteration N affect SLoads at iteration N+1). Loop hoisting handles these.
-        EvmExpr::DoWhile(..) => expr.clone(),
         EvmExpr::LetBind(name, init, body) => Rc::new(EvmExpr::LetBind(
             name.clone(),
             forward_stores_expr(init),
@@ -104,11 +102,13 @@ fn recurse_substructures(expr: &RcExpr) -> RcExpr {
             out_ty.clone(),
             forward_stores_expr(body),
         )),
-        _ => expr.clone(),
+        // Don't forward inside DoWhile bodies — they're cyclic (SStores from
+        // iteration N affect SLoads at iteration N+1). Loop hoisting handles these.
+        _ => Rc::clone(expr),
     }
 }
 
-/// Forward SStore values and eliminate dead stores in a flat statement list.
+/// Forward `SStore` values and eliminate dead stores in a flat statement list.
 fn forward_chain(stmts: Vec<&RcExpr>) -> Vec<RcExpr> {
     if stmts.len() <= 1 {
         return stmts.into_iter().cloned().collect();
@@ -154,10 +154,10 @@ fn forward_chain(stmts: Vec<&RcExpr>) -> Vec<RcExpr> {
 
         // Check if this is a top-level SStore
         if let Some((key, _)) = match_sstore_const_slot(stmt) {
-            if later_stored.contains_key(&key) {
-                keep[i] = false;
+            if let std::collections::hash_map::Entry::Vacant(e) = later_stored.entry(key) {
+                e.insert(());
             } else {
-                later_stored.insert(key, ());
+                keep[i] = false;
             }
         }
     }
@@ -172,11 +172,11 @@ fn forward_chain(stmts: Vec<&RcExpr>) -> Vec<RcExpr> {
 
 /// Replace SLoad/TLoad with known values, recursing into inline parts only.
 ///
-/// Does NOT recurse into structural sub-bodies (If branches, DoWhile body,
-/// LetBind body) since those have independent execution contexts.
+/// Does NOT recurse into structural sub-bodies (If branches, `DoWhile` body,
+/// `LetBind` body) since those have independent execution contexts.
 fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcExpr {
     if known.is_empty() {
-        return (*expr).clone();
+        return Rc::clone(expr);
     }
 
     match expr.as_ref() {
@@ -193,34 +193,36 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
                     slot_value: sv,
                 };
                 if let Some(val) = known.get(&key) {
-                    return val.clone();
+                    return Rc::clone(val);
                 }
             }
             let ns = replace_sloads_inline(slot, known);
-            Rc::new(EvmExpr::Bop(*op, ns, _state.clone()))
+            Rc::new(EvmExpr::Bop(*op, ns, Rc::clone(_state)))
         }
 
         // Structural nodes: forward into inline parts ONLY
         EvmExpr::If(cond, inputs, then_b, else_b) => Rc::new(EvmExpr::If(
             replace_sloads_inline(cond, known),
             replace_sloads_inline(inputs, known),
-            then_b.clone(), // don't forward into branches
-            else_b.clone(),
+            Rc::clone(then_b), // don't forward into branches
+            Rc::clone(else_b),
         )),
         EvmExpr::DoWhile(inputs, body) => Rc::new(EvmExpr::DoWhile(
             replace_sloads_inline(inputs, known),
-            body.clone(), // don't forward into loop body
+            Rc::clone(body), // don't forward into loop body
         )),
         EvmExpr::LetBind(name, init, body) => Rc::new(EvmExpr::LetBind(
             name.clone(),
             replace_sloads_inline(init, known),
-            body.clone(), // don't forward into body
+            Rc::clone(body), // don't forward into body
         )),
 
         // All other nodes: recurse normally
-        EvmExpr::Bop(op, a, b) => {
-            Rc::new(EvmExpr::Bop(*op, replace_sloads_inline(a, known), replace_sloads_inline(b, known)))
-        }
+        EvmExpr::Bop(op, a, b) => Rc::new(EvmExpr::Bop(
+            *op,
+            replace_sloads_inline(a, known),
+            replace_sloads_inline(b, known),
+        )),
         EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(*op, replace_sloads_inline(a, known))),
         EvmExpr::Top(op, a, b, c) => Rc::new(EvmExpr::Top(
             *op,
@@ -232,12 +234,11 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             replace_sloads_inline(a, known),
             replace_sloads_inline(b, known),
         )),
-        EvmExpr::Get(a, idx) => {
-            Rc::new(EvmExpr::Get(replace_sloads_inline(a, known), *idx))
-        }
-        EvmExpr::VarStore(name, val) => {
-            Rc::new(EvmExpr::VarStore(name.clone(), replace_sloads_inline(val, known)))
-        }
+        EvmExpr::Get(a, idx) => Rc::new(EvmExpr::Get(replace_sloads_inline(a, known), *idx)),
+        EvmExpr::VarStore(name, val) => Rc::new(EvmExpr::VarStore(
+            name.clone(),
+            replace_sloads_inline(val, known),
+        )),
         EvmExpr::Revert(a, b, c) => Rc::new(EvmExpr::Revert(
             replace_sloads_inline(a, known),
             replace_sloads_inline(b, known),
@@ -249,7 +250,10 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             replace_sloads_inline(c, known),
         )),
         EvmExpr::Log(count, topics, data, state) => {
-            let ts: Vec<_> = topics.iter().map(|t| replace_sloads_inline(t, known)).collect();
+            let ts: Vec<_> = topics
+                .iter()
+                .map(|t| replace_sloads_inline(t, known))
+                .collect();
             Rc::new(EvmExpr::Log(
                 *count,
                 ts,
@@ -257,9 +261,7 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
                 replace_sloads_inline(state, known),
             ))
         }
-        EvmExpr::EnvRead(op, s) => {
-            Rc::new(EvmExpr::EnvRead(*op, replace_sloads_inline(s, known)))
-        }
+        EvmExpr::EnvRead(op, s) => Rc::new(EvmExpr::EnvRead(*op, replace_sloads_inline(s, known))),
         EvmExpr::EnvRead1(op, a, s) => Rc::new(EvmExpr::EnvRead1(
             *op,
             replace_sloads_inline(a, known),
@@ -274,9 +276,10 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             replace_sloads_inline(f, known),
             replace_sloads_inline(g, known),
         )),
-        EvmExpr::Call(name, args) => {
-            Rc::new(EvmExpr::Call(name.clone(), replace_sloads_inline(args, known)))
-        }
+        EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(
+            name.clone(),
+            replace_sloads_inline(args, known),
+        )),
         EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
             name.clone(),
             in_ty.clone(),
@@ -291,14 +294,16 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
         | EvmExpr::Var(..)
         | EvmExpr::Drop(..)
         | EvmExpr::Selector(..)
-        | EvmExpr::StorageField(..) => (*expr).clone(),
+        | EvmExpr::StorageField(..) => Rc::clone(expr),
     }
 }
 
-/// Check if an expression (non-top-level SStore) might modify storage.
+/// Check if an expression (non-top-level `SStore`) might modify storage.
 fn might_modify_storage(expr: &RcExpr) -> bool {
     match expr.as_ref() {
-        EvmExpr::ExtCall(..) => true,
+        EvmExpr::ExtCall(..) | EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => {
+            true
+        }
         EvmExpr::If(c, i, t, e) => {
             might_modify_storage(c)
                 || might_modify_storage(i)
@@ -308,7 +313,6 @@ fn might_modify_storage(expr: &RcExpr) -> bool {
         EvmExpr::DoWhile(i, b) => might_modify_storage(i) || might_modify_storage(b),
         EvmExpr::LetBind(_, init, body) => might_modify_storage(init) || might_modify_storage(body),
         EvmExpr::Concat(a, b) => might_modify_storage(a) || might_modify_storage(b),
-        EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => true,
         _ => false,
     }
 }
@@ -316,12 +320,9 @@ fn might_modify_storage(expr: &RcExpr) -> bool {
 /// Check if an expression might observe storage state (for dead store elimination).
 fn might_observe_storage(expr: &RcExpr) -> bool {
     match expr.as_ref() {
-        // Top-level SStore doesn't "observe" — it writes
-        EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => false,
-        // External calls can read any storage
-        EvmExpr::ExtCall(..) => true,
-        // Branches/loops might contain storage reads
-        EvmExpr::If(..) | EvmExpr::DoWhile(..) => true,
+        // External calls can read any storage; branches/loops might contain storage reads
+        EvmExpr::ExtCall(..) | EvmExpr::If(..) | EvmExpr::DoWhile(..) => true,
+        // Top-level SStore doesn't "observe" — it writes; everything else doesn't observe
         _ => false,
     }
 }
@@ -401,9 +402,9 @@ fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>) {
 fn rebuild_concat(stmts: &[RcExpr]) -> RcExpr {
     assert!(!stmts.is_empty());
     let mut it = stmts.iter();
-    let mut acc = it.next().unwrap().clone();
+    let mut acc = Rc::clone(it.next().unwrap());
     for next in it {
-        acc = Rc::new(EvmExpr::Concat(acc, next.clone()));
+        acc = Rc::new(EvmExpr::Concat(acc, Rc::clone(next)));
     }
     acc
 }
@@ -456,8 +457,7 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
                     loop_slots.retain(|_, usage| usage.has_load);
 
                     // Extract pre-loop SStore values for those slots
-                    let (stripped_pre, pre_store_vals) =
-                        extract_pre_stores(pre, &loop_slots);
+                    let (stripped_pre, pre_store_vals) = extract_pre_stores(pre, &loop_slots);
 
                     if let Some(hoisted) =
                         try_hoist_while(cond, inputs, di, db, rest, counter, &pre_store_vals)
@@ -467,10 +467,9 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
                                 hoist_expr(&stripped, counter),
                                 hoisted,
                             ));
-                        } else {
-                            // All pre-stores were consumed
-                            return hoisted;
                         }
+                        // All pre-stores were consumed
+                        return hoisted;
                     }
                 }
             }
@@ -478,7 +477,7 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
             let new_left = hoist_expr(left, counter);
             let new_rest = hoist_expr(rest, counter);
             if Rc::ptr_eq(&new_left, left) && Rc::ptr_eq(&new_rest, rest) {
-                expr.clone()
+                Rc::clone(expr)
             } else {
                 Rc::new(EvmExpr::Concat(new_left, new_rest))
             }
@@ -487,7 +486,7 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
             let new_init = hoist_expr(init, counter);
             let new_body = hoist_expr(body, counter);
             if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
-                expr.clone()
+                Rc::clone(expr)
             } else {
                 Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
             }
@@ -495,7 +494,7 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             let new_body = hoist_expr(body, counter);
             if Rc::ptr_eq(&new_body, body) {
-                expr.clone()
+                Rc::clone(expr)
             } else {
                 Rc::new(EvmExpr::Function(
                     name.clone(),
@@ -510,12 +509,9 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
             let ni = hoist_expr(i, counter);
             let nt = hoist_expr(t, counter);
             let ne = hoist_expr(e, counter);
-            if Rc::ptr_eq(&nc, c)
-                && Rc::ptr_eq(&ni, i)
-                && Rc::ptr_eq(&nt, t)
-                && Rc::ptr_eq(&ne, e)
+            if Rc::ptr_eq(&nc, c) && Rc::ptr_eq(&ni, i) && Rc::ptr_eq(&nt, t) && Rc::ptr_eq(&ne, e)
             {
-                expr.clone()
+                Rc::clone(expr)
             } else {
                 Rc::new(EvmExpr::If(nc, ni, nt, ne))
             }
@@ -524,12 +520,12 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
             let ni = hoist_expr(inputs, counter);
             let nb = hoist_expr(body, counter);
             if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
-                expr.clone()
+                Rc::clone(expr)
             } else {
                 Rc::new(EvmExpr::DoWhile(ni, nb))
             }
         }
-        _ => expr.clone(),
+        _ => Rc::clone(expr),
     }
 }
 
@@ -538,7 +534,7 @@ fn hoist_expr(expr: &RcExpr, counter: &mut usize) -> RcExpr {
 /// Pattern: `Concat(If(cond, inputs, DoWhile(di, db), Empty), rest)`
 ///
 /// `pre_stores` maps slot keys to their pre-loop initialization values,
-/// extracted from SStores that precede the loop.
+/// extracted from `SStores` that precede the loop.
 fn try_hoist_while(
     cond: &RcExpr,
     inputs: &RcExpr,
@@ -573,27 +569,31 @@ fn try_hoist_while(
     let slot_vars: Vec<(SlotKey, String)> = slot_keys
         .iter()
         .map(|key| {
-            let prefix = if key.kind == StorageKind::Transient { "t" } else { "s" };
-            let name = format!("__hoist_{}{}_{}",  prefix, key.slot_value, *counter);
+            let prefix = if key.kind == StorageKind::Transient {
+                "t"
+            } else {
+                "s"
+            };
+            let name = format!("__hoist_{}{}_{}", prefix, key.slot_value, *counter);
             *counter += 1;
             (key.clone(), name)
         })
         .collect();
 
     // Rewrite the DoWhile body: SLoad→Var, SStore→VarStore
-    let mut new_db = db.clone();
+    let mut new_db = Rc::clone(db);
     for (key, name) in &slot_vars {
         new_db = replace_storage(&new_db, key, name, true);
     }
 
     // Rewrite the initial condition: SLoad→Var
-    let mut new_cond = cond.clone();
+    let mut new_cond = Rc::clone(cond);
     for (key, name) in &slot_vars {
         new_cond = replace_storage(&new_cond, key, name, false);
     }
 
     // Rewrite the post-loop continuation: SLoad→Var (no SStore replacement)
-    let mut new_rest = rest.clone();
+    let mut new_rest = Rc::clone(rest);
     for (key, name) in &slot_vars {
         new_rest = replace_storage(&new_rest, key, name, false);
     }
@@ -612,44 +612,54 @@ fn try_hoist_while(
                 op,
                 const_slot(key.slot_value),
                 Rc::new(EvmExpr::Var(name.clone())),
-                state.clone(),
+                Rc::clone(&state),
             ));
             after_loop = Rc::new(EvmExpr::Concat(wb, after_loop));
         }
     }
 
     // Build the new If/DoWhile
-    let new_dowhile = Rc::new(EvmExpr::DoWhile(di.clone(), new_db));
-    let new_if = Rc::new(EvmExpr::If(new_cond, inputs.clone(), new_dowhile, unit_empty()));
+    let new_dowhile = Rc::new(EvmExpr::DoWhile(Rc::clone(di), new_db));
+    let new_if = Rc::new(EvmExpr::If(
+        new_cond,
+        Rc::clone(inputs),
+        new_dowhile,
+        unit_empty(),
+    ));
     let mut result = Rc::new(EvmExpr::Concat(new_if, after_loop));
 
     // Wrap in LetBinds (outermost = first slot)
     // If a pre-loop SStore wrote a known value to this slot, use that
     // value directly instead of emitting an SLoad.
     for (key, name) in slot_vars.iter().rev() {
-        let init = if let Some(val) = pre_stores.get(key) {
-            val.clone()
-        } else {
-            let load_op = match key.kind {
-                StorageKind::Persistent => EvmBinaryOp::SLoad,
-                StorageKind::Transient => EvmBinaryOp::TLoad,
-            };
-            Rc::new(EvmExpr::Bop(load_op, const_slot(key.slot_value), state.clone()))
-        };
+        let init = pre_stores.get(key).map_or_else(
+            || {
+                let load_op = match key.kind {
+                    StorageKind::Persistent => EvmBinaryOp::SLoad,
+                    StorageKind::Transient => EvmBinaryOp::TLoad,
+                };
+                Rc::new(EvmExpr::Bop(
+                    load_op,
+                    const_slot(key.slot_value),
+                    Rc::clone(&state),
+                ))
+            },
+            Rc::clone,
+        );
         result = Rc::new(EvmExpr::LetBind(name.clone(), init, result));
     }
 
     Some(result)
 }
 
-/// Extract pre-loop SStore values from a Concat chain.
+/// Extract pre-loop `SStore` values from a Concat chain.
 ///
-/// Walks a right-leaning Concat chain of SStore nodes, collecting values
+/// Walks a right-leaning Concat chain of `SStore` nodes, collecting values
 /// for slots that appear in `loop_slots`. Returns the remaining (non-consumed)
 /// pre-code and the map of forwarded values.
 ///
 /// Only removes a pre-store when the loop also writes to that slot
-/// (i.e., has_store=true), since the write-back will cover it.
+/// (i.e., `has_store=true`), since the write-back will cover it.
 fn extract_pre_stores(
     pre: &RcExpr,
     loop_slots: &HashMap<SlotKey, SlotUsage>,
@@ -666,7 +676,7 @@ fn extract_pre_stores(
         if let Some((key, val)) = match_sstore_const_slot(stmt) {
             if let Some(usage) = loop_slots.get(&key) {
                 // Forward the value
-                forwarded.insert(key.clone(), val.clone());
+                forwarded.insert(key.clone(), Rc::clone(&val));
 
                 // Only remove the pre-store if the loop writes back
                 if usage.has_store {
@@ -674,7 +684,7 @@ fn extract_pre_stores(
                 }
             }
         }
-        remaining.push((*stmt).clone());
+        remaining.push(Rc::clone(*stmt));
     }
 
     let pre_expr = if remaining.is_empty() {
@@ -702,7 +712,7 @@ fn flatten_concat<'a>(expr: &'a RcExpr, out: &mut Vec<&'a RcExpr>) {
     }
 }
 
-/// Match `Top(SStore, Const(slot), value, state)` and return (SlotKey, value).
+/// Match `Top(SStore, Const(slot), value, state)` and return (`SlotKey`, value).
 fn match_sstore_const_slot(expr: &RcExpr) -> Option<(SlotKey, RcExpr)> {
     match expr.as_ref() {
         EvmExpr::Top(op @ (EvmTernaryOp::SStore | EvmTernaryOp::TStore), slot, val, _state) => {
@@ -712,7 +722,13 @@ fn match_sstore_const_slot(expr: &RcExpr) -> Option<(SlotKey, RcExpr)> {
                 StorageKind::Transient
             };
             let sv = const_slot_value(slot)?;
-            Some((SlotKey { kind, slot_value: sv }, val.clone()))
+            Some((
+                SlotKey {
+                    kind,
+                    slot_value: sv,
+                },
+                Rc::clone(val),
+            ))
         }
         _ => None,
     }
@@ -744,8 +760,7 @@ fn const_slot_value(expr: &RcExpr) -> Option<i64> {
 /// Check for operations that disqualify a loop from hoisting.
 fn has_disqualifying_ops(expr: &RcExpr) -> bool {
     match expr.as_ref() {
-        EvmExpr::ExtCall(..) => true,
-        EvmExpr::DoWhile(..) => true, // nested loops — bail
+        EvmExpr::ExtCall(..) | EvmExpr::DoWhile(..) => true, // ExtCall or nested loops — bail
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) => {
             has_disqualifying_ops(a) || has_disqualifying_ops(b)
         }
@@ -764,7 +779,7 @@ fn has_disqualifying_ops(expr: &RcExpr) -> bool {
         }
         EvmExpr::VarStore(_, val) => has_disqualifying_ops(val),
         EvmExpr::Log(_, topics, data, state) => {
-            topics.iter().any(|t| has_disqualifying_ops(t))
+            topics.iter().any(has_disqualifying_ops)
                 || has_disqualifying_ops(data)
                 || has_disqualifying_ops(state)
         }
@@ -787,18 +802,16 @@ fn collect_storage_slots(expr: &RcExpr, result: &mut HashMap<SlotKey, SlotUsage>
                     StorageKind::Transient
                 };
                 result
-                    .entry(SlotKey { kind, slot_value: sv })
+                    .entry(SlotKey {
+                        kind,
+                        slot_value: sv,
+                    })
                     .or_default()
                     .has_load = true;
             }
             collect_storage_slots(slot, result);
         }
-        EvmExpr::Top(
-            op @ (EvmTernaryOp::SStore | EvmTernaryOp::TStore),
-            slot,
-            val,
-            _state,
-        ) => {
+        EvmExpr::Top(op @ (EvmTernaryOp::SStore | EvmTernaryOp::TStore), slot, val, _state) => {
             if let Some(sv) = const_slot_value(slot) {
                 let kind = if *op == EvmTernaryOp::SStore {
                     StorageKind::Persistent
@@ -806,7 +819,10 @@ fn collect_storage_slots(expr: &RcExpr, result: &mut HashMap<SlotKey, SlotUsage>
                     StorageKind::Transient
                 };
                 result
-                    .entry(SlotKey { kind, slot_value: sv })
+                    .entry(SlotKey {
+                        kind,
+                        slot_value: sv,
+                    })
                     .or_default()
                     .has_store = true;
             }
@@ -868,14 +884,9 @@ fn collect_storage_slots(expr: &RcExpr, result: &mut HashMap<SlotKey, SlotUsage>
 
 /// Replace storage operations with local variable operations.
 ///
-/// - SLoad/TLoad with matching slot → Var(var_name)
-/// - If `replace_stores`: SStore/TStore with matching slot → VarStore(var_name, val)
-fn replace_storage(
-    expr: &RcExpr,
-    key: &SlotKey,
-    var_name: &str,
-    replace_stores: bool,
-) -> RcExpr {
+/// - SLoad/TLoad with matching slot → `Var(var_name)`
+/// - If `replace_stores`: SStore/TStore with matching slot → `VarStore(var_name`, val)
+fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores: bool) -> RcExpr {
     match expr.as_ref() {
         // SLoad/TLoad → Var
         EvmExpr::Bop(op @ (EvmBinaryOp::SLoad | EvmBinaryOp::TLoad), slot, _state) => {
@@ -892,7 +903,7 @@ fn replace_storage(
                 }
             }
             let a = replace_storage(slot, key, var_name, replace_stores);
-            Rc::new(EvmExpr::Bop(*op, a, _state.clone()))
+            Rc::new(EvmExpr::Bop(*op, a, Rc::clone(_state)))
         }
         // SStore/TStore → VarStore (only when replace_stores is true)
         EvmExpr::Top(op @ (EvmTernaryOp::SStore | EvmTernaryOp::TStore), slot, val, state)
@@ -913,7 +924,7 @@ fn replace_storage(
             }
             let a = replace_storage(slot, key, var_name, replace_stores);
             let b = replace_storage(val, key, var_name, replace_stores);
-            Rc::new(EvmExpr::Top(*op, a, b, state.clone()))
+            Rc::new(EvmExpr::Top(*op, a, b, Rc::clone(state)))
         }
         // Generic recursion for all other nodes
         EvmExpr::Bop(op, a, b) => {
@@ -1007,7 +1018,12 @@ fn replace_storage(
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             let nb = replace_storage(body, key, var_name, replace_stores);
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
         }
         // Leaf nodes — no children
         EvmExpr::Const(..)
@@ -1016,7 +1032,7 @@ fn replace_storage(
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => expr.clone(),
+        | EvmExpr::StorageField(..) => Rc::clone(expr),
     }
 }
 
@@ -1032,14 +1048,14 @@ mod tests {
     #[test]
     fn test_no_hoist_without_loop() {
         // A simple SLoad outside a loop should not be touched
-        let expr = ast_helpers::sload(
-            ast_helpers::const_int(0, ctx()),
-            state_placeholder(),
-        );
+        let expr = ast_helpers::sload(ast_helpers::const_int(0, ctx()), state_placeholder());
         let mut counter = 0;
         let result = hoist_expr(&expr, &mut counter);
         assert_eq!(counter, 0, "no hoisting should occur");
-        assert!(matches!(result.as_ref(), EvmExpr::Bop(EvmBinaryOp::SLoad, _, _)));
+        assert!(matches!(
+            result.as_ref(),
+            EvmExpr::Bop(EvmBinaryOp::SLoad, _, _)
+        ));
     }
 
     #[test]
@@ -1047,42 +1063,37 @@ mod tests {
         // Build: Concat(If(SLoad(0) != 0, Empty, DoWhile(Empty, Concat(SStore(0, SLoad(0)+1), SLoad(0)!=0)), Empty), rest)
         let slot = ast_helpers::const_int(0, ctx());
         let state = state_placeholder();
-        let sload_0 = ast_helpers::sload(slot.clone(), state.clone());
+        let sload_0 = ast_helpers::sload(Rc::clone(&slot), Rc::clone(&state));
 
         // Condition: SLoad(0) != 0
         let cond = Rc::new(EvmExpr::Uop(
             crate::schema::EvmUnaryOp::IsZero,
             Rc::new(EvmExpr::Uop(
                 crate::schema::EvmUnaryOp::IsZero,
-                sload_0.clone(),
+                Rc::clone(&sload_0),
             )),
         ));
 
         // Loop body: SStore(0, SLoad(0) + 1, state)
         let body = Rc::new(EvmExpr::Top(
             EvmTernaryOp::SStore,
-            slot.clone(),
-            ast_helpers::add(sload_0.clone(), ast_helpers::const_int(1, ctx())),
-            state.clone(),
+            slot,
+            ast_helpers::add(Rc::clone(&sload_0), ast_helpers::const_int(1, ctx())),
+            Rc::clone(&state),
         ));
 
         let dowhile = Rc::new(EvmExpr::DoWhile(
             unit_empty(),
-            Rc::new(EvmExpr::Concat(body, cond.clone())),
+            Rc::new(EvmExpr::Concat(body, Rc::clone(&cond))),
         ));
 
-        let if_node = Rc::new(EvmExpr::If(
-            cond.clone(),
-            unit_empty(),
-            dowhile,
-            unit_empty(),
-        ));
+        let if_node = Rc::new(EvmExpr::If(cond, unit_empty(), dowhile, unit_empty()));
 
         // Post-loop: return SLoad(0)
         let rest = Rc::new(EvmExpr::ReturnOp(
-            sload_0.clone(),
+            sload_0,
             ast_helpers::const_int(32, ctx()),
-            state.clone(),
+            state,
         ));
 
         let expr = Rc::new(EvmExpr::Concat(if_node, rest));
@@ -1091,20 +1102,25 @@ mod tests {
         let result = hoist_expr(&expr, &mut counter);
 
         // Should be wrapped in a LetBind
-        assert!(matches!(result.as_ref(), EvmExpr::LetBind(..)),
-            "expected LetBind, got: {result:?}");
+        assert!(
+            matches!(result.as_ref(), EvmExpr::LetBind(..)),
+            "expected LetBind, got: {result:?}"
+        );
 
         // The DoWhile body should contain VarStore, not SStore
         fn contains_var_store(e: &EvmExpr) -> bool {
             match e {
                 EvmExpr::VarStore(..) => true,
                 EvmExpr::Concat(a, b) => contains_var_store(a) || contains_var_store(b),
-                EvmExpr::DoWhile(_, b) => contains_var_store(b),
-                EvmExpr::If(_, _, t, _) => contains_var_store(t),
-                EvmExpr::LetBind(_, _, b) => contains_var_store(b),
+                EvmExpr::DoWhile(_, b) | EvmExpr::If(_, _, b, _) | EvmExpr::LetBind(_, _, b) => {
+                    contains_var_store(b)
+                }
                 _ => false,
             }
         }
-        assert!(contains_var_store(&result), "expected VarStore in hoisted loop");
+        assert!(
+            contains_var_store(&result),
+            "expected VarStore in hoisted loop"
+        );
     }
 }

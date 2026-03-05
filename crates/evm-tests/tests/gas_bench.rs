@@ -2,7 +2,7 @@
 //!
 //! All tests are `#[ignore]` so they don't run in CI.
 //! Run with:
-//!   cargo test -p edge-evm-tests gas_bench -- --ignored --nocapture
+//!   cargo test -p edge-evm-tests `gas_bench` -- --ignored --nocapture
 
 use alloy_primitives::{Address, U256};
 use edge_evm_tests::{
@@ -55,7 +55,7 @@ fn bench_counter(opt_level: u8) {
     println!();
     println!("=== Counter O{opt_level} ===");
     println!("  Init code size:    {} bytes", deploy.init_code_size);
-    println!("  Runtime code size: {} bytes", runtime_size);
+    println!("  Runtime code size: {runtime_size} bytes");
     println!("  Deploy gas:        {}", deploy.deploy_gas);
     println!();
 
@@ -135,7 +135,7 @@ fn bench_erc20(opt_level: u8) {
     println!();
     println!("=== ERC20 O{opt_level} ===");
     println!("  Init code size:    {} bytes", deploy.init_code_size);
-    println!("  Runtime code size: {} bytes", runtime_size);
+    println!("  Runtime code size: {runtime_size} bytes");
     println!("  Deploy gas:        {}", deploy.deploy_gas);
     println!();
 
@@ -165,19 +165,13 @@ fn bench_erc20(opt_level: u8) {
     println!("  mint() [second/warm]:       {} gas", r.gas_used);
 
     // -- balanceOf (warm) --
-    let r = host.call(
-        sel("balanceOf(address)"),
-        &abi_encode_address(alice),
-    );
+    let r = host.call(sel("balanceOf(address)"), &abi_encode_address(alice));
     assert!(r.success);
     assert_eq!(abi_decode_u256(&r.output), U256::from(15_000));
     println!("  balanceOf() [warm]:         {} gas", r.gas_used);
 
     // -- balanceOf (cold account) --
-    let r = host.call(
-        sel("balanceOf(address)"),
-        &abi_encode_address(bob),
-    );
+    let r = host.call(sel("balanceOf(address)"), &abi_encode_address(bob));
     assert!(r.success);
     println!("  balanceOf() [cold acct]:    {} gas", r.gas_used);
 
@@ -282,7 +276,11 @@ fn gas_bench_summary() {
     for (i, opt) in [0u8, 1, 2].iter().enumerate() {
         let deploy = EvmTestHost::deploy_edge_measured(COUNTER_PATH, *opt);
         let mut h = deploy.host;
-        counter_sizes[i] = (deploy.init_code_size, h.runtime_code_size(), deploy.deploy_gas);
+        counter_sizes[i] = (
+            deploy.init_code_size,
+            h.runtime_code_size(),
+            deploy.deploy_gas,
+        );
 
         // Warm up storage with an increment, then reset
         h.call(sel("increment()"), &[]);
@@ -365,7 +363,11 @@ fn gas_bench_summary() {
     for (i, opt) in [0u8, 1, 2].iter().enumerate() {
         let deploy = EvmTestHost::deploy_edge_measured(ERC20_PATH, *opt);
         let mut h = deploy.host;
-        erc20_sizes[i] = (deploy.init_code_size, h.runtime_code_size(), deploy.deploy_gas);
+        erc20_sizes[i] = (
+            deploy.init_code_size,
+            h.runtime_code_size(),
+            deploy.deploy_gas,
+        );
 
         let deployer = h.caller();
         let alice = addr(0x0A);

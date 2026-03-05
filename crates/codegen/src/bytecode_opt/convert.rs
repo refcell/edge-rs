@@ -1,9 +1,6 @@
 //! Conversion between `AsmInstruction` and egglog s-expressions.
 
-use crate::{
-    assembler::AsmInstruction,
-    opcode::Opcode,
-};
+use crate::{assembler::AsmInstruction, opcode::Opcode};
 
 /// Convert a list of `AsmInstruction`s (a basic block body — no labels/jumps)
 /// into an egglog s-expression string representing an `ISeq` cons-list.
@@ -47,15 +44,17 @@ pub(crate) fn instructions_to_sexp(instrs: &[AsmInstruction]) -> String {
                 }
             }
             // Labels, jumps, and comments should not appear in egglog optimization
-            AsmInstruction::Label(_) | AsmInstruction::JumpTo(_)
-            | AsmInstruction::JumpITo(_) | AsmInstruction::PushLabel(_)
+            AsmInstruction::Label(_)
+            | AsmInstruction::JumpTo(_)
+            | AsmInstruction::JumpITo(_)
+            | AsmInstruction::PushLabel(_)
             | AsmInstruction::Comment(_) => {}
         }
     }
     sexp
 }
 
-/// Parse an egglog s-expression (extracted best ISeq) back into `AsmInstruction`s.
+/// Parse an egglog s-expression (extracted best `ISeq`) back into `AsmInstruction`s.
 ///
 /// The s-expression is a nested cons-list like:
 /// `(ICons (IAdd) (IPushCons (PushSmall 42) INil))`
@@ -127,8 +126,14 @@ fn tokenize(s: &str) -> Vec<Token> {
     let mut i = 0;
     while i < chars.len() {
         match chars[i] {
-            '(' => { tokens.push(Token::LParen); i += 1; }
-            ')' => { tokens.push(Token::RParen); i += 1; }
+            '(' => {
+                tokens.push(Token::LParen);
+                i += 1;
+            }
+            ')' => {
+                tokens.push(Token::RParen);
+                i += 1;
+            }
             '"' => {
                 i += 1; // skip opening quote
                 let start = i;
@@ -139,17 +144,25 @@ fn tokenize(s: &str) -> Vec<Token> {
                 tokens.push(Token::Str(s));
                 i += 1; // skip closing quote
             }
-            c if c.is_whitespace() => { i += 1; }
+            c if c.is_whitespace() => {
+                i += 1;
+            }
             c if c == '-' || c.is_ascii_digit() => {
                 let start = i;
-                if c == '-' { i += 1; }
+                if c == '-' {
+                    i += 1;
+                }
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
                 }
                 // Check if next char is alphabetic (it's a symbol like "INil")
                 if i < chars.len() && (chars[i].is_alphabetic() || chars[i] == '_') {
                     // Not a number, it's a symbol
-                    while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != ')' {
+                    while i < chars.len()
+                        && !chars[i].is_whitespace()
+                        && chars[i] != '('
+                        && chars[i] != ')'
+                    {
                         i += 1;
                     }
                     let sym: String = chars[start..i].iter().collect();
@@ -165,7 +178,11 @@ fn tokenize(s: &str) -> Vec<Token> {
             }
             _ => {
                 let start = i;
-                while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' && chars[i] != ')' {
+                while i < chars.len()
+                    && !chars[i].is_whitespace()
+                    && chars[i] != '('
+                    && chars[i] != ')'
+                {
                     i += 1;
                 }
                 let sym: String = chars[start..i].iter().collect();
@@ -176,7 +193,7 @@ fn tokenize(s: &str) -> Vec<Token> {
     tokens
 }
 
-/// Parse an ISeq from tokens starting at position `pos`. Returns (new_pos, instructions).
+/// Parse an `ISeq` from tokens starting at position `pos`. Returns (`new_pos`, instructions).
 fn parse_iseq(tokens: &[Token], pos: usize) -> (usize, Vec<AsmInstruction>) {
     if pos >= tokens.len() {
         return (pos, vec![]);
@@ -194,7 +211,7 @@ fn parse_iseq(tokens: &[Token], pos: usize) -> (usize, Vec<AsmInstruction>) {
                 Token::Symbol(s) if s == "INil" => {
                     let pos = pos + 1;
                     let pos = expect_rparen(tokens, pos);
-                    return (pos, vec![]);
+                    (pos, vec![])
                 }
                 Token::Symbol(s) if s == "ICons" => {
                     let pos = pos + 1;
@@ -292,7 +309,7 @@ fn parse_inst(tokens: &[Token], pos: usize) -> (usize, AsmInstruction) {
     }
 }
 
-/// Parse a PushVal from `(PushSmall i64)` or `(PushHex "hex")`.
+/// Parse a `PushVal` from `(PushSmall i64)` or `(PushHex "hex")`.
 fn parse_pushval(tokens: &[Token], pos: usize) -> (usize, AsmInstruction) {
     if pos >= tokens.len() || tokens[pos] != Token::LParen {
         return (pos, AsmInstruction::Op(Opcode::Push0));
@@ -348,7 +365,7 @@ fn expect_rparen(tokens: &[Token], pos: usize) -> usize {
 
 /// Map an Opcode to its egglog Inst constructor name.
 /// Returns None for parameterized opcodes (Dup/Swap/Log) and Push0.
-fn opcode_to_inst_name(op: Opcode) -> Option<&'static str> {
+const fn opcode_to_inst_name(op: Opcode) -> Option<&'static str> {
     Some(match op {
         Opcode::Add => "IAdd",
         Opcode::Mul => "IMul",
@@ -421,7 +438,7 @@ fn opcode_to_inst_name(op: Opcode) -> Option<&'static str> {
         Opcode::MSize => "IMSize",
         Opcode::Stop => "IStop",
         // Parameterized and special opcodes handled separately
-        Opcode::Push0 => return None,
+        // Parameterized and special opcodes not mapped
         _ => return None,
     })
 }
@@ -493,7 +510,6 @@ fn inst_name_to_opcode(name: &str) -> Opcode {
         "ICreate2" => Opcode::Create2,
         "IStaticCall" => Opcode::StaticCall,
         "IRevert" => Opcode::Revert,
-        "IInvalid" => Opcode::Invalid,
         "ISelfDestruct" => Opcode::SelfDestruct,
         "IGas" => Opcode::Gas,
         "IPc" => Opcode::Pc,
@@ -549,10 +565,11 @@ mod tests {
     #[test]
     fn test_roundtrip_large_push() {
         // 20-byte address: too large for i64
-        let data = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33, 0x44,
-                        0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
-                        0xee, 0xff];
-        let instrs = vec![AsmInstruction::Push(data.clone())];
+        let data = vec![
+            0xde, 0xad, 0xbe, 0xef, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99,
+            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        ];
+        let instrs = vec![AsmInstruction::Push(data)];
         let sexp = instructions_to_sexp(&instrs);
         assert!(sexp.contains("PushHex"));
         let back = sexp_to_instructions(&sexp);
@@ -570,9 +587,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_log() {
-        let instrs = vec![
-            AsmInstruction::Op(Opcode::Log2),
-        ];
+        let instrs = vec![AsmInstruction::Op(Opcode::Log2)];
         let sexp = instructions_to_sexp(&instrs);
         assert!(sexp.contains("ILog 2"));
         let back = sexp_to_instructions(&sexp);
@@ -585,11 +600,15 @@ mod tests {
         assert_eq!(try_push_as_i64(&[0xFF]), Some(255));
         assert_eq!(try_push_as_i64(&[0x01, 0x00]), Some(256));
         // 8 bytes max positive i64
-        assert_eq!(try_push_as_i64(&[0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
-                   Some(i64::MAX));
+        assert_eq!(
+            try_push_as_i64(&[0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+            Some(i64::MAX)
+        );
         // Too large for i64
-        assert_eq!(try_push_as_i64(&[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
-                   None);
+        assert_eq!(
+            try_push_as_i64(&[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+            None
+        );
         // More than 8 bytes
         assert_eq!(try_push_as_i64(&[0x01; 9]), None);
     }

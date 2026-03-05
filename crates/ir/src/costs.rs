@@ -96,7 +96,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
         m.insert(*op, 5);
     }
     m.insert("OpExp", 60); // 10 + ~50 per byte
-    // Checked arithmetic: higher cost than unchecked to prefer elision
+                           // Checked arithmetic: higher cost than unchecked to prefer elision
     m.insert("OpCheckedAdd", 20);
     m.insert("OpCheckedSub", 20);
     m.insert("OpCheckedMul", 30);
@@ -197,10 +197,10 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("ReturnOp", 0);
     m.insert("ExtCall", 100);
     m.insert("Call", 0);
-    m.insert("LetBind", 3);    // MSTORE cost
-    m.insert("Var", 3);        // MLOAD cost
-    m.insert("VarStore", 6);   // PUSH offset + MSTORE
-    m.insert("Drop", 0);       // No-op lifetime marker
+    m.insert("LetBind", 3); // MSTORE cost
+    m.insert("Var", 3); // MLOAD cost
+    m.insert("VarStore", 6); // PUSH offset + MSTORE
+    m.insert("Drop", 0); // No-op lifetime marker
     m.insert("Function", 0);
     m.insert("StorageField", 0);
     m.insert("Contract", 0);
@@ -223,11 +223,7 @@ fn cost_for(name: &str, optimize_for: OptimizeFor, table: &HashMap<&str, u32>) -
 ///
 /// Turns `(OpAdd)` into `(OpAdd :cost 3)`. Each top-level parenthesized
 /// expression in the fragment is treated as a variant.
-fn annotate_variants(
-    text: &str,
-    optimize_for: OptimizeFor,
-    table: &HashMap<&str, u32>,
-) -> String {
+fn annotate_variants(text: &str, optimize_for: OptimizeFor, table: &HashMap<&str, u32>) -> String {
     let mut result = String::with_capacity(text.len() + 64);
     let mut chars = text.char_indices().peekable();
 
@@ -267,23 +263,21 @@ fn annotate_constructor(
         .strip_prefix("(constructor ")
         .and_then(|rest| rest.split_whitespace().next());
 
-    let cost = match name {
-        Some(n) => cost_for(n, optimize_for, table),
-        None => 1,
-    };
+    let cost = name.map_or(1, |n| cost_for(n, optimize_for, table));
 
-    if let Some(pos) = line.rfind(')') {
-        let mut result = String::with_capacity(line.len() + 16);
-        result.push_str(&line[..pos]);
-        result.push_str(&format!(" :cost {cost}"));
-        result.push(')');
-        if pos + 1 < line.len() {
-            result.push_str(&line[pos + 1..]);
-        }
-        result
-    } else {
-        line.to_string()
-    }
+    line.rfind(')').map_or_else(
+        || line.to_string(),
+        |pos| {
+            let mut result = String::with_capacity(line.len() + 16);
+            result.push_str(&line[..pos]);
+            result.push_str(&format!(" :cost {cost}"));
+            result.push(')');
+            if pos + 1 < line.len() {
+                result.push_str(&line[pos + 1..]);
+            }
+            result
+        },
+    )
 }
 
 fn extract_variant_name(s: &str) -> Option<&str> {
@@ -376,7 +370,10 @@ mod tests {
     fn test_datatype_single_line_with_variants() {
         let base = "(datatype ListExpr (Cons EvmExpr ListExpr) (Nil))\n";
         let result = schema_with_costs(base, OptimizeFor::Gas);
-        assert!(result.contains("(Cons EvmExpr ListExpr :cost 0)"), "got: {result}");
+        assert!(
+            result.contains("(Cons EvmExpr ListExpr :cost 0)"),
+            "got: {result}"
+        );
         assert!(result.contains("(Nil :cost 0)"), "got: {result}");
         // Should NOT annotate the datatype declaration itself
         assert!(result.starts_with("(datatype ListExpr"), "got: {result}");
@@ -398,7 +395,10 @@ mod tests {
         let mut egraph = egglog::EGraph::default();
         let result = egraph.parse_and_run_program(None, &annotated);
         if let Err(e) = &result {
-            eprintln!("ANNOTATED SCHEMA (first 2000 chars):\n{}", &annotated[..annotated.len().min(2000)]);
+            eprintln!(
+                "ANNOTATED SCHEMA (first 2000 chars):\n{}",
+                &annotated[..annotated.len().min(2000)]
+            );
             panic!("Gas-annotated schema failed to parse: {e}");
         }
     }

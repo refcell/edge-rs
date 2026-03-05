@@ -5,8 +5,7 @@
 
 #![allow(missing_docs)]
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use alloy_primitives::{Address, Bytes, Log, U256};
 use edge_driver::{
@@ -18,7 +17,7 @@ use revm::{
     database::{CacheDB, EmptyDB},
     handler::MainnetContext,
     primitives::TxKind,
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainBuilder, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -79,7 +78,11 @@ impl EvmTestHost {
         let bytecode = compile_edge(path, opt_level);
         let init_code_size = bytecode.len();
         let (host, deploy_gas) = Self::deploy_bytecode_measured(&bytecode);
-        DeployResult { host, init_code_size, deploy_gas }
+        DeployResult {
+            host,
+            init_code_size,
+            deploy_gas,
+        }
     }
 
     /// Compile an `.edge` file optimized for size and deploy.
@@ -93,7 +96,11 @@ impl EvmTestHost {
         let bytecode = compile_edge_for_size(path, opt_level);
         let init_code_size = bytecode.len();
         let (host, deploy_gas) = Self::deploy_bytecode_measured(&bytecode);
-        DeployResult { host, init_code_size, deploy_gas }
+        DeployResult {
+            host,
+            init_code_size,
+            deploy_gas,
+        }
     }
 
     /// Deploy raw bytecode and return a test host.
@@ -101,7 +108,7 @@ impl EvmTestHost {
         Self::deploy_bytecode_measured(bytecode).0
     }
 
-    /// Deploy raw bytecode by running init code via CREATE, returning (host, deploy_gas).
+    /// Deploy raw bytecode by running init code via CREATE, returning (host, `deploy_gas`).
     fn deploy_bytecode_measured(bytecode: &[u8]) -> (Self, u64) {
         let caller = Address::from([0x01; 20]);
 
@@ -216,8 +223,7 @@ impl EvmTestHost {
 
     /// Read a storage slot directly from the database.
     pub fn sload(&self, slot: U256) -> U256 {
-        use revm::context_interface::JournalTr;
-        use revm::Database;
+        use revm::{context_interface::JournalTr, Database};
         let mut db = self.evm.ctx.journaled_state.db().clone();
         db.storage(self.contract, slot)
             .expect("failed to read storage")
@@ -226,8 +232,7 @@ impl EvmTestHost {
     /// Set the caller address for subsequent transactions.
     /// Ensures the new caller has account info in the DB (only if not already present).
     pub fn set_caller(&mut self, caller: Address) {
-        use revm::context_interface::JournalTr;
-        use revm::Database;
+        use revm::{context_interface::JournalTr, Database};
         let db = self.evm.ctx.journaled_state.db_mut();
         // Only insert if the account doesn't already exist
         if db.basic(caller).ok().flatten().is_none() {
@@ -276,8 +281,7 @@ pub fn compile_edge_split(
     let ast = parser.parse().expect("parse failed");
     let ir_program = edge_ir::lower_and_optimize(&ast, ir_opt_level, optimize_for)
         .expect("IR optimization failed");
-    edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for)
-        .expect("codegen failed")
+    edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for).expect("codegen failed")
 }
 
 /// Compute the 4-byte function selector from a signature like "transfer(address,uint256)".

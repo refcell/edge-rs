@@ -91,7 +91,7 @@ pub enum EvmContext {
     InFunction(String),
     /// Inside a conditional branch (true/false, predicate, input)
     InBranch(bool, RcExpr, RcExpr),
-    /// Inside a loop (input, pred_output)
+    /// Inside a loop (input, `pred_output`)
     InLoop(RcExpr, RcExpr),
 }
 
@@ -197,7 +197,7 @@ pub enum EvmTernaryOp {
     MStore8,
     /// Keccak256 hash: (offset, size, state) -> hash (reads from memory state)
     Keccak256,
-    /// Conditional select: (cond, true_val, false_val) -> val
+    /// Conditional select: (cond, `true_val`, `false_val`) -> val
     Select,
 }
 
@@ -276,9 +276,9 @@ pub enum EvmExpr {
     Concat(RcExpr, RcExpr),
 
     // ---- Control flow ----
-    /// If-then-else: (pred, inputs, then_body, else_body)
+    /// If-then-else: (pred, inputs, `then_body`, `else_body`)
     If(RcExpr, RcExpr, RcExpr, RcExpr),
-    /// Do-while loop: (inputs, pred_and_body)
+    /// Do-while loop: (inputs, `pred_and_body`)
     DoWhile(RcExpr, RcExpr),
 
     // ---- EVM environment ----
@@ -288,13 +288,13 @@ pub enum EvmExpr {
     EnvRead1(EvmEnvOp, RcExpr, RcExpr),
 
     // ---- EVM-specific ----
-    /// Log event: (topic_count, topics, data, state) -> state
+    /// Log event: (`topic_count`, topics, data, state) -> state
     Log(usize, Vec<RcExpr>, RcExpr, RcExpr),
     /// Revert: (offset, size, state) -> !
     Revert(RcExpr, RcExpr, RcExpr),
     /// Return: (offset, size, state) -> !
     ReturnOp(RcExpr, RcExpr, RcExpr),
-    /// External call: (target, value, args_offset, args_len, ret_offset, ret_len, state)
+    /// External call: (target, value, `args_offset`, `args_len`, `ret_offset`, `ret_len`, state)
     ExtCall(RcExpr, RcExpr, RcExpr, RcExpr, RcExpr, RcExpr, RcExpr),
     /// Internal function call: (name, args) -> result
     Call(String, RcExpr),
@@ -303,17 +303,17 @@ pub enum EvmExpr {
 
     /// Let binding: compute value once, reference via Var(name) in body
     LetBind(String, RcExpr, RcExpr),
-    /// Variable reference to a LetBind
+    /// Variable reference to a `LetBind`
     Var(String),
-    /// Write to a LetBind variable's memory slot (mutates the variable in place)
+    /// Write to a `LetBind` variable's memory slot (mutates the variable in place)
     VarStore(String, RcExpr),
     /// Drop a variable (marks end of lifetime for slot reclamation)
     Drop(String),
 
     // ---- Top-level ----
-    /// Function: (name, input_type, output_type, body)
+    /// Function: (name, `input_type`, `output_type`, body)
     Function(String, EvmType, EvmType, RcExpr),
-    /// Storage field: (name, slot_index, type)
+    /// Storage field: (name, `slot_index`, type)
     StorageField(String, usize, EvmType),
 }
 
@@ -326,7 +326,7 @@ pub enum EvmExpr {
 pub struct EvmContract {
     /// Contract name
     pub name: String,
-    /// Storage field definitions (StorageField nodes)
+    /// Storage field definitions (`StorageField` nodes)
     pub storage_fields: Vec<RcExpr>,
     /// Constructor body
     pub constructor: RcExpr,
@@ -400,8 +400,11 @@ impl std::fmt::Display for EvmBinaryOp {
 
 impl EvmBinaryOp {
     /// Returns true if the second operand is a state token (ignored by codegen).
-    pub fn has_state(&self) -> bool {
-        matches!(self, Self::SLoad | Self::TLoad | Self::MLoad | Self::CalldataLoad)
+    pub const fn has_state(&self) -> bool {
+        matches!(
+            self,
+            Self::SLoad | Self::TLoad | Self::MLoad | Self::CalldataLoad
+        )
     }
 }
 

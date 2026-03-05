@@ -1,6 +1,6 @@
-// Stress tests for stack/memory optimization.
-// These test correctness and measure gas for contracts that
-// exercise LetBind, Concat chains, conditionals, loops, and mappings.
+//! Stress tests for stack/memory optimization.
+//! These test correctness and measure gas for contracts that
+//! exercise `LetBind`, `Concat` chains, conditionals, loops, and mappings.
 
 use alloy_primitives::{Address, U256};
 use edge_evm_tests::{abi_encode_u256, fn_selector, EvmTestHost};
@@ -205,7 +205,7 @@ fn deploy_stress_storage(opt: u8) -> EvmTestHost {
 fn stress_storage_balance_flow() {
     let mut host = deploy_stress_storage(0);
     let alice = Address::from([0x0A; 20]);
-    let bob = Address::from([0x0B; 20]);
+    let _bob = Address::from([0x0B; 20]);
 
     // Check initial balance is 0
     let r = host.call_fn("balance_of(address)", &abi_encode_address(alice));
@@ -309,22 +309,53 @@ fn stress_gas_comparison() {
 
     let tests: Vec<(&str, &str, Vec<u8>)> = vec![
         ("stress_variables.edge", "dot_product()", vec![]),
-        ("stress_variables.edge", "polynomial(uint256)", abi_encode_u256(U256::from(2))),
+        (
+            "stress_variables.edge",
+            "polynomial(uint256)",
+            abi_encode_u256(U256::from(2)),
+        ),
         ("stress_variables.edge", "fibonacci_unrolled()", vec![]),
-        ("stress_conditionals.edge", "classify(uint256)", abi_encode_u256(U256::from(500))),
-        ("stress_conditionals.edge", "clamp(uint256,uint256,uint256)", {
-            let mut a = abi_encode_u256(U256::from(50));
-            a.extend_from_slice(&abi_encode_u256(U256::from(10)));
-            a.extend_from_slice(&abi_encode_u256(U256::from(100)));
-            a
-        }),
-        ("stress_conditionals.edge", "tier_price(uint256)", abi_encode_u256(U256::from(75))),
-        ("stress_loops.edge", "sum_to(uint256)", abi_encode_u256(U256::from(10))),
-        ("stress_loops.edge", "factorial(uint256)", abi_encode_u256(U256::from(5))),
-        ("stress_loops.edge", "collatz_steps(uint256)", abi_encode_u256(U256::from(27))),
+        (
+            "stress_conditionals.edge",
+            "classify(uint256)",
+            abi_encode_u256(U256::from(500)),
+        ),
+        (
+            "stress_conditionals.edge",
+            "clamp(uint256,uint256,uint256)",
+            {
+                let mut a = abi_encode_u256(U256::from(50));
+                a.extend_from_slice(&abi_encode_u256(U256::from(10)));
+                a.extend_from_slice(&abi_encode_u256(U256::from(100)));
+                a
+            },
+        ),
+        (
+            "stress_conditionals.edge",
+            "tier_price(uint256)",
+            abi_encode_u256(U256::from(75)),
+        ),
+        (
+            "stress_loops.edge",
+            "sum_to(uint256)",
+            abi_encode_u256(U256::from(10)),
+        ),
+        (
+            "stress_loops.edge",
+            "factorial(uint256)",
+            abi_encode_u256(U256::from(5)),
+        ),
+        (
+            "stress_loops.edge",
+            "collatz_steps(uint256)",
+            abi_encode_u256(U256::from(27)),
+        ),
     ];
 
-    println!("{:<40} {:>8} {:>8} {:>8} {:>8}", "Function", "O0", "O1", "O2", "Savings");
+    println!(
+        "{:<40} {:>8} {:>8} {:>8} {:>8}",
+        "Function", "O0", "O1", "O2", "Savings"
+    );
     println!("{}", "-".repeat(70));
 
     for (file, sig, args) in &tests {
@@ -348,8 +379,10 @@ fn stress_gas_comparison() {
 
         // Truncate sig for display
         let short_sig = if sig.len() > 38 { &sig[..38] } else { sig };
-        println!("{:<40} {:>8} {:>8} {:>8} {:>8}",
-            short_sig, results[0], results[1], results[2], savings);
+        println!(
+            "{:<40} {:>8} {:>8} {:>8} {:>8}",
+            short_sig, results[0], results[1], results[2], savings
+        );
     }
     println!("{}", "=".repeat(70));
 }

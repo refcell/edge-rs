@@ -6,8 +6,8 @@
 mod convert;
 mod costs;
 mod rules;
-mod schema;
 mod schedule;
+mod schema;
 
 use edge_ir::OptimizeFor;
 
@@ -71,7 +71,9 @@ pub fn optimize(
                 Ok(optimized) => result.extend(optimized),
                 Err(_) => {
                     // Fall back to unoptimized block on egglog errors
-                    tracing::warn!("bytecode optimizer: egglog error, falling back to unoptimized block");
+                    tracing::warn!(
+                        "bytecode optimizer: egglog error, falling back to unoptimized block"
+                    );
                     result.extend(block.body);
                 }
             }
@@ -124,7 +126,7 @@ fn eliminate_dead_code(instructions: Vec<AsmInstruction>) -> Vec<AsmInstruction>
 
 /// Returns true if this opcode unconditionally terminates execution
 /// (no fallthrough to the next instruction).
-fn is_terminating_opcode(op: Opcode) -> bool {
+const fn is_terminating_opcode(op: Opcode) -> bool {
     matches!(
         op,
         Opcode::Return | Opcode::Revert | Opcode::Stop | Opcode::Invalid | Opcode::SelfDestruct
@@ -160,20 +162,21 @@ fn remove_consecutive_labels(instructions: Vec<AsmInstruction>) -> Vec<AsmInstru
             }
             // Find the last Label in the chain (skipping comments)
             let mut last_label_idx = i;
-            for k in (i + 1)..j {
-                if matches!(&instructions[k], AsmInstruction::Label(_)) {
+            for (k, inst) in instructions.iter().enumerate().take(j).skip(i + 1) {
+                if matches!(inst, AsmInstruction::Label(_)) {
                     last_label_idx = k;
                 }
             }
             // If there are multiple labels, alias all but the last
             if last_label_idx > i {
-                let last_label = if let AsmInstruction::Label(last) = &instructions[last_label_idx] {
+                let last_label = if let AsmInstruction::Label(last) = &instructions[last_label_idx]
+                {
                     last.clone()
                 } else {
                     unreachable!()
                 };
-                for k in i..last_label_idx {
-                    if let AsmInstruction::Label(label) = &instructions[k] {
+                for inst in instructions.iter().take(last_label_idx).skip(i) {
+                    if let AsmInstruction::Label(label) = inst {
                         aliases.insert(label.clone(), last_label.clone());
                     }
                 }
@@ -217,7 +220,10 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
         match &inst {
             AsmInstruction::Label(_) => {
                 // A label starts a new block. Flush the current block first.
-                if current_label.is_some() || !current_body.is_empty() || !current_comments.is_empty() {
+                if current_label.is_some()
+                    || !current_body.is_empty()
+                    || !current_comments.is_empty()
+                {
                     blocks.push(BasicBlock {
                         label: current_label.take(),
                         comments: std::mem::take(&mut current_comments),
@@ -239,8 +245,7 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
             AsmInstruction::Comment(_) => {
                 current_comments.push(inst);
             }
-            AsmInstruction::Op(_) | AsmInstruction::Push(_)
-            | AsmInstruction::PushLabel(_) => {
+            AsmInstruction::Op(_) | AsmInstruction::Push(_) | AsmInstruction::PushLabel(_) => {
                 current_body.push(inst);
             }
         }
@@ -285,13 +290,13 @@ fn optimize_block(
     match egraph.parse_and_run_program(None, &program) {
         Ok(outputs) => {
             // The last output should be the extracted expression
-            if let Some(output) = outputs.last() {
-                let extracted = output.to_string();
-                Ok(convert::sexp_to_instructions(&extracted))
-            } else {
-                // No output — return original
-                Ok(body.to_vec())
-            }
+            outputs.last().map_or_else(
+                || Ok(body.to_vec()),
+                |output| {
+                    let extracted = output.clone();
+                    Ok(convert::sexp_to_instructions(&extracted))
+                },
+            )
         }
         Err(e) => {
             tracing::warn!("bytecode optimizer egglog error: {e}");
@@ -359,10 +364,16 @@ mod tests {
 "#;
         let mut egraph = egglog::EGraph::default();
         let outputs = egraph.parse_and_run_program(None, program).unwrap();
-        let extracted = outputs.last().unwrap().to_string();
+        let extracted = outputs.last().unwrap().clone();
         eprintln!("Extracted: {extracted}");
-        assert!(extracted.contains("IStop"), "Expected rewrite to fire, got: {extracted}");
-        assert!(!extracted.contains("PushSmall"), "PushSmall 42 should be eliminated, got: {extracted}");
+        assert!(
+            extracted.contains("IStop"),
+            "Expected rewrite to fire, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("PushSmall"),
+            "PushSmall 42 should be eliminated, got: {extracted}"
+        );
     }
 
     #[test]
@@ -375,7 +386,7 @@ mod tests {
             AsmInstruction::Op(Opcode::Push0),
             AsmInstruction::Op(Opcode::Add),
         ];
-        let result = optimize(instrs.clone(), 1, OptimizeFor::Size).unwrap();
+        let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
         // Either form is valid since cost is the same
         let alt1 = vec![
             AsmInstruction::Op(Opcode::Push0),
@@ -387,7 +398,10 @@ mod tests {
             AsmInstruction::Op(Opcode::Dup1),
             AsmInstruction::Op(Opcode::Add),
         ];
-        assert!(result == alt1 || result == alt2, "Expected one of the equivalent forms, got: {result:?}");
+        assert!(
+            result == alt1 || result == alt2,
+            "Expected one of the equivalent forms, got: {result:?}"
+        );
     }
 
     #[test]
@@ -448,9 +462,14 @@ mod tests {
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
         // Labels and jumps preserved
         assert_eq!(result[0], AsmInstruction::Label("start".into()));
-        assert!(matches!(result.last(), Some(AsmInstruction::Op(Opcode::Stop))));
+        assert!(matches!(
+            result.last(),
+            Some(AsmInstruction::Op(Opcode::Stop))
+        ));
         // The jump should still be there
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::JumpTo(_))));
+        assert!(result
+            .iter()
+            .any(|i| matches!(i, AsmInstruction::JumpTo(_))));
     }
 
     #[test]
@@ -484,7 +503,8 @@ mod tests {
         // Verify the gas-mode schema is valid egglog
         let schema = crate::bytecode_opt::schema::generate_schema(OptimizeFor::Gas);
         let mut egraph = egglog::EGraph::default();
-        egraph.parse_and_run_program(None, &schema)
+        egraph
+            .parse_and_run_program(None, &schema)
             .expect("Gas schema should parse");
     }
 
@@ -493,7 +513,8 @@ mod tests {
         // Verify the size-mode schema is valid egglog
         let schema = crate::bytecode_opt::schema::generate_schema(OptimizeFor::Size);
         let mut egraph = egglog::EGraph::default();
-        egraph.parse_and_run_program(None, &schema)
+        egraph
+            .parse_and_run_program(None, &schema)
             .expect("Size schema should parse");
     }
 
@@ -582,10 +603,12 @@ mod tests {
             AsmInstruction::Push(vec![0x00]),
             AsmInstruction::Op(Opcode::SStore),
         ];
-        let result = optimize(instrs.clone(), 2, OptimizeFor::Gas).unwrap();
+        let result = optimize(instrs, 2, OptimizeFor::Gas).unwrap();
         // SStore should still be present (no rule removes it)
         assert!(
-            result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::SStore))),
+            result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::SStore))),
             "SStore must be preserved, got: {result:?}"
         );
     }
@@ -767,12 +790,22 @@ mod tests {
         ];
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
         // Dead code should be removed; label and stop preserved
-        assert!(!result.iter().any(|i| matches!(i, AsmInstruction::Push(d) if d == &[0xFF])),
-            "Dead push after RETURN should be removed, got: {result:?}");
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::Return))),
-            "RETURN should be preserved");
-        assert!(result.iter().any(|i| matches!(i, AsmInstruction::Label(_))),
-            "Label should be preserved");
+        assert!(
+            !result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Push(d) if d == &[0xFF])),
+            "Dead push after RETURN should be removed, got: {result:?}"
+        );
+        assert!(
+            result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::Return))),
+            "RETURN should be preserved"
+        );
+        assert!(
+            result.iter().any(|i| matches!(i, AsmInstruction::Label(_))),
+            "Label should be preserved"
+        );
     }
 
     #[test]
@@ -786,8 +819,12 @@ mod tests {
             AsmInstruction::Op(Opcode::Stop),
         ];
         let result = optimize(instrs, 1, OptimizeFor::Size).unwrap();
-        assert!(!result.iter().any(|i| matches!(i, AsmInstruction::Op(Opcode::Add))),
-            "Dead ADD after REVERT should be removed");
+        assert!(
+            !result
+                .iter()
+                .any(|i| matches!(i, AsmInstruction::Op(Opcode::Add))),
+            "Dead ADD after REVERT should be removed"
+        );
     }
 
     #[test]

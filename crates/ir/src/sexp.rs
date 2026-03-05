@@ -1,7 +1,7 @@
 //! S-expression conversion for the egglog round-trip.
 //!
 //! Converts between `EvmExpr` and egglog-compatible s-expression strings.
-//! Used to insert IR into an egglog EGraph and extract optimized results.
+//! Used to insert IR into an egglog `EGraph` and extract optimized results.
 
 use std::rc::Rc;
 
@@ -22,11 +22,21 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
     match expr {
         EvmExpr::Arg(ty, ctx) => format!("(Arg {} {})", type_sexp(ty), ctx_sexp(ctx)),
         EvmExpr::Const(c, ty, ctx) => {
-            format!("(Const {} {} {})", const_sexp(c), type_sexp(ty), ctx_sexp(ctx))
+            format!(
+                "(Const {} {} {})",
+                const_sexp(c),
+                type_sexp(ty),
+                ctx_sexp(ctx)
+            )
         }
         EvmExpr::Empty(ty, ctx) => format!("(Empty {} {})", type_sexp(ty), ctx_sexp(ctx)),
         EvmExpr::Bop(op, l, r) => {
-            format!("(Bop {} {} {})", binop_sexp(op), expr_to_sexp(l), expr_to_sexp(r))
+            format!(
+                "(Bop {} {} {})",
+                binop_sexp(op),
+                expr_to_sexp(l),
+                expr_to_sexp(r)
+            )
         }
         EvmExpr::Uop(op, e) => format!("(Uop {} {})", unop_sexp(op), expr_to_sexp(e)),
         EvmExpr::Top(op, a, b, c) => {
@@ -67,13 +77,29 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         }
         EvmExpr::Log(n, topics, data, st) => {
             let topics_s = list_to_sexp(topics);
-            format!("(Log {} {} {} {})", n, topics_s, expr_to_sexp(data), expr_to_sexp(st))
+            format!(
+                "(Log {} {} {} {})",
+                n,
+                topics_s,
+                expr_to_sexp(data),
+                expr_to_sexp(st)
+            )
         }
         EvmExpr::Revert(off, sz, st) => {
-            format!("(Revert {} {} {})", expr_to_sexp(off), expr_to_sexp(sz), expr_to_sexp(st))
+            format!(
+                "(Revert {} {} {})",
+                expr_to_sexp(off),
+                expr_to_sexp(sz),
+                expr_to_sexp(st)
+            )
         }
         EvmExpr::ReturnOp(off, sz, st) => {
-            format!("(ReturnOp {} {} {})", expr_to_sexp(off), expr_to_sexp(sz), expr_to_sexp(st))
+            format!(
+                "(ReturnOp {} {} {})",
+                expr_to_sexp(off),
+                expr_to_sexp(sz),
+                expr_to_sexp(st)
+            )
         }
         EvmExpr::ExtCall(tgt, val, ao, al, ro, rl, st) => {
             format!(
@@ -90,7 +116,7 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         EvmExpr::Call(name, args) => {
             format!("(Call \"{}\" {})", name, expr_to_sexp(args))
         }
-        EvmExpr::Selector(sig) => format!("(Selector \"{}\")", sig),
+        EvmExpr::Selector(sig) => format!("(Selector \"{sig}\")"),
         EvmExpr::LetBind(name, value, body) => {
             format!(
                 "(LetBind \"{}\" {} {})",
@@ -99,11 +125,11 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
                 expr_to_sexp(body)
             )
         }
-        EvmExpr::Var(name) => format!("(Var \"{}\")", name),
+        EvmExpr::Var(name) => format!("(Var \"{name}\")"),
         EvmExpr::VarStore(name, value) => {
             format!("(VarStore \"{}\" {})", name, expr_to_sexp(value))
         }
-        EvmExpr::Drop(name) => format!("(Drop \"{}\")", name),
+        EvmExpr::Drop(name) => format!("(Drop \"{name}\")"),
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             format!(
                 "(Function \"{}\" {} {} {})",
@@ -121,10 +147,10 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
 
 fn const_sexp(c: &EvmConstant) -> String {
     match c {
-        EvmConstant::SmallInt(i) => format!("(SmallInt {})", i),
-        EvmConstant::LargeInt(s) => format!("(LargeInt \"{}\")", s),
-        EvmConstant::Bool(b) => format!("(ConstBool {})", b),
-        EvmConstant::Addr(s) => format!("(ConstAddr \"{}\")", s),
+        EvmConstant::SmallInt(i) => format!("(SmallInt {i})"),
+        EvmConstant::LargeInt(s) => format!("(LargeInt \"{s}\")"),
+        EvmConstant::Bool(b) => format!("(ConstBool {b})"),
+        EvmConstant::Addr(s) => format!("(ConstAddr \"{s}\")"),
     }
 }
 
@@ -135,16 +161,16 @@ fn type_sexp(ty: &EvmType) -> String {
             let list = types.iter().rev().fold("(TLNil)".to_owned(), |acc, t| {
                 format!("(TLCons {} {})", basetype_sexp(t), acc)
             });
-            format!("(TupleT {})", list)
+            format!("(TupleT {list})")
         }
     }
 }
 
 fn basetype_sexp(bt: &EvmBaseType) -> String {
     match bt {
-        EvmBaseType::UIntT(n) => format!("(UIntT {})", n),
-        EvmBaseType::IntT(n) => format!("(IntT {})", n),
-        EvmBaseType::BytesT(n) => format!("(BytesT {})", n),
+        EvmBaseType::UIntT(n) => format!("(UIntT {n})"),
+        EvmBaseType::IntT(n) => format!("(IntT {n})"),
+        EvmBaseType::BytesT(n) => format!("(BytesT {n})"),
         EvmBaseType::AddrT => "(AddrT)".to_owned(),
         EvmBaseType::BoolT => "(BoolT)".to_owned(),
         EvmBaseType::UnitT => "(UnitT)".to_owned(),
@@ -154,9 +180,14 @@ fn basetype_sexp(bt: &EvmBaseType) -> String {
 
 fn ctx_sexp(ctx: &EvmContext) -> String {
     match ctx {
-        EvmContext::InFunction(name) => format!("(InFunction \"{}\")", name),
+        EvmContext::InFunction(name) => format!("(InFunction \"{name}\")"),
         EvmContext::InBranch(b, pred, input) => {
-            format!("(InBranch {} {} {})", b, expr_to_sexp(pred), expr_to_sexp(input))
+            format!(
+                "(InBranch {} {} {})",
+                b,
+                expr_to_sexp(pred),
+                expr_to_sexp(input)
+            )
         }
         EvmContext::InLoop(input, pred) => {
             format!("(InLoop {} {})", expr_to_sexp(input), expr_to_sexp(pred))
@@ -164,7 +195,7 @@ fn ctx_sexp(ctx: &EvmContext) -> String {
     }
 }
 
-fn binop_sexp(op: &EvmBinaryOp) -> &'static str {
+const fn binop_sexp(op: &EvmBinaryOp) -> &'static str {
     match op {
         EvmBinaryOp::Add => "(OpAdd)",
         EvmBinaryOp::Sub => "(OpSub)",
@@ -198,7 +229,7 @@ fn binop_sexp(op: &EvmBinaryOp) -> &'static str {
     }
 }
 
-fn unop_sexp(op: &EvmUnaryOp) -> &'static str {
+const fn unop_sexp(op: &EvmUnaryOp) -> &'static str {
     match op {
         EvmUnaryOp::IsZero => "(OpIsZero)",
         EvmUnaryOp::Not => "(OpNot)",
@@ -207,7 +238,7 @@ fn unop_sexp(op: &EvmUnaryOp) -> &'static str {
     }
 }
 
-fn ternop_sexp(op: &EvmTernaryOp) -> &'static str {
+const fn ternop_sexp(op: &EvmTernaryOp) -> &'static str {
     match op {
         EvmTernaryOp::SStore => "(OpSStore)",
         EvmTernaryOp::TStore => "(OpTStore)",
@@ -218,7 +249,7 @@ fn ternop_sexp(op: &EvmTernaryOp) -> &'static str {
     }
 }
 
-fn envop_sexp(op: &EvmEnvOp) -> &'static str {
+const fn envop_sexp(op: &EvmEnvOp) -> &'static str {
     match op {
         EvmEnvOp::Caller => "(EnvCaller)",
         EvmEnvOp::CallValue => "(EnvCallValue)",
@@ -264,8 +295,7 @@ fn parse_sexp(input: &str) -> Result<Sexp, IrError> {
     let (sexp, rest) = parse_tokens(&tokens)?;
     if !rest.is_empty() {
         return Err(IrError::Extraction(format!(
-            "trailing tokens after s-expression: {:?}",
-            rest
+            "trailing tokens after s-expression: {rest:?}"
         )));
     }
     Ok(sexp)
@@ -299,11 +329,7 @@ fn tokenize(input: &str) -> Result<Vec<String>, IrError> {
                             }
                         }
                         Some(ch) => s.push(ch),
-                        None => {
-                            return Err(IrError::Extraction(
-                                "unterminated string".to_owned(),
-                            ))
-                        }
+                        None => return Err(IrError::Extraction("unterminated string".to_owned())),
                     }
                 }
                 // Store with quotes to distinguish from identifiers
@@ -325,7 +351,7 @@ fn tokenize(input: &str) -> Result<Vec<String>, IrError> {
     Ok(tokens)
 }
 
-fn parse_tokens<'a>(tokens: &'a [String]) -> Result<(Sexp, &'a [String]), IrError> {
+fn parse_tokens(tokens: &[String]) -> Result<(Sexp, &[String]), IrError> {
     if tokens.is_empty() {
         return Err(IrError::Extraction("unexpected end of input".to_owned()));
     }
@@ -499,7 +525,9 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                 ))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected s-expression list, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected s-expression list, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -515,7 +543,9 @@ fn sexp_to_const(sexp: &Sexp) -> Result<EvmConstant, IrError> {
                 other => Err(IrError::Extraction(format!("unknown constant: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected constant, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected constant, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -551,7 +581,9 @@ fn sexp_to_basetype(sexp: &Sexp) -> Result<EvmBaseType, IrError> {
                 other => Err(IrError::Extraction(format!("unknown base type: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected base type, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected base type, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -575,7 +607,11 @@ fn sexp_to_type_list(sexp: &Sexp) -> Result<Vec<EvmBaseType>, IrError> {
                     }
                 }
             }
-            _ => return Err(IrError::Extraction(format!("expected type list, got: {current:?}"))),
+            _ => {
+                return Err(IrError::Extraction(format!(
+                    "expected type list, got: {current:?}"
+                )))
+            }
         }
     }
     Ok(result)
@@ -601,7 +637,9 @@ fn sexp_to_ctx(sexp: &Sexp) -> Result<EvmContext, IrError> {
                 other => Err(IrError::Extraction(format!("unknown context: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected context, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected context, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -642,7 +680,9 @@ fn sexp_to_binop(sexp: &Sexp) -> Result<EvmBinaryOp, IrError> {
                 other => Err(IrError::Extraction(format!("unknown binary op: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected binary op, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected binary op, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -658,7 +698,9 @@ fn sexp_to_unop(sexp: &Sexp) -> Result<EvmUnaryOp, IrError> {
                 other => Err(IrError::Extraction(format!("unknown unary op: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected unary op, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected unary op, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -676,7 +718,9 @@ fn sexp_to_ternop(sexp: &Sexp) -> Result<EvmTernaryOp, IrError> {
                 other => Err(IrError::Extraction(format!("unknown ternary op: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected ternary op, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected ternary op, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -706,7 +750,9 @@ fn sexp_to_envop(sexp: &Sexp) -> Result<EvmEnvOp, IrError> {
                 other => Err(IrError::Extraction(format!("unknown env op: {other}"))),
             }
         }
-        _ => Err(IrError::Extraction(format!("expected env op, got: {sexp:?}"))),
+        _ => Err(IrError::Extraction(format!(
+            "expected env op, got: {sexp:?}"
+        ))),
     }
 }
 
@@ -730,7 +776,11 @@ fn sexp_to_list(sexp: &Sexp) -> Result<Vec<RcExpr>, IrError> {
                     }
                 }
             }
-            _ => return Err(IrError::Extraction(format!("expected list, got: {current:?}"))),
+            _ => {
+                return Err(IrError::Extraction(format!(
+                    "expected list, got: {current:?}"
+                )))
+            }
         }
     }
     Ok(result)
@@ -831,7 +881,9 @@ fn tokenize_sexp(s: &str) -> Vec<String> {
             }
             _ => {
                 let start = i;
-                while i < bytes.len() && !matches!(bytes[i], b'(' | b')' | b' ' | b'\t' | b'\n' | b'\r') {
+                while i < bytes.len()
+                    && !matches!(bytes[i], b'(' | b')' | b' ' | b'\t' | b'\n' | b'\r')
+                {
                     i += 1;
                 }
                 tokens.push(s[start..i].to_string());
@@ -843,7 +895,7 @@ fn tokenize_sexp(s: &str) -> Vec<String> {
 
 fn parse_sexp_tokens(tokens: &[String], pos: usize) -> (STree, usize) {
     if pos >= tokens.len() {
-        return (STree::Atom("".to_string()), pos);
+        return (STree::Atom(String::new()), pos);
     }
     if tokens[pos] == "(" {
         let mut children = Vec::new();
@@ -943,12 +995,12 @@ fn format_tree(tree: &STree, indent: usize) -> String {
             // Break: put head on first line, each arg on its own indented line
             let head = flat_str(&children[0]);
             if children.len() == 1 {
-                return format!("({})", head);
+                return format!("({head})");
             }
 
             let child_indent = indent + 2;
             let pad = " ".repeat(child_indent);
-            let mut out = format!("({}", head);
+            let mut out = format!("({head}");
             for child in &children[1..] {
                 let formatted = format_tree(child, child_indent);
                 out.push('\n');
@@ -995,10 +1047,7 @@ mod tests {
         let ctx = EvmContext::InFunction("test".to_owned());
         let slot = ast_helpers::const_int(0, ctx.clone());
         let val = ast_helpers::const_int(42, ctx.clone());
-        let state = Rc::new(EvmExpr::Arg(
-            EvmType::Base(EvmBaseType::StateT),
-            ctx,
-        ));
+        let state = Rc::new(EvmExpr::Arg(EvmType::Base(EvmBaseType::StateT), ctx));
         let expr = ast_helpers::sstore(slot, val, state);
         let sexp = expr_to_sexp(&expr);
         let parsed = sexp_to_expr(&sexp).unwrap();

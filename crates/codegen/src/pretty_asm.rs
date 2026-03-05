@@ -3,9 +3,7 @@
 //! Produces a human-readable disassembly with labeled blocks, formatted
 //! PUSH values, and indented instruction bodies.
 
-use crate::assembler::AsmInstruction;
-use crate::opcode::Opcode;
-use crate::AsmOutput;
+use crate::{assembler::AsmInstruction, opcode::Opcode, AsmOutput};
 
 /// Pretty-print an `AsmOutput` (constructor + runtime).
 pub fn pretty_print_asm(output: &AsmOutput, contract_name: &str) -> String {
@@ -28,7 +26,7 @@ fn pp_instructions(instructions: &[AsmInstruction], buf: &mut String) {
     let mut in_block = false;
     let mut byte_offset: usize = 0;
     // Estimate if short jumps (< 256 bytes total)
-    let total_size: usize = instructions.iter().map(|i| est_size(i)).sum();
+    let total_size: usize = instructions.iter().map(est_size).sum();
     let short = total_size < 256;
 
     for (i, inst) in instructions.iter().enumerate() {
@@ -63,26 +61,17 @@ fn pp_instructions(instructions: &[AsmInstruction], buf: &mut String) {
             }
             AsmInstruction::JumpTo(label) => {
                 let prefix = if in_block { "    " } else { "  " };
-                buf.push_str(&format!(
-                    "{prefix}{:04x}  JUMP -> {label}\n",
-                    byte_offset
-                ));
+                buf.push_str(&format!("{prefix}{byte_offset:04x}  JUMP -> {label}\n"));
                 byte_offset += if short { 3 } else { 4 };
             }
             AsmInstruction::JumpITo(label) => {
                 let prefix = if in_block { "    " } else { "  " };
-                buf.push_str(&format!(
-                    "{prefix}{:04x}  JUMPI -> {label}\n",
-                    byte_offset
-                ));
+                buf.push_str(&format!("{prefix}{byte_offset:04x}  JUMPI -> {label}\n"));
                 byte_offset += if short { 3 } else { 4 };
             }
             AsmInstruction::PushLabel(label) => {
                 let prefix = if in_block { "    " } else { "  " };
-                buf.push_str(&format!(
-                    "{prefix}{:04x}  PUSH @{label}\n",
-                    byte_offset
-                ));
+                buf.push_str(&format!("{prefix}{byte_offset:04x}  PUSH @{label}\n"));
                 byte_offset += if short { 2 } else { 3 };
             }
             AsmInstruction::Comment(msg) => {
@@ -95,9 +84,8 @@ fn pp_instructions(instructions: &[AsmInstruction], buf: &mut String) {
 
 fn est_size(inst: &AsmInstruction) -> usize {
     match inst {
-        AsmInstruction::Op(_) => 1,
+        AsmInstruction::Op(_) | AsmInstruction::Label(_) => 1,
         AsmInstruction::Push(data) => 1 + data.len(),
-        AsmInstruction::Label(_) => 1,
         AsmInstruction::JumpTo(_) | AsmInstruction::JumpITo(_) => 4, // conservative
         AsmInstruction::PushLabel(_) => 3,
         AsmInstruction::Comment(_) => 0,

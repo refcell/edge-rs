@@ -3,7 +3,7 @@
 //! Produces a human-readable, indented representation of the post-egglog
 //! optimized IR.
 
-use crate::schema::*;
+use crate::schema::{EvmConstant, EvmContract, EvmExpr, EvmTernaryOp, EvmType, RcExpr};
 
 /// Max inline width before we break to multi-line.
 const MAX_INLINE: usize = 80;
@@ -80,11 +80,10 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
             Some(format!("{op}").len() + 1 + inner + 1)
         }
         EvmExpr::Bop(op, lhs, rhs) => {
+            let l = inline_width(lhs)?;
             if op.has_state() {
-                let l = inline_width(lhs)?;
                 Some(format!("{op}").len() + 1 + l + 8) // ", state)"
             } else {
-                let l = inline_width(lhs)?;
                 let r = inline_width(rhs)?;
                 Some(format!("{op}").len() + 1 + l + 2 + r + 1)
             }
@@ -102,13 +101,11 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
                     | EvmTernaryOp::MStore8
                     | EvmTernaryOp::Keccak256
             );
+            let wa = inline_width(a)?;
+            let wb = inline_width(b)?;
             if has_state {
-                let wa = inline_width(a)?;
-                let wb = inline_width(b)?;
                 Some(format!("{op}").len() + 1 + wa + 2 + wb + 8)
             } else {
-                let wa = inline_width(a)?;
-                let wb = inline_width(b)?;
                 let wc = inline_width(c)?;
                 Some(format!("{op}").len() + 1 + wa + 2 + wb + 2 + wc + 1)
             }
@@ -117,7 +114,7 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
             let w = inline_width(inner)?;
             Some(w + 1 + format!("{idx}").len())
         }
-        // These are never inlined
+        // These are never inlined (control flow, compound, or kept multi-line for clarity)
         EvmExpr::If(..)
         | EvmExpr::DoWhile(..)
         | EvmExpr::Concat(..)
@@ -125,10 +122,11 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
         | EvmExpr::Log(..)
         | EvmExpr::ExtCall(..)
         | EvmExpr::Function(..)
-        | EvmExpr::StorageField(..) => None,
-        // These could be inlined but keep them multi-line for clarity
-        EvmExpr::Revert(..) | EvmExpr::ReturnOp(..) => None,
-        EvmExpr::Call(..) | EvmExpr::VarStore(..) => None,
+        | EvmExpr::StorageField(..)
+        | EvmExpr::Revert(..)
+        | EvmExpr::ReturnOp(..)
+        | EvmExpr::Call(..)
+        | EvmExpr::VarStore(..) => None,
     }
 }
 
@@ -209,7 +207,7 @@ fn pp_inline(expr: &RcExpr, buf: &mut String) {
 }
 
 /// Budget remaining for inline content at a given depth.
-fn budget(depth: usize) -> usize {
+const fn budget(depth: usize) -> usize {
     MAX_INLINE.saturating_sub(depth * 2)
 }
 
@@ -242,12 +240,11 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
                 if fits_inline(lhs, budget(depth + 1)) {
                     buf.push_str(&format!("{op}("));
                     pp_inline(lhs, buf);
-                    buf.push_str(", state)");
                 } else {
                     buf.push_str(&format!("{op}(\n"));
                     pp(lhs, depth + 1, buf);
-                    buf.push_str(", state)");
                 }
+                buf.push_str(", state)");
             } else {
                 buf.push_str(&format!("{op}(\n"));
                 pp(lhs, depth + 1, buf);
@@ -267,12 +264,11 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             buf.push_str(&format!("{op}("));
             if fits_inline(arg, budget(depth + 1)) {
                 pp_inline(arg, buf);
-                buf.push(')');
             } else {
                 buf.push('\n');
                 pp(arg, depth + 1, buf);
-                buf.push(')');
             }
+            buf.push(')');
         }
         EvmExpr::Top(op, a, b, c) => {
             indent(depth, buf);
@@ -284,17 +280,13 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
                     | EvmTernaryOp::MStore8
                     | EvmTernaryOp::Keccak256
             );
+            buf.push_str(&format!("{op}(\n"));
+            pp(a, depth + 1, buf);
+            buf.push_str(",\n");
+            pp(b, depth + 1, buf);
             if has_state {
-                buf.push_str(&format!("{op}(\n"));
-                pp(a, depth + 1, buf);
-                buf.push_str(",\n");
-                pp(b, depth + 1, buf);
                 buf.push_str(", state)");
             } else {
-                buf.push_str(&format!("{op}(\n"));
-                pp(a, depth + 1, buf);
-                buf.push_str(",\n");
-                pp(b, depth + 1, buf);
                 buf.push_str(",\n");
                 pp(c, depth + 1, buf);
                 buf.push(')');
@@ -377,12 +369,11 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             buf.push_str("data=");
             if fits_inline(data, budget(depth + 1).saturating_sub(5)) {
                 pp_inline(data, buf);
-                buf.push(')');
             } else {
                 buf.push('\n');
                 pp(data, depth + 2, buf);
-                buf.push(')');
             }
+            buf.push(')');
         }
         EvmExpr::Revert(offset, size, _state) => {
             indent(depth, buf);
@@ -403,12 +394,14 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
         EvmExpr::ExtCall(target, value, args_off, args_len, ret_off, ret_len, _state) => {
             indent(depth, buf);
             buf.push_str("CALL(\n");
-            let labels = ["target", "value", "args_off", "args_len", "ret_off", "ret_len"];
+            let labels = [
+                "target", "value", "args_off", "args_len", "ret_off", "ret_len",
+            ];
             let args = [target, value, args_off, args_len, ret_off, ret_len];
             for (i, (label, arg)) in labels.iter().zip(args.iter()).enumerate() {
                 indent(depth + 1, buf);
                 buf.push_str(label);
-                buf.push_str("=");
+                buf.push('=');
                 if fits_inline(arg, budget(depth + 1).saturating_sub(label.len() + 1)) {
                     pp_inline(arg, buf);
                 } else {
@@ -428,12 +421,11 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             if fits_inline(args, budget(depth).saturating_sub(name.len() + 7)) {
                 buf.push_str(&format!("call {name}("));
                 pp_inline(args, buf);
-                buf.push(')');
             } else {
                 buf.push_str(&format!("call {name}(\n"));
                 pp(args, depth + 1, buf);
-                buf.push(')');
             }
+            buf.push(')');
         }
 
         // ---- Let bindings ----
@@ -443,12 +435,11 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             if fits_inline(init, budget(depth).saturating_sub(prefix_len)) {
                 buf.push_str(&format!("let ${name} = "));
                 pp_inline(init, buf);
-                buf.push('\n');
             } else {
                 buf.push_str(&format!("let ${name} =\n"));
                 pp(init, depth + 1, buf);
-                buf.push('\n');
             }
+            buf.push('\n');
             pp(body, depth, buf);
         }
         EvmExpr::VarStore(name, val) => {
@@ -664,19 +655,20 @@ pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
         EvmExpr::Function(name, _, _, _) => {
             buf.push_str(&format!("fn {name}()"));
         }
-        EvmExpr::Top(op, a, b, _c) => {
-            match op {
-                EvmTernaryOp::SStore | EvmTernaryOp::TStore | EvmTernaryOp::MStore
-                | EvmTernaryOp::MStore8 | EvmTernaryOp::Keccak256 => {
-                    buf.push_str(&format!("{op}("));
-                    pp_oneline(a, &mut buf);
-                    buf.push_str(", ");
-                    pp_oneline(b, &mut buf);
-                    buf.push(')');
-                }
-                _ => return None,
+        EvmExpr::Top(op, a, b, _c) => match op {
+            EvmTernaryOp::SStore
+            | EvmTernaryOp::TStore
+            | EvmTernaryOp::MStore
+            | EvmTernaryOp::MStore8
+            | EvmTernaryOp::Keccak256 => {
+                buf.push_str(&format!("{op}("));
+                pp_oneline(a, &mut buf);
+                buf.push_str(", ");
+                pp_oneline(b, &mut buf);
+                buf.push(')');
             }
-        }
+            _ => return None,
+        },
         // Non-statement nodes: no comment
         _ => return None,
     }

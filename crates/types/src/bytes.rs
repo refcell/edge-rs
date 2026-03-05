@@ -52,7 +52,9 @@ pub fn decimal_to_bytes32(s: &str) -> [u8; 32] {
     // Fallback for very large decimals: convert to hex string, then use str_to_bytes32
     let hex = decimal_str_to_hex(s);
     // This is called from the lexer for decimal literals which should always be valid
-    str_to_bytes32(&hex).expect("decimal_to_bytes32: invalid decimal string").into()
+    str_to_bytes32(&hex)
+        .expect("decimal_to_bytes32: invalid decimal string")
+        .into()
 }
 
 /// Convert a decimal digit string to a hex string (no prefix).

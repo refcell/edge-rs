@@ -6,14 +6,18 @@
 //! Values are interned in a global `IndexSet<W>` behind a `Mutex`,
 //! following the same pattern as egglog's built-in `BigIntSort`.
 
-use std::any::Any;
-use std::sync::{Arc, Mutex};
+use std::{
+    any::Any,
+    sync::{Arc, Mutex},
+};
 
-use egglog::ast::Literal;
-use egglog::sort::{FromSort, IntoSort, Sort};
-use egglog::{add_primitives, extract::Extractor, EGraph, TypeInfo, Value};
-use egglog::{Term, TermDag};
-
+use egglog::{
+    add_primitives,
+    ast::Literal,
+    extract::Extractor,
+    sort::{FromSort, IntoSort, Sort},
+    EGraph, Term, TermDag, TypeInfo, Value,
+};
 use ruint::aliases::U256;
 
 /// Newtype wrapper around `U256` to satisfy orphan rules for `FromSort`/`IntoSort`.

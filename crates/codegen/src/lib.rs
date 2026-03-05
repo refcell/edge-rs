@@ -32,8 +32,7 @@ pub mod pretty_asm;
 pub mod subroutine_extract;
 
 use assembler::AsmInstruction;
-use edge_ir::schema::EvmProgram;
-use edge_ir::OptimizeFor;
+use edge_ir::{schema::EvmProgram, OptimizeFor};
 
 /// Errors that can occur during code generation.
 #[derive(Debug, thiserror::Error)]
@@ -69,14 +68,14 @@ pub fn compile(
         tracing::info!("Compiling contract: {}", contract.name);
         let bytecode =
             contract::generate_contract_bytecode(contract, optimization_level, optimize_for)?;
-        tracing::info!(
-            "Generated {} bytes of deployment bytecode",
-            bytecode.len()
-        );
+        tracing::info!("Generated {} bytes of deployment bytecode", bytecode.len());
         Ok(bytecode)
     } else if !program.free_functions.is_empty() {
         // Compile free functions as a simple program (no dispatcher)
-        tracing::info!("Compiling {} free function(s)", program.free_functions.len());
+        tracing::info!(
+            "Compiling {} free function(s)",
+            program.free_functions.len()
+        );
         let mut asm = assembler::Assembler::new();
         let mut compiler = expr_compiler::ExprCompiler::new(&mut asm);
         for func in &program.free_functions {

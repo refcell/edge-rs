@@ -5,7 +5,7 @@
 /// Generate the egglog ruleset scheduling code.
 ///
 /// This defines the order and iteration limits for each optimization pass.
-pub fn rulesets() -> String {
+pub const fn rulesets() -> String {
     String::new()
 }
 
@@ -46,7 +46,8 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run storage-opt)
                         (run memory-opt)
                         (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))
-                        (run cse-rules))))".to_owned()
+                        (run cse-rules))))"
+                .to_owned()
         }
         _ => {
             // Aggressive: more iterations, saturate analysis each round
@@ -60,7 +61,8 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run storage-opt)
                         (run memory-opt)
                         (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))
-                        (run cse-rules))))".to_owned()
+                        (run cse-rules))))"
+                .to_owned()
         }
     }
 }

@@ -108,8 +108,7 @@ impl<'a> Lexer<'a> {
     /// The `0x` prefix has already been consumed by the caller.
     /// Only pure hex digits are accepted.
     pub fn eat_hex_digit(&mut self) -> TokenResult {
-        let (hex_str, start, end) =
-            self.eat_while(None, |ch| ch.is_ascii_hexdigit());
+        let (hex_str, start, end) = self.eat_while(None, |ch| ch.is_ascii_hexdigit());
 
         let span = Span {
             start: start as usize,
@@ -269,7 +268,7 @@ impl<'a> Lexer<'a> {
             )
         })?;
         Ok(Token {
-            kind: TokenKind::Literal(literal.into()),
+            kind: TokenKind::Literal(literal),
             span,
         })
     }

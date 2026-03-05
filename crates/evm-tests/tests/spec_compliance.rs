@@ -1,5 +1,5 @@
-// Spec-compliance stress tests covering all features that compile end-to-end.
-// Tests operators, functions, control flow, storage, events, builtins, constants.
+//! Spec-compliance stress tests covering all features that compile end-to-end.
+//! Tests operators, functions, control flow, storage, events, builtins, constants.
 
 use alloy_primitives::{Address, U256};
 use edge_evm_tests::{abi_decode_u256, abi_encode_address, abi_encode_u256, EvmTestHost};

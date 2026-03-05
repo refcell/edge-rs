@@ -4,14 +4,13 @@
 //! Only performs transforms that require occurrence counting, which
 //! egglog's pattern matching cannot express:
 //!
-//! 1. **Dead variable elimination**: Remove LetBinds whose variable is never read
-//! 2. **Single-use inlining**: Inline LetBind init directly at sole Var reference
+//! 1. **Dead variable elimination**: Remove `LetBinds` whose variable is never read
+//! 2. **Single-use inlining**: Inline `LetBind` init directly at sole Var reference
 //! 3. **Multi-use constant propagation**: Replace Var refs with the constant value
 //!
-//! Store-forwarding is handled at the lowering level (to_egglog.rs), not here.
+//! Store-forwarding is handled at the lowering level (`to_egglog.rs`), not here.
 
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::schema::{EvmExpr, EvmTernaryOp, RcExpr};
 
@@ -29,22 +28,22 @@ pub enum AllocationMode {
 pub struct VarAllocation {
     /// Stack vs memory allocation decision.
     pub mode: AllocationMode,
-    /// Total number of Var(name) reads in the LetBind body (for last-use DUP elision).
+    /// Total number of Var(name) reads in the `LetBind` body (for last-use DUP elision).
     pub read_count: usize,
 }
 
 /// Per-variable usage statistics.
 #[derive(Debug, Clone, Default)]
 struct VarInfo {
-    /// Number of times `Var(name)` appears in the LetBind body
+    /// Number of times `Var(name)` appears in the `LetBind` body
     read_count: usize,
-    /// Number of times `VarStore(name, _)` appears in the LetBind body
+    /// Number of times `VarStore(name, _)` appears in the `LetBind` body
     write_count: usize,
-    /// Whether any reference is inside a DoWhile loop
+    /// Whether any reference is inside a `DoWhile` loop
     in_loop: bool,
 }
 
-/// Analyze all LetBind variables in an expression and decide allocation mode.
+/// Analyze all `LetBind` variables in an expression and decide allocation mode.
 ///
 /// Returns a map from variable name to `VarAllocation`. Variables not in the
 /// map default to `Memory` with `read_count` 0.
@@ -69,10 +68,14 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
             } else {
                 AllocationMode::Memory
             };
-            let alloc = VarAllocation { mode, read_count: info.read_count };
+            let alloc = VarAllocation {
+                mode,
+                read_count: info.read_count,
+            };
             // If the name already exists (from another function's same-named local),
             // use the more conservative allocation: Memory beats Stack.
-            result.entry(name.clone())
+            result
+                .entry(name.clone())
                 .and_modify(|existing| {
                     if alloc.mode == AllocationMode::Memory {
                         existing.mode = AllocationMode::Memory;
@@ -158,14 +161,14 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let l = optimize_expr(lhs);
             let r = optimize_expr(rhs);
             if Rc::ptr_eq(&l, lhs) && Rc::ptr_eq(&r, rhs) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Bop(*op, l, r))
         }
         EvmExpr::Uop(op, inner) => {
             let i = optimize_expr(inner);
             if Rc::ptr_eq(&i, inner) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Uop(*op, i))
         }
@@ -174,14 +177,14 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let b2 = optimize_expr(b);
             let c2 = optimize_expr(c);
             if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Top(*op, a2, b2, c2))
         }
         EvmExpr::Get(inner, idx) => {
             let i = optimize_expr(inner);
             if Rc::ptr_eq(&i, inner) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Get(i, *idx))
         }
@@ -189,7 +192,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let a2 = optimize_expr(a);
             let b2 = optimize_expr(b);
             if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Concat(a2, b2))
         }
@@ -203,7 +206,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
                 && Rc::ptr_eq(&t, then_body)
                 && Rc::ptr_eq(&e, else_body)
             {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::If(c, i, t, e))
         }
@@ -211,14 +214,14 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let i = optimize_expr(inputs);
             let b = optimize_expr(body);
             if Rc::ptr_eq(&i, inputs) && Rc::ptr_eq(&b, body) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DoWhile(i, b))
         }
         EvmExpr::EnvRead(op, state) => {
             let s = optimize_expr(state);
             if Rc::ptr_eq(&s, state) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::EnvRead(*op, s))
         }
@@ -226,7 +229,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let a = optimize_expr(arg);
             let s = optimize_expr(state);
             if Rc::ptr_eq(&a, arg) && Rc::ptr_eq(&s, state) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::EnvRead1(*op, a, s))
         }
@@ -241,7 +244,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let s = optimize_expr(sz);
             let st = optimize_expr(state);
             if Rc::ptr_eq(&o, off) && Rc::ptr_eq(&s, sz) && Rc::ptr_eq(&st, state) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Revert(o, s, st))
         }
@@ -250,7 +253,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             let s = optimize_expr(sz);
             let st = optimize_expr(state);
             if Rc::ptr_eq(&o, off) && Rc::ptr_eq(&s, sz) && Rc::ptr_eq(&st, state) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::ReturnOp(o, s, st))
         }
@@ -267,7 +270,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         EvmExpr::Call(name, args) => {
             let a = optimize_expr(args);
             if Rc::ptr_eq(&a, args) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Call(name.clone(), a))
         }
@@ -280,16 +283,21 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         EvmExpr::VarStore(name, value) => {
             let v = optimize_expr(value);
             if Rc::ptr_eq(&v, value) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
             Rc::new(EvmExpr::VarStore(name.clone(), v))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             let b = optimize_expr(body);
             if Rc::ptr_eq(&b, body) {
-                return expr.clone();
+                return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), b))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                b,
+            ))
         }
         // Leaf nodes — no children to optimize
         EvmExpr::Const(..)
@@ -298,7 +306,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => expr.clone(),
+        | EvmExpr::StorageField(..) => Rc::clone(expr),
     }
 }
 
@@ -309,7 +317,7 @@ fn apply_transforms(expr: &RcExpr) -> RcExpr {
         return apply_letbind_opts(name, init, body, expr, &info);
     }
 
-    expr.clone()
+    Rc::clone(expr)
 }
 
 /// Apply LetBind-specific optimizations given usage info.
@@ -323,11 +331,10 @@ fn apply_letbind_opts(
     // 1. Dead variable elimination: never read → remove LetBind
     if info.read_count == 0 && info.write_count == 0 {
         if is_pure(init) {
-            return body.clone();
-        } else {
-            // Keep side effects
-            return Rc::new(EvmExpr::Concat(init.clone(), body.clone()));
+            return Rc::clone(body);
         }
+        // Keep side effects
+        return Rc::new(EvmExpr::Concat(Rc::clone(init), Rc::clone(body)));
     }
 
     // 2. Single-use inlining: read once, never written, not in loop, pure init
@@ -344,9 +351,8 @@ fn apply_letbind_opts(
             // LetBind is now dead — eliminate it
             if is_pure(init) {
                 return new_body;
-            } else {
-                return Rc::new(EvmExpr::Concat(init.clone(), new_body));
             }
+            return Rc::new(EvmExpr::Concat(Rc::clone(init), new_body));
         }
     }
 
@@ -355,7 +361,7 @@ fn apply_letbind_opts(
         return substitute_var(name, init, body);
     }
 
-    expr.clone()
+    Rc::clone(expr)
 }
 
 /// Analyze how a variable is used within an expression.
@@ -454,7 +460,7 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
     }
 }
 
-/// Forward the value from a VarStore to the subsequent Var read.
+/// Forward the value from a `VarStore` to the subsequent Var read.
 ///
 /// Finds the VarStore(name, val) in the body's Concat chain, removes it,
 /// and substitutes val for the single Var(name) read.
@@ -468,13 +474,13 @@ fn forward_last_store(name: &str, body: &RcExpr) -> Option<RcExpr> {
 }
 
 /// Extract the value from VarStore(name, val) in a Concat chain,
-/// returning (val, body_without_VarStore).
+/// returning (val, `body_without_VarStore`).
 fn extract_store_value(name: &str, expr: &RcExpr) -> Option<(RcExpr, RcExpr)> {
     match expr.as_ref() {
         EvmExpr::VarStore(n, val) if n == name => {
             // Replace VarStore with Empty (side-effect-free placeholder)
             Some((
-                val.clone(),
+                Rc::clone(val),
                 Rc::new(EvmExpr::Empty(
                     crate::schema::EvmType::Base(crate::schema::EvmBaseType::UnitT),
                     crate::schema::EvmContext::InFunction("__opt__".to_owned()),
@@ -484,11 +490,11 @@ fn extract_store_value(name: &str, expr: &RcExpr) -> Option<(RcExpr, RcExpr)> {
         EvmExpr::Concat(a, b) => {
             // Try left side first
             if let Some((val, new_a)) = extract_store_value(name, a) {
-                return Some((val, Rc::new(EvmExpr::Concat(new_a, b.clone()))));
+                return Some((val, Rc::new(EvmExpr::Concat(new_a, Rc::clone(b)))));
             }
             // Try right side
             if let Some((val, new_b)) = extract_store_value(name, b) {
-                return Some((val, Rc::new(EvmExpr::Concat(a.clone(), new_b))));
+                return Some((val, Rc::new(EvmExpr::Concat(Rc::clone(a), new_b))));
             }
             None
         }
@@ -510,7 +516,11 @@ fn is_pure(expr: &RcExpr) -> bool {
         | EvmExpr::Empty(..)
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
-        | EvmExpr::Selector(_) => true,
+        | EvmExpr::Selector(_)
+        | EvmExpr::EnvRead(..)
+        | EvmExpr::EnvRead1(..)
+        | EvmExpr::Function(..)
+        | EvmExpr::StorageField(..) => true,
         EvmExpr::Bop(op, a, b) => {
             use crate::schema::EvmBinaryOp::*;
             match op {
@@ -521,27 +531,27 @@ fn is_pure(expr: &RcExpr) -> bool {
                 CheckedAdd | CheckedSub | CheckedMul => false,
             }
         }
-        EvmExpr::Uop(_, a) => is_pure(a),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => is_pure(a),
         EvmExpr::Top(op, a, b, c) => match op {
             EvmTernaryOp::Select | EvmTernaryOp::Keccak256 => {
                 is_pure(a) && is_pure(b) && is_pure(c)
             }
             _ => false,
         },
-        EvmExpr::Get(a, _) => is_pure(a),
         EvmExpr::Concat(a, b) => is_pure(a) && is_pure(b),
-        EvmExpr::EnvRead(..) | EvmExpr::EnvRead1(..) => true,
         EvmExpr::LetBind(_, init, body) => is_pure(init) && is_pure(body),
         EvmExpr::If(c, i, t, e) => is_pure(c) && is_pure(i) && is_pure(t) && is_pure(e),
-        EvmExpr::VarStore(..) | EvmExpr::Log(..) | EvmExpr::Revert(..) | EvmExpr::ReturnOp(..)
-        | EvmExpr::ExtCall(..) => false,
-        EvmExpr::DoWhile(..) => false,
-        EvmExpr::Call(..) => false,
-        EvmExpr::Function(..) | EvmExpr::StorageField(..) => true,
+        EvmExpr::VarStore(..)
+        | EvmExpr::Log(..)
+        | EvmExpr::Revert(..)
+        | EvmExpr::ReturnOp(..)
+        | EvmExpr::ExtCall(..)
+        | EvmExpr::DoWhile(..)
+        | EvmExpr::Call(..) => false,
     }
 }
 
-/// Collect names of immutable variables (LetBinds with no VarStore in body).
+/// Collect names of immutable variables (`LetBinds` with no `VarStore` in body).
 ///
 /// These variables always have the same value as their init expression,
 /// so egglog can propagate bounds from the init to Var references.
@@ -561,7 +571,7 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
             collect_immutable_vars_rec(init, out);
             collect_immutable_vars_rec(body, out);
         }
-        EvmExpr::Concat(a, b) => {
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
             collect_immutable_vars_rec(a, out);
             collect_immutable_vars_rec(b, out);
         }
@@ -570,14 +580,6 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
             collect_immutable_vars_rec(i, out);
             collect_immutable_vars_rec(t, out);
             collect_immutable_vars_rec(e, out);
-        }
-        EvmExpr::DoWhile(inputs, body) => {
-            collect_immutable_vars_rec(inputs, out);
-            collect_immutable_vars_rec(body, out);
-        }
-        EvmExpr::Bop(_, a, b) => {
-            collect_immutable_vars_rec(a, out);
-            collect_immutable_vars_rec(b, out);
         }
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
             collect_immutable_vars_rec(a, out);
@@ -635,7 +637,7 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
 
 /// Insert early Drop nodes for variables in halting branches that don't use them.
 ///
-/// Call this on the full expression tree after other var_opt passes.
+/// Call this on the full expression tree after other `var_opt` passes.
 pub fn insert_early_drops(expr: &RcExpr) -> RcExpr {
     insert_drops_rec(expr, &[])
 }
@@ -686,10 +688,15 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             let new_body = insert_drops_rec(body, vars_in_scope);
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), new_body))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                new_body,
+            ))
         }
         // Leaf and other nodes: no structural changes needed
-        _ => expr.clone(),
+        _ => Rc::clone(expr),
     }
 }
 
@@ -709,12 +716,11 @@ fn expr_definitely_halts(expr: &RcExpr) -> bool {
     }
 }
 
-/// Check if an expression references a variable by name (Var or VarStore).
+/// Check if an expression references a variable by name (Var or `VarStore`).
 fn references_var(expr: &RcExpr, name: &str) -> bool {
     match expr.as_ref() {
-        EvmExpr::Var(n) => n == name,
+        EvmExpr::Var(n) | EvmExpr::Drop(n) => n == name,
         EvmExpr::VarStore(n, val) => n == name || references_var(val, name),
-        EvmExpr::Drop(n) => n == name,
         EvmExpr::LetBind(n, init, body) => {
             references_var(init, name) || (n != name && references_var(body, name))
         }
@@ -726,8 +732,10 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
             references_var(a, name) || references_var(b, name) || references_var(c, name)
         }
         EvmExpr::If(c, i, t, e) => {
-            references_var(c, name) || references_var(i, name)
-                || references_var(t, name) || references_var(e, name)
+            references_var(c, name)
+                || references_var(i, name)
+                || references_var(t, name)
+                || references_var(e, name)
         }
         EvmExpr::DoWhile(inputs, body) => {
             references_var(inputs, name) || references_var(body, name)
@@ -739,13 +747,16 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
                 || references_var(data, name)
                 || references_var(state, name)
         }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            [a, b, c, d, e, f, g].iter().any(|x| references_var(x, name))
-        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
+            .iter()
+            .any(|x| references_var(x, name)),
         EvmExpr::Call(_, args) => references_var(args, name),
         EvmExpr::Function(_, _, _, body) => references_var(body, name),
-        EvmExpr::Const(..) | EvmExpr::Arg(..) | EvmExpr::Empty(..)
-        | EvmExpr::Selector(_) | EvmExpr::StorageField(..) => false,
+        EvmExpr::Const(..)
+        | EvmExpr::Arg(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Selector(_)
+        | EvmExpr::StorageField(..) => false,
     }
 }
 
@@ -759,12 +770,12 @@ fn prepend_drop(expr: &RcExpr, var: &str) -> RcExpr {
         // For Concat chains, insert the Drop just before the tail
         EvmExpr::Concat(head, tail) if expr_definitely_halts(tail) => {
             let new_tail = prepend_drop(tail, var);
-            Rc::new(EvmExpr::Concat(head.clone(), new_tail))
+            Rc::new(EvmExpr::Concat(Rc::clone(head), new_tail))
         }
         // Base case: wrap with Drop
         _ => Rc::new(EvmExpr::Concat(
             Rc::new(EvmExpr::Drop(var.to_owned())),
-            expr.clone(),
+            Rc::clone(expr),
         )),
     }
 }
@@ -772,14 +783,21 @@ fn prepend_drop(expr: &RcExpr, var: &str) -> RcExpr {
 /// Substitute all occurrences of `Var(name)` with `replacement` in `expr`.
 fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
     match expr.as_ref() {
-        EvmExpr::Var(n) if n == name => replacement.clone(),
-        EvmExpr::Var(_) => expr.clone(),
+        EvmExpr::Var(n) if n == name => Rc::clone(replacement),
+        // Leaf nodes
+        EvmExpr::Var(_)
+        | EvmExpr::Const(..)
+        | EvmExpr::Arg(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Selector(_)
+        | EvmExpr::Drop(_)
+        | EvmExpr::StorageField(..) => Rc::clone(expr),
 
         // Stop at shadowing LetBind
         EvmExpr::LetBind(n, init, body) => {
             let new_init = substitute_var(name, replacement, init);
             if n == name {
-                Rc::new(EvmExpr::LetBind(n.clone(), new_init, body.clone()))
+                Rc::new(EvmExpr::LetBind(n.clone(), new_init, Rc::clone(body)))
             } else {
                 let new_body = substitute_var(name, replacement, body);
                 Rc::new(EvmExpr::LetBind(n.clone(), new_init, new_body))
@@ -790,14 +808,6 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
             let new_val = substitute_var(name, replacement, val);
             Rc::new(EvmExpr::VarStore(n.clone(), new_val))
         }
-
-        // Leaf nodes
-        EvmExpr::Const(..)
-        | EvmExpr::Arg(..)
-        | EvmExpr::Empty(..)
-        | EvmExpr::Selector(_)
-        | EvmExpr::Drop(_)
-        | EvmExpr::StorageField(..) => expr.clone(),
 
         EvmExpr::Bop(op, a, b) => {
             let a2 = substitute_var(name, replacement, a);
@@ -881,7 +891,12 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
         }
         EvmExpr::Function(n, in_ty, out_ty, body) => {
             let b2 = substitute_var(name, replacement, body);
-            Rc::new(EvmExpr::Function(n.clone(), in_ty.clone(), out_ty.clone(), b2))
+            Rc::new(EvmExpr::Function(
+                n.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                b2,
+            ))
         }
     }
 }
@@ -889,8 +904,7 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast_helpers;
-    use crate::schema::*;
+    use crate::{ast_helpers, schema::*};
 
     fn ctx() -> EvmContext {
         EvmContext::InFunction("test".to_owned())
@@ -942,8 +956,11 @@ mod tests {
             Rc::new(EvmExpr::Var(name.clone())),
             Rc::new(EvmExpr::Var(name.clone())),
         );
-        let body = Rc::new(EvmExpr::Concat(add_expr, ast_helpers::drop_var(name.clone())));
-        let expr = Rc::new(EvmExpr::LetBind(name, val.clone(), body));
+        let body = Rc::new(EvmExpr::Concat(
+            add_expr,
+            ast_helpers::drop_var(name.clone()),
+        ));
+        let expr = Rc::new(EvmExpr::LetBind(name, val, body));
 
         let optimized = optimize_expr(&expr);
         // Should be Concat(Add(42, 42), Drop(x))
@@ -974,7 +991,7 @@ mod tests {
             ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx()),
             Rc::new(EvmExpr::Var(name.clone())),
         ));
-        let expr = Rc::new(EvmExpr::LetBind(name.clone(), val, loop_body));
+        let expr = Rc::new(EvmExpr::LetBind(name, val, loop_body));
 
         let optimized = optimize_expr(&expr);
         // Should still be a LetBind (in_loop blocks inline and const prop)
@@ -1004,7 +1021,10 @@ mod tests {
         // Should forward 42 from VarStore to Var, eliminate LetBind.
         // Result: Concat(Empty, Concat(42, Drop(c))) — Empty from removed VarStore.
         // Verify no LetBind and no VarStore remain, and 42 is present.
-        assert!(!matches!(optimized.as_ref(), EvmExpr::LetBind(..)), "LetBind should be eliminated");
+        assert!(
+            !matches!(optimized.as_ref(), EvmExpr::LetBind(..)),
+            "LetBind should be eliminated"
+        );
         // Check that the value 42 appears somewhere in the result
         fn contains_42(e: &EvmExpr) -> bool {
             match e {
@@ -1013,6 +1033,9 @@ mod tests {
                 _ => false,
             }
         }
-        assert!(contains_42(&optimized), "expected 42 in result, got: {optimized:?}");
+        assert!(
+            contains_42(&optimized),
+            "expected 42 in result, got: {optimized:?}"
+        );
     }
 }

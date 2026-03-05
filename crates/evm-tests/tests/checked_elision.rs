@@ -146,8 +146,7 @@ fn elision_produces_smaller_code() {
 
     assert!(
         o1_size < o0_size,
-        "O1 ({} bytes) should be smaller than O0 ({} bytes) — elision removes overflow check",
-        o1_size, o0_size,
+        "O1 ({o1_size} bytes) should be smaller than O0 ({o0_size} bytes) — elision removes overflow check",
     );
 
     // Verify correctness at both levels
@@ -167,19 +166,26 @@ fn elision_removes_overflow_check_opcodes() {
     let o0_hex: String = o0.iter().map(|b| format!("{b:02x}")).collect();
     let o1_hex: String = o1.iter().map(|b| format!("{b:02x}")).collect();
 
-    assert!(o0_hex.contains("11"), "O0 should contain GT (0x11) for overflow check");
-    assert!(!o1_hex.contains("11"), "O1 should NOT contain GT — check elided");
+    assert!(
+        o0_hex.contains("11"),
+        "O0 should contain GT (0x11) for overflow check"
+    );
+    assert!(
+        !o1_hex.contains("11"),
+        "O1 should NOT contain GT — check elided"
+    );
 }
 
 #[test]
 fn multi_function_elision_reduces_size() {
-    let mut h0 = EvmTestHost::deploy_edge(PATH, 0);
-    let mut h1 = EvmTestHost::deploy_edge(PATH, 1);
+    let h0 = EvmTestHost::deploy_edge(PATH, 0);
+    let h1 = EvmTestHost::deploy_edge(PATH, 1);
 
     assert!(
         h1.runtime_code_size() < h0.runtime_code_size(),
         "O1 ({} bytes) should be smaller than O0 ({} bytes)",
-        h1.runtime_code_size(), h0.runtime_code_size(),
+        h1.runtime_code_size(),
+        h0.runtime_code_size(),
     );
 }
 

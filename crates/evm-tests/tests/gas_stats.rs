@@ -1,6 +1,6 @@
 //! Runtime gas statistics for counter and ERC20 interactions.
 //!
-//! Compares gas costs between OptimizeFor::Gas and OptimizeFor::Size at each
+//! Compares gas costs between `OptimizeFor::Gas` and `OptimizeFor::Size` at each
 //! optimization level (O0, O1, O2).
 
 use alloy_primitives::{Address, U256};
@@ -83,19 +83,31 @@ fn erc20_stats(deploy: DeployResult) -> Stats {
     assert!(r.success);
     rows.push(("totalSupply (cold)", r.gas_used));
 
-    let r = host.call(fn_selector("balanceOf(address)"), &abi_encode_address(alice));
+    let r = host.call(
+        fn_selector("balanceOf(address)"),
+        &abi_encode_address(alice),
+    );
     assert!(r.success);
     rows.push(("balanceOf (zero)", r.gas_used));
 
-    let r = host.call(fn_selector("mint(address,uint256)"), &args_addr_u256(alice, U256::from(1000)));
+    let r = host.call(
+        fn_selector("mint(address,uint256)"),
+        &args_addr_u256(alice, U256::from(1000)),
+    );
     assert!(r.success);
     rows.push(("mint (1st acct)", r.gas_used));
 
-    let r = host.call(fn_selector("mint(address,uint256)"), &args_addr_u256(bob, U256::from(2000)));
+    let r = host.call(
+        fn_selector("mint(address,uint256)"),
+        &args_addr_u256(bob, U256::from(2000)),
+    );
     assert!(r.success);
     rows.push(("mint (2nd acct)", r.gas_used));
 
-    let r = host.call(fn_selector("balanceOf(address)"), &abi_encode_address(alice));
+    let r = host.call(
+        fn_selector("balanceOf(address)"),
+        &abi_encode_address(alice),
+    );
     assert!(r.success);
     assert_eq!(abi_decode_u256(&r.output), U256::from(1000));
     rows.push(("balanceOf (warm)", r.gas_used));
@@ -105,11 +117,17 @@ fn erc20_stats(deploy: DeployResult) -> Stats {
     rows.push(("totalSupply (warm)", r.gas_used));
 
     host.set_caller(alice);
-    let r = host.call(fn_selector("transfer(address,uint256)"), &args_addr_u256(bob, U256::from(300)));
+    let r = host.call(
+        fn_selector("transfer(address,uint256)"),
+        &args_addr_u256(bob, U256::from(300)),
+    );
     assert!(r.success);
     rows.push(("transfer", r.gas_used));
 
-    let r = host.call(fn_selector("approve(address,uint256)"), &args_addr_u256(deployer, U256::from(500)));
+    let r = host.call(
+        fn_selector("approve(address,uint256)"),
+        &args_addr_u256(deployer, U256::from(500)),
+    );
     assert!(r.success);
     rows.push(("approve", r.gas_used));
 
@@ -130,7 +148,7 @@ fn delta_str(baseline: u64, val: u64) -> String {
     }
     let diff = val as i64 - baseline as i64;
     let pct = (diff as f64 / baseline as f64) * 100.0;
-    format!("{:+} ({:+.1}%)", diff, pct)
+    format!("{diff:+} ({pct:+.1}%)")
 }
 
 fn print_table(title: &str, col_labels: &[&str], datasets: &[&Stats]) {
@@ -141,21 +159,24 @@ fn print_table(title: &str, col_labels: &[&str], datasets: &[&Stats]) {
     println!("\n  {title}");
     print!("  {:<w$}", "");
     for label in col_labels {
-        print!("{:>c$}", label);
+        print!("{label:>c$}");
     }
     if col_labels.len() > 1 {
         print!("  {:>d$}", "delta");
     }
     println!();
-    println!("  {}", "-".repeat(w + c * col_labels.len() + if col_labels.len() > 1 { 2 + d } else { 0 }));
+    println!(
+        "  {}",
+        "-".repeat(w + c * col_labels.len() + if col_labels.len() > 1 { 2 + d } else { 0 })
+    );
 
     let n = datasets[0].rows.len();
     for i in 0..n {
         let name = datasets[0].rows[i].0;
-        print!("  {:<w$}", name);
+        print!("  {name:<w$}");
         let vals: Vec<u64> = datasets.iter().map(|s| s.rows[i].1).collect();
         for &v in &vals {
-            print!("{:>c$}", v);
+            print!("{v:>c$}");
         }
         if vals.len() > 1 {
             print!("  {:>d$}", delta_str(vals[0], vals[vals.len() - 1]));
@@ -184,15 +205,31 @@ fn gas_statistics() {
     println!("\n{}", "=".repeat(70));
     println!("  COUNTER — optimize for gas (O0 -> O1 -> O2)");
     println!("{}", "=".repeat(70));
-    print_table("Gas mode across opt levels", &["O0", "O1", "O2"], &[&c_g0, &c_g1, &c_g2]);
-    print_table("Size mode across opt levels", &["O0", "O1", "O2"], &[&c_s0, &c_s1, &c_s2]);
+    print_table(
+        "Gas mode across opt levels",
+        &["O0", "O1", "O2"],
+        &[&c_g0, &c_g1, &c_g2],
+    );
+    print_table(
+        "Size mode across opt levels",
+        &["O0", "O1", "O2"],
+        &[&c_s0, &c_s1, &c_s2],
+    );
     print_table("Gas vs Size at O2", &["gas", "size"], &[&c_g2, &c_s2]);
 
     println!("\n{}", "=".repeat(70));
     println!("  ERC20 — optimize for gas vs size");
     println!("{}", "=".repeat(70));
-    print_table("Gas mode across opt levels", &["O0", "O1", "O2"], &[&e_g0, &e_g1, &e_g2]);
-    print_table("Size mode across opt levels", &["O0", "O1", "O2"], &[&e_s0, &e_s1, &e_s2]);
+    print_table(
+        "Gas mode across opt levels",
+        &["O0", "O1", "O2"],
+        &[&e_g0, &e_g1, &e_g2],
+    );
+    print_table(
+        "Size mode across opt levels",
+        &["O0", "O1", "O2"],
+        &[&e_s0, &e_s1, &e_s2],
+    );
     print_table("Gas vs Size at O2", &["gas", "size"], &[&e_g2, &e_s2]);
 
     println!();

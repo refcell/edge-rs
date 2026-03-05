@@ -23,10 +23,10 @@
 #![deny(unused_must_use, rust_2018_idioms)]
 
 pub mod ast_helpers;
-pub mod pretty;
 pub mod cleanup;
 pub mod costs;
 pub mod optimizations;
+pub mod pretty;
 pub mod schedule;
 pub mod schema;
 pub mod sexp;
@@ -34,6 +34,8 @@ pub mod storage_hoist;
 pub mod to_egglog;
 pub mod u256_sort;
 pub mod var_opt;
+
+use std::rc::Rc;
 
 pub use costs::OptimizeFor;
 pub use schema::{EvmContract, EvmExpr, EvmProgram, RcExpr};
@@ -78,7 +80,7 @@ pub fn prologue(optimize_for: OptimizeFor) -> String {
     .join("\n")
 }
 
-/// Create an egglog EGraph with the U256 sort registered.
+/// Create an egglog `EGraph` with the U256 sort registered.
 pub fn create_egraph() -> egglog::EGraph {
     let mut egraph = egglog::EGraph::default();
     egraph
@@ -131,7 +133,7 @@ pub fn lower_and_optimize(
         let immutable_vars = var_opt::collect_immutable_vars(&contract.runtime);
         let immutable_facts: String = immutable_vars
             .iter()
-            .map(|name| format!("(ImmutableVar \"{}\")\n", name))
+            .map(|name| format!("(ImmutableVar \"{name}\")\n"))
             .collect();
 
         let egglog_program = format!(
@@ -152,7 +154,11 @@ pub fn lower_and_optimize(
             .last()
             .ok_or_else(|| IrError::Extraction("no output from extract".to_owned()))?;
 
-        tracing::info!("Optimized contract {} at -O{}", contract.name, optimization_level);
+        tracing::info!(
+            "Optimized contract {} at -O{}",
+            contract.name,
+            optimization_level
+        );
 
         let mut optimized_runtime = sexp::sexp_to_expr(extracted_sexp)?;
 
@@ -162,7 +168,7 @@ pub fn lower_and_optimize(
         optimized_contracts.push(EvmContract {
             name: contract.name.clone(),
             storage_fields: contract.storage_fields.clone(),
-            constructor: contract.constructor.clone(),
+            constructor: Rc::clone(&contract.constructor),
             runtime: optimized_runtime,
         });
     }
@@ -266,7 +272,7 @@ mod tests {
 
         assert!(
             !extracted.contains("OpCheckedAdd"),
-            "CheckedAdd should have been elided to Add, got: {}", extracted
+            "CheckedAdd should have been elided to Add, got: {extracted}"
         );
     }
 
@@ -300,7 +306,7 @@ mod tests {
 
         assert!(
             extracted.contains("OpCheckedAdd"),
-            "CheckedAdd should NOT be elided without tight bounds, got: {}", extracted
+            "CheckedAdd should NOT be elided without tight bounds, got: {extracted}"
         );
     }
 
@@ -336,7 +342,7 @@ mod tests {
 
         assert!(
             !extracted.contains("OpCheckedAdd"),
-            "Both CheckedAdds should be elided via cascading bounds, got: {}", extracted
+            "Both CheckedAdds should be elided via cascading bounds, got: {extracted}"
         );
     }
 
@@ -352,7 +358,10 @@ mod tests {
         let contract = &ir_program.contracts[0];
         let runtime_sexp = sexp::expr_to_sexp(&contract.runtime);
         eprintln!("sexp length: {}", runtime_sexp.len());
-        eprintln!("sexp (first 500): {}", &runtime_sexp[..runtime_sexp.len().min(500)]);
+        eprintln!(
+            "sexp (first 500): {}",
+            &runtime_sexp[..runtime_sexp.len().min(500)]
+        );
 
         let schedule = schedule::make_schedule(1);
         let egglog_program = format!(

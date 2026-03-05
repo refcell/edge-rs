@@ -47,7 +47,10 @@ fn counter_compiles_o0() {
 #[test]
 fn counter_compiles_o1() {
     let bytecode = compile_to_bytecode("../../examples/counter.edge", 1);
-    assert!(!bytecode.is_empty(), "counter -O1 bytecode should not be empty");
+    assert!(
+        !bytecode.is_empty(),
+        "counter -O1 bytecode should not be empty"
+    );
 }
 
 #[test]
@@ -83,7 +86,10 @@ fn counter_ir_output() {
     // Verify the IR can be converted to s-expression
     let sexp = edge_ir::sexp::expr_to_sexp(&ir.contracts[0].runtime);
     assert!(!sexp.is_empty(), "IR s-expression should not be empty");
-    assert!(sexp.contains("Concat"), "runtime should use Concat for dispatch");
+    assert!(
+        sexp.contains("Concat"),
+        "runtime should use Concat for dispatch"
+    );
 }
 
 // ============================================================
@@ -99,7 +105,10 @@ fn erc20_compiles_o0() {
 #[test]
 fn erc20_compiles_o1() {
     let bytecode = compile_to_bytecode("../../examples/erc20.edge", 1);
-    assert!(!bytecode.is_empty(), "erc20 -O1 bytecode should not be empty");
+    assert!(
+        !bytecode.is_empty(),
+        "erc20 -O1 bytecode should not be empty"
+    );
 }
 
 #[test]
@@ -151,7 +160,10 @@ fn counter_golden_o0() {
     let bytecode = compile_to_bytecode("../../examples/counter.edge", 0);
     let hex = bytecode_to_hex(&bytecode);
     let golden = include_str!("golden/counter_o0.hex").trim();
-    assert_eq!(hex, golden, "counter.edge -O0 bytecode changed from golden file");
+    assert_eq!(
+        hex, golden,
+        "counter.edge -O0 bytecode changed from golden file"
+    );
 }
 
 #[test]
@@ -159,7 +171,10 @@ fn erc20_golden_o0() {
     let bytecode = compile_to_bytecode("../../examples/erc20.edge", 0);
     let hex = bytecode_to_hex(&bytecode);
     let golden = include_str!("golden/erc20_o0.hex").trim();
-    assert_eq!(hex, golden, "erc20.edge -O0 bytecode changed from golden file");
+    assert_eq!(
+        hex, golden,
+        "erc20.edge -O0 bytecode changed from golden file"
+    );
 }
 
 // ============================================================
@@ -208,6 +223,9 @@ fn counter_o1_roundtrip_valid() {
 fn erc20_o1_roundtrip_valid() {
     let bytecode = compile_to_bytecode("../../examples/erc20.edge", 1);
     let hex = bytecode_to_hex(&bytecode);
-    assert!(hex.contains("18160ddd"), "O1: missing totalSupply() selector");
+    assert!(
+        hex.contains("18160ddd"),
+        "O1: missing totalSupply() selector"
+    );
     assert!(hex.contains("a9059cbb"), "O1: missing transfer() selector");
 }

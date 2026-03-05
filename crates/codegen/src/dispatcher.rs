@@ -3,13 +3,9 @@
 //! Generates the EVM bytecode that reads the first 4 bytes of calldata
 //! (the function selector) and jumps to the matching function body.
 
-use edge_ir::schema::EvmContract;
-use edge_ir::var_opt;
+use edge_ir::{schema::EvmContract, var_opt};
 
-use crate::{
-    assembler::Assembler,
-    expr_compiler::ExprCompiler,
-};
+use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 
 /// Generate the function dispatcher for a contract.
 ///
@@ -30,7 +26,7 @@ pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
 /// `sig` should be in the form "functionName(type1,type2,...)"
 pub fn compute_selector(sig: &str) -> [u8; 4] {
     let mut hash = [0u8; 32];
-    edge_types::bytes::hash_bytes(&mut hash, &sig.to_owned());
+    edge_types::bytes::hash_bytes(&mut hash, sig);
     [hash[0], hash[1], hash[2], hash[3]]
 }
 
@@ -53,10 +49,7 @@ mod tests {
             compute_selector("approve(address,uint256)"),
             [0x09, 0x5e, 0xa7, 0xb3]
         );
-        assert_eq!(
-            compute_selector("totalSupply()"),
-            [0x18, 0x16, 0x0d, 0xdd]
-        );
+        assert_eq!(compute_selector("totalSupply()"), [0x18, 0x16, 0x0d, 0xdd]);
     }
 
     #[test]

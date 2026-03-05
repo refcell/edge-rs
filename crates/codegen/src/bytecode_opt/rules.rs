@@ -68,7 +68,7 @@ pub(crate) const CANCELLATION_RULES: &str = r#"
   :ruleset bytecode-peepholes)
 "#;
 
-/// Constant folding rules (PushSmall i64 arithmetic only).
+/// Constant folding rules (`PushSmall` i64 arithmetic only).
 ///
 /// EVM operand order: stack `[..., a, b]` where `b` is TOS.
 /// For `PUSH i PUSH j OP`: i is pushed first (deeper), j second (TOS).

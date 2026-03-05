@@ -70,7 +70,13 @@ impl Cli {
             Some(Commands::Parse(args)) => Self::parse(args),
             None => {
                 if let Some(file) = self.file {
-                    Self::compile(file, self.output, &self.emit, self.opt_level, &self.optimize_for)
+                    Self::compile(
+                        file,
+                        self.output,
+                        &self.emit,
+                        self.opt_level,
+                        &self.optimize_for,
+                    )
                 } else {
                     bail!("no input file specified")
                 }
@@ -130,7 +136,10 @@ impl Cli {
                         }
                         println!();
                         println!(";; Constructor:");
-                        println!("{}", edge_ir::sexp::expr_to_pretty(&contract.constructor, 0));
+                        println!(
+                            "{}",
+                            edge_ir::sexp::expr_to_pretty(&contract.constructor, 0)
+                        );
                         println!();
                         println!(";; Runtime:");
                         println!("{}", edge_ir::sexp::expr_to_pretty(&contract.runtime, 0));
@@ -154,7 +163,10 @@ impl Cli {
             EmitKind::Asm => {
                 if let Some(ref asm_outputs) = result.asm {
                     for (name, asm_out) in asm_outputs {
-                        print!("{}", edge_codegen::pretty_asm::pretty_print_asm(asm_out, name));
+                        print!(
+                            "{}",
+                            edge_codegen::pretty_asm::pretty_print_asm(asm_out, name)
+                        );
                     }
                 }
             }

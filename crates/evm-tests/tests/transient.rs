@@ -8,11 +8,21 @@ use edge_evm_tests::{abi_decode_u256, fn_selector, EvmTestHost};
 
 const TRANSIENT_PATH: &str = "../../examples/transient.edge";
 
-fn sel_enter() -> [u8; 4] { fn_selector("enter()") }
-fn sel_exit() -> [u8; 4] { fn_selector("exit()") }
-fn sel_get_locked() -> [u8; 4] { fn_selector("get_locked()") }
-fn sel_increment() -> [u8; 4] { fn_selector("increment()") }
-fn sel_get_count() -> [u8; 4] { fn_selector("get_count()") }
+fn sel_enter() -> [u8; 4] {
+    fn_selector("enter()")
+}
+fn sel_exit() -> [u8; 4] {
+    fn_selector("exit()")
+}
+fn sel_get_locked() -> [u8; 4] {
+    fn_selector("get_locked()")
+}
+fn sel_increment() -> [u8; 4] {
+    fn_selector("increment()")
+}
+fn sel_get_count() -> [u8; 4] {
+    fn_selector("get_count()")
+}
 
 #[test]
 fn transient_deploy() {
@@ -55,7 +65,11 @@ fn transient_exit_clears_lock() {
 
     let r = host.call(sel_get_locked(), &[]);
     assert!(r.success);
-    assert_eq!(abi_decode_u256(&r.output), U256::ZERO, "lock should be cleared after exit()");
+    assert_eq!(
+        abi_decode_u256(&r.output),
+        U256::ZERO,
+        "lock should be cleared after exit()"
+    );
 }
 
 #[test]

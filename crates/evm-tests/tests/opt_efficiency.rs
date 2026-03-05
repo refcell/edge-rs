@@ -123,7 +123,7 @@ fn measure_counter(opt_level: u8) -> (usize, Vec<(&'static str, u64)>) {
 
 #[test]
 fn counter_optimization_efficiency() {
-    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(|o| measure_counter(o)).collect();
+    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(measure_counter).collect();
 
     let fn_names: Vec<&str> = levels[0].1.iter().map(|(n, _)| *n).collect();
     let metrics = ContractMetrics {
@@ -251,7 +251,7 @@ fn measure_optimizable(opt_level: u8) -> (usize, Vec<(&'static str, u64)>) {
 
 #[test]
 fn optimizable_optimization_efficiency() {
-    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(|o| measure_optimizable(o)).collect();
+    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(measure_optimizable).collect();
 
     let fn_names: Vec<&str> = levels[0].1.iter().map(|(n, _)| *n).collect();
     let metrics = ContractMetrics {
@@ -304,7 +304,7 @@ fn args_addr_addr_u256(a: Address, b: Address, v: U256) -> Vec<u8> {
 
 #[test]
 fn erc20_optimization_efficiency() {
-    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(|o| measure_erc20(o)).collect();
+    let levels: Vec<(usize, Vec<(&str, u64)>)> = (0..=2).map(measure_erc20).collect();
 
     let fn_names: Vec<&str> = levels[0].1.iter().map(|(n, _)| *n).collect();
     let metrics = ContractMetrics {

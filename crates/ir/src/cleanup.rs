@@ -10,7 +10,7 @@
 
 use std::rc::Rc;
 
-use crate::schema::*;
+use crate::schema::{EvmBaseType, EvmContext, EvmExpr, EvmProgram, EvmTernaryOp, EvmType, RcExpr};
 
 /// Sentinel state token used to replace bloated state chains.
 fn state_sentinel() -> RcExpr {
@@ -78,28 +78,24 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
 
         // Log(count, topics, data, state)
         EvmExpr::Log(count, topics, data, _state) => {
-            let topics2: Vec<_> = topics.iter().map(|t| cleanup_expr(t)).collect();
+            let topics2: Vec<_> = topics.iter().map(cleanup_expr).collect();
             let data2 = cleanup_expr(data);
             Rc::new(EvmExpr::Log(*count, topics2, data2, state_sentinel()))
         }
 
         // ExtCall(target, value, args_off, args_len, ret_off, ret_len, state)
-        EvmExpr::ExtCall(a, b, c, d, e, f, _state) => {
-            Rc::new(EvmExpr::ExtCall(
-                cleanup_expr(a),
-                cleanup_expr(b),
-                cleanup_expr(c),
-                cleanup_expr(d),
-                cleanup_expr(e),
-                cleanup_expr(f),
-                state_sentinel(),
-            ))
-        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, _state) => Rc::new(EvmExpr::ExtCall(
+            cleanup_expr(a),
+            cleanup_expr(b),
+            cleanup_expr(c),
+            cleanup_expr(d),
+            cleanup_expr(e),
+            cleanup_expr(f),
+            state_sentinel(),
+        )),
 
         // EnvRead(op, state)
-        EvmExpr::EnvRead(op, _state) => {
-            Rc::new(EvmExpr::EnvRead(*op, state_sentinel()))
-        }
+        EvmExpr::EnvRead(op, _state) => Rc::new(EvmExpr::EnvRead(*op, state_sentinel())),
 
         // EnvRead1(op, arg, state)
         EvmExpr::EnvRead1(op, arg, _state) => {
@@ -107,7 +103,6 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
         }
 
         // --- Dead code elimination after halting ops in Concat chains ---
-
         EvmExpr::Concat(left, right) => {
             let left2 = cleanup_expr(left);
             if is_halting(&left2) {
@@ -120,48 +115,37 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
         }
 
         // --- Recurse through everything else ---
+        EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(*op, cleanup_expr(a))),
 
-        EvmExpr::Uop(op, a) => {
-            Rc::new(EvmExpr::Uop(*op, cleanup_expr(a)))
-        }
-
-        EvmExpr::If(cond, inputs, then_b, else_b) => {
-            Rc::new(EvmExpr::If(
-                cleanup_expr(cond),
-                cleanup_expr(inputs),
-                cleanup_expr(then_b),
-                cleanup_expr(else_b),
-            ))
-        }
+        EvmExpr::If(cond, inputs, then_b, else_b) => Rc::new(EvmExpr::If(
+            cleanup_expr(cond),
+            cleanup_expr(inputs),
+            cleanup_expr(then_b),
+            cleanup_expr(else_b),
+        )),
 
         EvmExpr::DoWhile(inputs, body) => {
             Rc::new(EvmExpr::DoWhile(cleanup_expr(inputs), cleanup_expr(body)))
         }
 
-        EvmExpr::Get(inner, idx) => {
-            Rc::new(EvmExpr::Get(cleanup_expr(inner), *idx))
-        }
+        EvmExpr::Get(inner, idx) => Rc::new(EvmExpr::Get(cleanup_expr(inner), *idx)),
 
-        EvmExpr::LetBind(name, init, body) => {
-            Rc::new(EvmExpr::LetBind(name.clone(), cleanup_expr(init), cleanup_expr(body)))
-        }
+        EvmExpr::LetBind(name, init, body) => Rc::new(EvmExpr::LetBind(
+            name.clone(),
+            cleanup_expr(init),
+            cleanup_expr(body),
+        )),
 
-        EvmExpr::VarStore(name, val) => {
-            Rc::new(EvmExpr::VarStore(name.clone(), cleanup_expr(val)))
-        }
+        EvmExpr::VarStore(name, val) => Rc::new(EvmExpr::VarStore(name.clone(), cleanup_expr(val))),
 
-        EvmExpr::Call(name, args) => {
-            Rc::new(EvmExpr::Call(name.clone(), cleanup_expr(args)))
-        }
+        EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(name.clone(), cleanup_expr(args))),
 
-        EvmExpr::Function(name, in_ty, out_ty, body) => {
-            Rc::new(EvmExpr::Function(
-                name.clone(),
-                in_ty.clone(),
-                out_ty.clone(),
-                cleanup_expr(body),
-            ))
-        }
+        EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
+            name.clone(),
+            in_ty.clone(),
+            out_ty.clone(),
+            cleanup_expr(body),
+        )),
 
         // Leaf nodes — no children to clean
         EvmExpr::Arg(..)
@@ -190,7 +174,7 @@ fn is_halting(expr: &RcExpr) -> bool {
 
 impl EvmTernaryOp {
     /// Returns true if the third operand is a state token (ignored by codegen).
-    pub fn has_state(&self) -> bool {
+    pub const fn has_state(&self) -> bool {
         matches!(
             self,
             Self::SStore | Self::TStore | Self::MStore | Self::MStore8 | Self::Keccak256

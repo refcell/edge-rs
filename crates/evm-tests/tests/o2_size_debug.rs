@@ -5,8 +5,8 @@
 
 use alloy_primitives::{Address, U256};
 use edge_evm_tests::{
-    abi_decode_u256, abi_encode_address, abi_encode_u256, compile_edge_split,
-    fn_selector, EvmTestHost,
+    abi_decode_u256, abi_encode_address, abi_encode_u256, compile_edge_split, fn_selector,
+    EvmTestHost,
 };
 
 const ERC20_PATH: &str = "../../examples/test_erc20.edge";

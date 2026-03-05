@@ -20,7 +20,11 @@ fn main() -> Result<()> {
     if let Some(level) = level {
         use tracing_subscriber::EnvFilter;
         // Egglog is extremely noisy, suppress it unless TRACE level
-        let egglog_level = if level >= Level::TRACE { "trace" } else { "warn" };
+        let egglog_level = if level >= Level::TRACE {
+            "trace"
+        } else {
+            "warn"
+        };
         let filter = format!("edge={level},egglog={egglog_level},{level}");
         tracing_subscriber::fmt()
             .with_env_filter(EnvFilter::new(filter))

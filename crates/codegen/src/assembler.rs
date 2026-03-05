@@ -34,12 +34,22 @@ impl AsmInstruction {
     /// if false, use PUSH2 (3 bytes). Short jumps work for contracts < 256 bytes.
     fn byte_size(&self, short_jumps: bool) -> usize {
         match self {
-            Self::Op(_) => 1,
+            Self::Op(_) | Self::Label(_) => 1,  // Op or JUMPDEST
             Self::Push(data) => 1 + data.len(), // PUSHn + n bytes
-            Self::Label(_) => 1,                 // JUMPDEST
-            Self::JumpTo(_) => if short_jumps { 3 } else { 4 },  // PUSH1/PUSH2 + JUMP
-            Self::JumpITo(_) => if short_jumps { 3 } else { 4 }, // PUSH1/PUSH2 + JUMPI
-            Self::PushLabel(_) => if short_jumps { 2 } else { 3 }, // PUSH1/PUSH2 (no JUMP)
+            Self::JumpTo(_) | Self::JumpITo(_) => {
+                if short_jumps {
+                    3
+                } else {
+                    4
+                }
+            } // PUSH1/PUSH2 + JUMP/JUMPI
+            Self::PushLabel(_) => {
+                if short_jumps {
+                    2
+                } else {
+                    3
+                }
+            } // PUSH1/PUSH2 (no JUMP)
             Self::Comment(_) => 0,
         }
     }
@@ -56,7 +66,7 @@ pub struct Assembler {
 
 impl Assembler {
     /// Create a new empty assembler.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             instructions: Vec::new(),
             label_counter: 0,
@@ -93,13 +103,19 @@ impl Assembler {
         }
         let bytes = value.to_be_bytes();
         // Find first non-zero byte
-        let start = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len() - 1);
+        let start = bytes
+            .iter()
+            .position(|&b| b != 0)
+            .unwrap_or(bytes.len() - 1);
         self.emit(AsmInstruction::Push(bytes[start..].to_vec()));
     }
 
     /// Emit PUSH with raw bytes (1-32 bytes).
     pub fn emit_push_bytes(&mut self, data: Vec<u8>) {
-        assert!(!data.is_empty() && data.len() <= 32, "PUSH data must be 1-32 bytes");
+        assert!(
+            !data.is_empty() && data.len() <= 32,
+            "PUSH data must be 1-32 bytes"
+        );
         self.emit(AsmInstruction::Push(data));
     }
 
@@ -120,7 +136,7 @@ impl Assembler {
     }
 
     /// Create an assembler from a pre-built instruction list.
-    pub fn from_instructions(instructions: Vec<AsmInstruction>) -> Self {
+    pub const fn from_instructions(instructions: Vec<AsmInstruction>) -> Self {
         Self {
             instructions,
             label_counter: 0,
@@ -265,17 +281,17 @@ mod tests {
     #[test]
     fn test_push_values() {
         let mut asm = Assembler::new();
-        asm.emit_push_usize(0);     // PUSH0
-        asm.emit_push_usize(1);     // PUSH1 0x01
-        asm.emit_push_usize(255);   // PUSH1 0xFF
-        asm.emit_push_usize(256);   // PUSH2 0x01 0x00
+        asm.emit_push_usize(0); // PUSH0
+        asm.emit_push_usize(1); // PUSH1 0x01
+        asm.emit_push_usize(255); // PUSH1 0xFF
+        asm.emit_push_usize(256); // PUSH2 0x01 0x00
         let bytecode = asm.assemble();
         assert_eq!(
             bytecode,
             vec![
-                0x5F,             // PUSH0
-                0x60, 0x01,       // PUSH1 1
-                0x60, 0xFF,       // PUSH1 255
+                0x5F, // PUSH0
+                0x60, 0x01, // PUSH1 1
+                0x60, 0xFF, // PUSH1 255
                 0x61, 0x01, 0x00, // PUSH2 256
             ]
         );
@@ -300,10 +316,10 @@ mod tests {
             bytecode,
             vec![
                 0x60, 0x04, // PUSH1 4
-                0x56,       // JUMP
-                0x00,       // STOP
-                0x5B,       // JUMPDEST
-                0x00,       // STOP
+                0x56, // JUMP
+                0x00, // STOP
+                0x5B, // JUMPDEST
+                0x00, // STOP
             ]
         );
     }
@@ -311,7 +327,7 @@ mod tests {
     #[test]
     fn test_conditional_jump() {
         let mut asm = Assembler::new();
-        asm.emit_push_usize(1);  // push condition (true)
+        asm.emit_push_usize(1); // push condition (true)
         asm.emit(AsmInstruction::JumpITo("target".to_owned()));
         asm.emit_op(Opcode::Stop);
         asm.emit(AsmInstruction::Label("target".to_owned()));
@@ -328,10 +344,10 @@ mod tests {
             vec![
                 0x60, 0x01, // PUSH1 1
                 0x60, 0x06, // PUSH1 6
-                0x57,       // JUMPI
-                0x00,       // STOP
-                0x5B,       // JUMPDEST
-                0x00,       // STOP
+                0x57, // JUMPI
+                0x00, // STOP
+                0x5B, // JUMPDEST
+                0x00, // STOP
             ]
         );
     }

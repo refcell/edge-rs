@@ -6,17 +6,17 @@
 
 use std::collections::HashMap;
 
-use edge_ir::schema::{
-    EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmUnaryOp, RcExpr,
+use edge_ir::{
+    schema::{EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmUnaryOp, RcExpr},
+    var_opt::{AllocationMode, VarAllocation},
 };
-use edge_ir::var_opt::{AllocationMode, VarAllocation};
 
 use crate::{
     assembler::{AsmInstruction, Assembler},
     opcode::Opcode,
 };
 
-/// Base memory offset for LetBind scratch storage.
+/// Base memory offset for `LetBind` scratch storage.
 const LET_BIND_BASE_OFFSET: usize = 0x80;
 
 /// Compiles IR expressions into EVM assembly instructions.
@@ -24,9 +24,9 @@ const LET_BIND_BASE_OFFSET: usize = 0x80;
 pub struct ExprCompiler<'a> {
     /// The assembler to emit instructions into
     asm: &'a mut Assembler,
-    /// Maps LetBind names to their memory offsets (memory-mode variables)
+    /// Maps `LetBind` names to their memory offsets (memory-mode variables)
     let_bindings: HashMap<String, usize>,
-    /// Next available memory offset for LetBind storage (high-water mark)
+    /// Next available memory offset for `LetBind` storage (high-water mark)
     next_let_offset: usize,
     /// Free-list of memory slots reclaimed by `Drop` (available for reuse)
     free_slots: Vec<usize>,
@@ -85,14 +85,11 @@ impl<'a> ExprCompiler<'a> {
                 self.stack_depth += 1;
             }
 
-            EvmExpr::Arg(_, _) => {
-                // Function argument is already on the stack at entry.
-                // In the dispatcher, we decode it from calldata.
-                // For now, this is a no-op placeholder.
-            }
-
-            EvmExpr::Empty(_, _) => {
-                // Empty tuple / unit — no value on stack
+            EvmExpr::Arg(_, _) | EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
+                // Arg: Function argument is already on the stack at entry.
+                // Empty: unit — no value on stack.
+                // StorageField: declarations don't emit code.
+                // All are no-ops.
             }
 
             EvmExpr::Bop(op, lhs, rhs) => {
@@ -211,14 +208,10 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit(AsmInstruction::Label(label));
                 self.compile_expr(body);
             }
-
-            EvmExpr::StorageField(_, _, _) => {
-                // Storage field declarations don't emit code
-            }
         }
     }
 
-    /// Compile a LetBind: allocate variable, compile body, clean up.
+    /// Compile a `LetBind`: allocate variable, compile body, clean up.
     fn compile_let_bind(&mut self, name: &str, value: &RcExpr, body: &RcExpr) {
         match self.alloc_mode(name) {
             AllocationMode::Stack => {
@@ -293,7 +286,7 @@ impl<'a> ExprCompiler<'a> {
             // Stack mode: DUP from the correct position
             let dup_index = self.stack_depth - var_pos;
             debug_assert!(
-                dup_index >= 1 && dup_index <= 16,
+                (1..=16).contains(&dup_index),
                 "DUP index {dup_index} out of range for variable {name} (depth={}, pos={var_pos})",
                 self.stack_depth
             );
@@ -339,12 +332,12 @@ impl<'a> ExprCompiler<'a> {
             }
             // else: depth > 16, can't reach (shouldn't happen with eligibility criteria)
 
-            if depth >= 1 && depth <= 16 {
+            if (1..=16).contains(&depth) {
                 // SWAP+POP moved the old TOS into the variable's slot.
                 // Update any stack var that was at TOS position.
                 if depth > 1 {
                     let old_tos = self.stack_depth - 1;
-                    for (_, pos) in self.stack_vars.iter_mut() {
+                    for pos in self.stack_vars.values_mut() {
                         if *pos == old_tos {
                             *pos = var_pos;
                             break;
@@ -353,7 +346,6 @@ impl<'a> ExprCompiler<'a> {
                 }
                 self.stack_depth -= 1;
             }
-
         } else {
             // Memory mode: reclaim the slot for reuse
             if let Some(offset) = self.let_bindings.remove(name) {
@@ -365,7 +357,7 @@ impl<'a> ExprCompiler<'a> {
     /// Compile a constant value.
     fn compile_const(&mut self, c: &EvmConstant) {
         match c {
-            EvmConstant::SmallInt(0) => {
+            EvmConstant::SmallInt(0) | EvmConstant::Bool(false) => {
                 self.asm.emit_op(Opcode::Push0);
             }
             EvmConstant::SmallInt(n) => {
@@ -393,9 +385,6 @@ impl<'a> ExprCompiler<'a> {
             }
             EvmConstant::Bool(true) => {
                 self.asm.emit(AsmInstruction::Push(vec![1]));
-            }
-            EvmConstant::Bool(false) => {
-                self.asm.emit_op(Opcode::Push0);
             }
             EvmConstant::Addr(hex_str) => {
                 let bytes = hex_string_to_bytes(hex_str);
@@ -541,8 +530,7 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit_op(Opcode::Dup1);
                 self.stack_depth += 1;
                 self.asm.emit_op(Opcode::IsZero); // 0 net
-                self.asm
-                    .emit(AsmInstruction::JumpITo(skip_label.clone()));
+                self.asm.emit(AsmInstruction::JumpITo(skip_label.clone()));
                 self.stack_depth -= 1; // JumpITo: PUSH(+1) JUMPI(-2) = net -1
                 self.asm.emit_op(Opcode::Pop); // pop lhs copy
                 self.stack_depth -= 1;
@@ -560,8 +548,7 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(lhs); // depth += 1
                 self.asm.emit_op(Opcode::Dup1);
                 self.stack_depth += 1;
-                self.asm
-                    .emit(AsmInstruction::JumpITo(skip_label.clone()));
+                self.asm.emit(AsmInstruction::JumpITo(skip_label.clone()));
                 self.stack_depth -= 1; // JumpITo: net -1
                 self.asm.emit_op(Opcode::Pop); // pop lhs copy
                 self.stack_depth -= 1;
@@ -628,21 +615,21 @@ impl<'a> ExprCompiler<'a> {
     ///   → JUMPI(revert) → [r]
     fn compile_checked_add(&mut self, lhs: &RcExpr, rhs: &RcExpr) {
         let revert_label = self.get_overflow_revert_label();
-        self.compile_expr(rhs);   // [b]
-        self.compile_expr(lhs);   // [a, b]
-        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.compile_expr(rhs); // [b]
+        self.compile_expr(lhs); // [a, b]
+        self.asm.emit_op(Opcode::Dup2); // [b, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Add);     // [r, b]  (r = a+b wrapping)
+        self.asm.emit_op(Opcode::Add); // [r, b]  (r = a+b wrapping)
         self.stack_depth -= 1;
-        self.asm.emit_op(Opcode::Dup1);    // [r, r, b]
+        self.asm.emit_op(Opcode::Dup1); // [r, r, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Swap2);   // [b, r, r]
-        self.asm.emit_op(Opcode::Gt);      // [b>r, r]  overflow iff b > result
+        self.asm.emit_op(Opcode::Swap2); // [b, r, r]
+        self.asm.emit_op(Opcode::Gt); // [b>r, r]  overflow iff b > result
         self.stack_depth -= 1;
         self.asm.emit(AsmInstruction::JumpITo(revert_label));
-        self.stack_depth -= 1;             // JUMPI consumes condition
-        // Net: pushed 2 (lhs, rhs), +1 DUP2, -1 ADD, +1 DUP1, -1 GT, -1 JUMPI = -1 from initial 2 = 1 value
-        // But we already tracked lhs (+1) and rhs (+1) via compile_expr. So net from here is -1.
+        self.stack_depth -= 1; // JUMPI consumes condition
+                               // Net: pushed 2 (lhs, rhs), +1 DUP2, -1 ADD, +1 DUP1, -1 GT, -1 JUMPI = -1 from initial 2 = 1 value
+                               // But we already tracked lhs (+1) and rhs (+1) via compile_expr. So net from here is -1.
     }
 
     /// Compile checked subtraction: a - b, revert if a < b.
@@ -650,17 +637,17 @@ impl<'a> ExprCompiler<'a> {
     ///   → LT → [a<b, a, b] → JUMPI(revert) → [a, b] → SUB → [a-b]
     fn compile_checked_sub(&mut self, lhs: &RcExpr, rhs: &RcExpr) {
         let revert_label = self.get_overflow_revert_label();
-        self.compile_expr(rhs);   // [b]
-        self.compile_expr(lhs);   // [a, b]
-        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.compile_expr(rhs); // [b]
+        self.compile_expr(lhs); // [a, b]
+        self.asm.emit_op(Opcode::Dup2); // [b, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Dup2);    // [a, b, a, b]
+        self.asm.emit_op(Opcode::Dup2); // [a, b, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Lt);      // [a<b, a, b]  underflow iff a < b
+        self.asm.emit_op(Opcode::Lt); // [a<b, a, b]  underflow iff a < b
         self.stack_depth -= 1;
         self.asm.emit(AsmInstruction::JumpITo(revert_label));
-        self.stack_depth -= 1;             // JUMPI consumes condition
-        self.asm.emit_op(Opcode::Sub);     // [a-b]
+        self.stack_depth -= 1; // JUMPI consumes condition
+        self.asm.emit_op(Opcode::Sub); // [a-b]
         self.stack_depth -= 1;
     }
 
@@ -671,44 +658,44 @@ impl<'a> ExprCompiler<'a> {
         let revert_label = self.get_overflow_revert_label();
         let mul_ok_label = self.asm.fresh_label("mul_ok");
 
-        self.compile_expr(rhs);   // [b]
-        self.compile_expr(lhs);   // [a, b]
-        self.asm.emit_op(Opcode::Dup2);    // [b, a, b]
+        self.compile_expr(rhs); // [b]
+        self.compile_expr(lhs); // [a, b]
+        self.asm.emit_op(Opcode::Dup2); // [b, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Dup2);    // [a, b, a, b]
+        self.asm.emit_op(Opcode::Dup2); // [a, b, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Mul);     // [r, a, b]  r = a*b wrapping
+        self.asm.emit_op(Opcode::Mul); // [r, a, b]  r = a*b wrapping
         self.stack_depth -= 1;
 
         // Check: if a == 0, skip overflow check (0 * anything = 0)
-        self.asm.emit_op(Opcode::Dup2);    // [a, r, a, b]
+        self.asm.emit_op(Opcode::Dup2); // [a, r, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::IsZero);  // [a==0, r, a, b]
+        self.asm.emit_op(Opcode::IsZero); // [a==0, r, a, b]
         self.asm.emit(AsmInstruction::JumpITo(mul_ok_label.clone()));
-        self.stack_depth -= 1;             // JUMPI consumes condition
+        self.stack_depth -= 1; // JUMPI consumes condition
 
         // a != 0: check r/a == b
-        self.asm.emit_op(Opcode::Dup1);    // [r, r, a, b]
+        self.asm.emit_op(Opcode::Dup1); // [r, r, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Dup3);    // [a, r, r, a, b]
+        self.asm.emit_op(Opcode::Dup3); // [a, r, r, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Swap1);   // [r, a, r, a, b]
-        self.asm.emit_op(Opcode::Div);     // [r/a, r, a, b]
+        self.asm.emit_op(Opcode::Swap1); // [r, a, r, a, b]
+        self.asm.emit_op(Opcode::Div); // [r/a, r, a, b]
         self.stack_depth -= 1;
-        self.asm.emit_op(Opcode::Dup4);    // [b, r/a, r, a, b]
+        self.asm.emit_op(Opcode::Dup4); // [b, r/a, r, a, b]
         self.stack_depth += 1;
-        self.asm.emit_op(Opcode::Eq);      // [b==r/a, r, a, b]
+        self.asm.emit_op(Opcode::Eq); // [b==r/a, r, a, b]
         self.stack_depth -= 1;
-        self.asm.emit_op(Opcode::IsZero);  // [b!=r/a, r, a, b]
+        self.asm.emit_op(Opcode::IsZero); // [b!=r/a, r, a, b]
         self.asm.emit(AsmInstruction::JumpITo(revert_label));
-        self.stack_depth -= 1;             // JUMPI consumes condition
+        self.stack_depth -= 1; // JUMPI consumes condition
 
         // mul_ok: [r, a, b]
         self.asm.emit(AsmInstruction::Label(mul_ok_label));
-        self.asm.emit_op(Opcode::Swap2);   // [b, a, r]
-        self.asm.emit_op(Opcode::Pop);     // [a, r]
+        self.asm.emit_op(Opcode::Swap2); // [b, a, r]
+        self.asm.emit_op(Opcode::Pop); // [a, r]
         self.stack_depth -= 1;
-        self.asm.emit_op(Opcode::Pop);     // [r]
+        self.asm.emit_op(Opcode::Pop); // [r]
         self.stack_depth -= 1;
     }
 
@@ -731,13 +718,7 @@ impl<'a> ExprCompiler<'a> {
     }
 
     /// Compile a ternary operation.
-    fn compile_ternary_op(
-        &mut self,
-        op: &EvmTernaryOp,
-        a: &RcExpr,
-        b: &RcExpr,
-        c: &RcExpr,
-    ) {
+    fn compile_ternary_op(&mut self, op: &EvmTernaryOp, a: &RcExpr, b: &RcExpr, c: &RcExpr) {
         match op {
             EvmTernaryOp::SStore => {
                 self.compile_expr(b); // value
@@ -776,8 +757,7 @@ impl<'a> ExprCompiler<'a> {
 
                 self.compile_expr(a); // cond; depth += 1
                 self.asm.emit_op(Opcode::IsZero); // 0 net
-                self.asm
-                    .emit(AsmInstruction::JumpITo(else_label.clone()));
+                self.asm.emit(AsmInstruction::JumpITo(else_label.clone()));
                 self.stack_depth -= 1; // JumpITo: net -1 (cond consumed)
 
                 let depth_before_branches = self.stack_depth;
@@ -922,7 +902,7 @@ impl<'a> ExprCompiler<'a> {
             }
         };
         self.asm.emit_op(opcode); // pops 1, pushes 1 → net 0
-        // Total: +1 from arg compile
+                                  // Total: +1 from arg compile
     }
 
     /// Compile a LOG instruction.
@@ -958,15 +938,19 @@ impl<'a> ExprCompiler<'a> {
 
     /// Estimate how many stack values an expression pushes.
     ///
-    /// Must be accurate for stack-mode LetBind cleanup (SWAP+POP).
+    /// Must be accurate for stack-mode `LetBind` cleanup (SWAP+POP).
     fn count_stack_values(expr: &EvmExpr) -> usize {
         match expr {
             EvmExpr::Concat(a, b) => Self::count_stack_values(a) + Self::count_stack_values(b),
-            EvmExpr::Empty(_, _) => 0,
+            EvmExpr::Empty(_, _)
+            | EvmExpr::VarStore(_, _)
+            | EvmExpr::Drop(_)
+            | EvmExpr::Revert(_, _, _)
+            | EvmExpr::ReturnOp(_, _, _)
+            | EvmExpr::Log(_, _, _, _)
+            | EvmExpr::Function(_, _, _, _)
+            | EvmExpr::StorageField(_, _, _) => 0,
             EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
-            EvmExpr::Var(_) => 1,
-            EvmExpr::VarStore(_, _) => 0,
-            EvmExpr::Drop(_) => 0,
             // Side-effect ternary ops push nothing onto the stack
             EvmExpr::Top(op, _, _, _) => match op {
                 EvmTernaryOp::SStore
@@ -975,15 +959,9 @@ impl<'a> ExprCompiler<'a> {
                 | EvmTernaryOp::MStore8 => 0,
                 EvmTernaryOp::Keccak256 | EvmTernaryOp::Select => 1,
             },
-            // Terminators don't push values (they halt execution)
-            EvmExpr::Revert(_, _, _) | EvmExpr::ReturnOp(_, _, _) => 0,
-            // Log is a side-effect, pushes nothing
-            EvmExpr::Log(_, _, _, _) => 0,
             // If: both branches should push the same count
             EvmExpr::If(_, _, then_body, _) => Self::count_stack_values(then_body),
-            // Function definitions don't push values at the call site
-            EvmExpr::Function(_, _, _, _) | EvmExpr::StorageField(_, _, _) => 0,
-            // Everything else pushes 1 value
+            // Everything else pushes 1 value (Var, Bop, Uop, Const, etc.)
             _ => 1,
         }
     }
