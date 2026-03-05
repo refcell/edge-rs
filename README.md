@@ -53,16 +53,75 @@ cargo install --path bin/edgec
 
 See the [`examples/`](./examples/) directory for complete Edge programs. The introductory files cover basic syntax; the `lib/` and `tokens/` subdirectories contain a set of composable contracts — fixed-point math, ownership primitives, ERC-20/721/4626 — structured the way a real Edge project would be.
 
+### Compiling a contract
+
 ```sh
-# Lex a file (print tokens)
+# Compile to EVM bytecode (default)
+edgec build examples/counter.edge
+# Bytecode (127 bytes):
+# 0x60003560e01c8063d09de08a146100365780632baeceb7146100...
+
+# Write bytecode to a file
+edgec build examples/counter.edge --output counter.bin
+
+# Compile with verbose output
+edgec build examples/expressions.edge --verbose
+```
+
+### Debugging the pipeline
+
+```sh
+# Print the token stream
 edgec lex examples/counter.edge
 
-# Parse a file (print AST)
-edgec parse examples/types.edge
+# Print the AST
+edgec parse examples/counter.edge
 
-# Modular token contracts
+# Type-check only (no codegen)
+edgec check examples/counter.edge
+```
+
+### Example: counter contract
+
+```rust
+contract Counter {
+    let count: &s u256;
+
+    pub fn increment() {
+        let val: u256;
+        val = count + 1;
+        count = val;
+    }
+
+    pub fn get() -> (u256) {
+        return count;
+    }
+
+    pub fn reset() {
+        count = 0;
+    }
+}
+```
+
+```sh
+edgec build examples/counter.edge
+# Bytecode (127 bytes):
+# 0x60003560e01c8063d09de08a14610036578063...
+```
+
+The compiled bytecode includes a selector dispatcher, storage reads/writes via `SLOAD`/`SSTORE`, and a revert fallback for unknown selectors — all verified against a live EVM in the [integration tests](./crates/e2e/).
+
+### More examples
+
+```sh
+# Arithmetic, comparisons, bitwise ops, operator precedence
+edgec build examples/expressions.edge   # 329 bytes
+
+# ERC-20 token contract
+edgec build examples/erc20.edge         # 334 bytes
+
+# Composable library modules
 edgec parse examples/lib/math.edge
-edgec parse examples/tokens/erc20.edge
 edgec parse examples/tokens/erc4626.edge
 ```
 

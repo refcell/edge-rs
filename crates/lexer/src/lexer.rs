@@ -122,14 +122,19 @@ impl<'a> Lexer<'a> {
         //     TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()))
         // };
 
-        let kind = TokenKind::Literal(str_to_bytes32(integer_str[2..].as_ref()));
-
         start += 2;
         let span = Span {
             start: start as usize,
             end: end as usize,
             file: None,
         };
+        let literal = str_to_bytes32(integer_str[2..].as_ref()).map_err(|e| {
+            LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                span.clone(),
+            )
+        })?;
+        let kind = TokenKind::Literal(literal);
         Ok(Token { kind, span })
     }
 
@@ -215,7 +220,13 @@ impl<'a> Lexer<'a> {
                     end: suffix_end as usize,
                     file: None,
                 };
-                let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+                let literal =
+                    str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+                        LexicalError::new(
+                            LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                            span.clone(),
+                        )
+                    })?;
                 return Ok(Token {
                     kind: TokenKind::Literal(literal),
                     span,
@@ -231,7 +242,12 @@ impl<'a> Lexer<'a> {
             end: end as usize,
             file: None,
         };
-        let literal = str_to_bytes32(integer_str.replace('_', "").as_ref());
+        let literal = str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+            LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                span.clone(),
+            )
+        })?;
         Ok(Token {
             kind: TokenKind::Literal(literal),
             span,
@@ -261,7 +277,12 @@ impl<'a> Lexer<'a> {
             end: end_pos as usize,
             file: None,
         };
-        let literal = str_to_bytes32(binary_str.replace('_', "").as_ref());
+        let literal = str_to_bytes32(binary_str.replace('_', "").as_ref()).map_err(|e| {
+            LexicalError::new(
+                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                span.clone(),
+            )
+        })?;
         Ok(Token {
             kind: TokenKind::Literal(literal),
             span,
@@ -479,9 +500,10 @@ impl<'a> Lexer<'a> {
 
                 // Syntax sugar: true evaluates to 0x01, false evaluates to 0x00
                 if matches!(word.as_str(), "true" | "false") {
-                    found_kind = Some(TokenKind::Literal(str_to_bytes32(
-                        if word.as_str() == "true" { "1" } else { "0" },
-                    )));
+                    found_kind = Some(TokenKind::Literal(
+                        str_to_bytes32(if word.as_str() == "true" { "1" } else { "0" })
+                            .expect("single hex digit is always valid"),
+                    ));
                     self.eat_while(None, |c| c.is_alphanumeric());
                 }
 

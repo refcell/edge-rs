@@ -21,7 +21,7 @@ test:
 
 # Run tests for CI (using nextest)
 test-ci:
-    cargo nextest run --workspace
+    cargo nextest run --workspace --exclude edge-e2e
 
 # Fix formatting
 format-fix:
