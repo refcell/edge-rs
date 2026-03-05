@@ -97,6 +97,7 @@ impl Compiler {
         let checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
             self.session
                 .emit_error(Diagnostic::error(format!("type error: {e}")));
+            self.session.diagnostics.report_all(&self.session.source);
             CompileError::TypeCheckErrors
         })?;
 
@@ -115,6 +116,7 @@ impl Compiler {
                     name: f.name.clone(),
                     selector: f.selector,
                     is_pub: f.is_pub,
+                    params: f.params.iter().map(|(name, _type)| name.clone()).collect(),
                 })
                 .collect();
 
@@ -248,6 +250,7 @@ impl Compiler {
             edge_ir::IrInstruction::Mul => edge_codegen::GenInstr::Mul,
             edge_ir::IrInstruction::Div => edge_codegen::GenInstr::Div,
             edge_ir::IrInstruction::Mod => edge_codegen::GenInstr::Mod,
+            edge_ir::IrInstruction::Exp => edge_codegen::GenInstr::Exp,
             edge_ir::IrInstruction::Lt => edge_codegen::GenInstr::Lt,
             edge_ir::IrInstruction::Gt => edge_codegen::GenInstr::Gt,
             edge_ir::IrInstruction::Eq => edge_codegen::GenInstr::Eq,
