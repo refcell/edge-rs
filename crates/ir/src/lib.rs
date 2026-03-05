@@ -374,5 +374,4 @@ mod tests {
         }
         result.unwrap();
     }
-
 }

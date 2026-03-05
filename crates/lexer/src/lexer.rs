@@ -217,7 +217,7 @@ impl<'a> Lexer<'a> {
                 };
                 let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
                 return Ok(Token {
-                    kind: TokenKind::Literal(literal),
+                    kind: TokenKind::Literal(literal.into()),
                     span,
                 });
             } else {
@@ -233,7 +233,7 @@ impl<'a> Lexer<'a> {
         };
         let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
         Ok(Token {
-            kind: TokenKind::Literal(literal),
+            kind: TokenKind::Literal(literal.into()),
             span,
         })
     }
@@ -263,7 +263,7 @@ impl<'a> Lexer<'a> {
         };
         let literal = str_to_bytes32(binary_str.replace('_', "").as_ref());
         Ok(Token {
-            kind: TokenKind::Literal(literal),
+            kind: TokenKind::Literal(literal.into()),
             span,
         })
     }

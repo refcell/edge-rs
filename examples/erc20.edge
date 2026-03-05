@@ -37,12 +37,10 @@ contract ERC20 {
     let total_supply: &s u256;
 
     // Balances mapping: account -> amount
-    // TODO: map<addr, u256> — pending generic type support.
-    let balances: &s u256;
+    let balances: &s map<addr, u256>;
 
     // Allowances mapping: owner -> spender -> amount
-    // TODO: map<addr, map<addr, u256>> — pending nested generic type support.
-    let allowances: &s u256;
+    let allowances: &s map<addr, map<addr, u256>>;
 
     // Metadata functions
     pub fn totalSupply() -> (u256) {

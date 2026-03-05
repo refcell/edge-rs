@@ -16,6 +16,6 @@ path = "src/main.rs"
 clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 edge-driver = { workspace = true }
 edge-ir = { workspace = true }

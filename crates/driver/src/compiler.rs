@@ -38,6 +38,15 @@ pub enum CompileError {
     /// Parse errors were encountered
     #[error("parse errors encountered")]
     ParseErrors,
+    /// Type check errors were encountered
+    #[error("type check errors encountered")]
+    TypeCheckErrors,
+    /// IR lowering errors were encountered
+    #[error("IR lowering errors encountered")]
+    LowerErrors,
+    /// Code generation errors were encountered
+    #[error("code generation errors encountered")]
+    CodeGenErrors,
     /// Compilation aborted due to errors
     #[error("compilation aborted due to errors")]
     Aborted,
@@ -87,6 +96,14 @@ impl Compiler {
                 bytecode: None,
             });
         }
+
+        // Type check pass
+        let _checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
+            self.session
+                .emit_error(Diagnostic::error(format!("type error: {e}")));
+            self.session.diagnostics.report_all(&self.session.source);
+            CompileError::TypeCheckErrors
+        })?;
 
         // IR lowering + optimization
         let ir_program = edge_ir::lower_and_optimize(

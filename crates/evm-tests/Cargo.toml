@@ -14,9 +14,9 @@ edge-driver = { workspace = true }
 edge-ir = { workspace = true }
 edge-codegen = { workspace = true }
 edge-parser = { workspace = true }
-revm = { version = "19", default-features = false, features = ["std"] }
-alloy-primitives = "0.8"
-alloy-sol-types = "0.8"
+revm = { workspace = true }
+alloy-primitives = { workspace = true }
+tiny-keccak = { workspace = true }
 
 [lints]
 workspace = true

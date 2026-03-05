@@ -1,0 +1,20 @@
+[package]
+name = "edge-e2e"
+description = "Edge Language End-to-End Acceptance Tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[dependencies]
+edge-driver.workspace = true
+tiny-keccak.workspace = true
+
+[dev-dependencies]
+revm = { version = "34.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

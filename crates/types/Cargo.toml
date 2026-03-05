@@ -1,6 +1,6 @@
 [package]
 name = "edge-types"
-version = "0.1.2"
+version = "0.1.4"
 edition = "2021"
 license = "MIT"
 authors = ["refcell"]
@@ -20,6 +20,7 @@ regex = "1"
 uuid = { version = "1.7", features = ["v4"] }
 cfg-if = "1"
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
+alloy-primitives = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 js-sys = { version = "0.3" }

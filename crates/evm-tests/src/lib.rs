@@ -5,6 +5,7 @@
 
 #![allow(missing_docs)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use alloy_primitives::{Address, Bytes, Log, U256};
@@ -13,12 +14,14 @@ use edge_driver::{
     config::{CompilerConfig, EmitKind},
 };
 use revm::{
-    db::{CacheDB, EmptyDB},
-    primitives::{
-        ExecutionResult, Output, TransactTo,
-    },
-    Evm,
+    context::TxEnv,
+    database::{CacheDB, EmptyDB},
+    handler::MainnetContext,
+    primitives::TxKind,
+    state::{AccountInfo, Bytecode},
+    ExecuteCommitEvm, MainBuilder, MainContext, MainnetEvm,
 };
+use tiny_keccak::{Hasher, Keccak};
 
 /// Result of a contract call.
 #[derive(Debug)]
@@ -33,12 +36,25 @@ pub struct CallResult {
     pub logs: Vec<Log>,
 }
 
+type TestDb = CacheDB<EmptyDB>;
+type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
+
 /// In-memory EVM test host for semantic testing of Edge contracts.
-#[derive(Debug)]
 pub struct EvmTestHost {
-    db: CacheDB<EmptyDB>,
+    evm: TestEvm,
     contract: Address,
     caller: Address,
+    nonces: HashMap<Address, u64>,
+}
+
+impl std::fmt::Debug for EvmTestHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EvmTestHost")
+            .field("contract", &self.contract)
+            .field("caller", &self.caller)
+            .field("nonces", &self.nonces)
+            .finish()
+    }
 }
 
 /// Result of a contract deployment.
@@ -85,45 +101,50 @@ impl EvmTestHost {
         Self::deploy_bytecode_measured(bytecode).0
     }
 
-    /// Deploy raw bytecode, returning (host, deploy_gas).
+    /// Deploy raw bytecode by running init code via CREATE, returning (host, deploy_gas).
     fn deploy_bytecode_measured(bytecode: &[u8]) -> (Self, u64) {
         let caller = Address::from([0x01; 20]);
-        let mut db = CacheDB::new(EmptyDB::default());
 
-        let caller_info = revm::primitives::AccountInfo {
+        // Build a CacheDB with funded caller
+        let mut db = CacheDB::<EmptyDB>::default();
+        let caller_info = AccountInfo {
             balance: U256::from(1_000_000_000_000_000_000u128),
             nonce: 0,
             ..Default::default()
         };
         db.insert_account_info(caller, caller_info);
 
-        let result = {
-            let mut evm = Evm::builder()
-                .with_db(&mut db)
-                .modify_tx_env(|tx| {
-                    tx.caller = caller;
-                    tx.transact_to = TransactTo::Create;
-                    tx.data = Bytes::copy_from_slice(bytecode);
-                    tx.gas_limit = 10_000_000;
-                    tx.gas_price = U256::ZERO;
-                })
-                .modify_block_env(|blk| {
-                    blk.basefee = U256::ZERO;
-                })
-                .build();
-            evm.transact_commit().expect("deploy transaction failed")
+        // Build the EVM: Context::mainnet() gives EmptyDB, .with_db() swaps in our CacheDB
+        let ctx = revm::context::Context::mainnet().with_db(db);
+        let mut evm = ctx.build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(caller)
+            .kind(TxKind::Create)
+            .data(Bytes::copy_from_slice(bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        let deploy_gas = result.gas_used();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        // The deployed address for CREATE is derived from (caller, nonce=0)
+        let deployed_addr = caller.create(0);
+
+        let mut nonces = HashMap::new();
+        nonces.insert(caller, 1);
+
+        let host = Self {
+            evm,
+            contract: deployed_addr,
+            caller,
+            nonces,
         };
 
-        let (contract, deploy_gas) = match result {
-            ExecutionResult::Success {
-                output: Output::Create(_, Some(addr)),
-                gas_used,
-                ..
-            } => (addr, gas_used),
-            other => panic!("Deployment failed: {other:#?}"),
-        };
-
-        (Self { db, contract, caller }, deploy_gas)
+        (host, deploy_gas)
     }
 
     /// The deployed contract address.
@@ -133,7 +154,12 @@ impl EvmTestHost {
 
     /// Size of the deployed runtime bytecode in bytes.
     pub fn runtime_code_size(&self) -> usize {
-        self.db
+        use revm::context_interface::JournalTr;
+        self.evm
+            .ctx
+            .journaled_state
+            .db()
+            .cache
             .accounts
             .get(&self.contract)
             .and_then(|acc| acc.info.code.as_ref())
@@ -155,48 +181,29 @@ impl EvmTestHost {
 
     /// Call the contract with raw calldata bytes.
     pub fn call_raw(&mut self, calldata: &[u8]) -> CallResult {
-        let mut evm = Evm::builder()
-            .with_db(&mut self.db)
-            .modify_tx_env(|tx| {
-                tx.caller = self.caller;
-                tx.transact_to = TransactTo::Call(self.contract);
-                tx.data = Bytes::copy_from_slice(calldata);
-                tx.gas_limit = 10_000_000;
-                tx.nonce = None;
-                tx.gas_price = U256::ZERO;
-            })
-            .modify_block_env(|blk| {
-                blk.basefee = U256::ZERO;
-            })
-            .build();
+        let nonce = self.nonces.entry(self.caller).or_insert(0);
+        let tx = TxEnv::builder()
+            .caller(self.caller)
+            .kind(TxKind::Call(self.contract))
+            .data(Bytes::copy_from_slice(calldata))
+            .gas_limit(10_000_000)
+            .nonce(*nonce)
+            .build()
+            .unwrap();
 
-        let result = evm.transact_commit().expect("call transaction failed");
+        let result = self.evm.transact_commit(tx).unwrap();
+        *self.nonces.entry(self.caller).or_insert(0) += 1;
 
-        match result {
-            ExecutionResult::Success {
-                output: Output::Call(data),
-                gas_used,
-                logs,
-                ..
-            } => CallResult {
-                success: true,
-                output: data.to_vec(),
-                gas_used,
-                logs,
-            },
-            ExecutionResult::Revert { output, gas_used, .. } => CallResult {
-                success: false,
-                output: output.to_vec(),
-                gas_used,
-                logs: vec![],
-            },
-            ExecutionResult::Halt { reason, gas_used, .. } => CallResult {
-                success: false,
-                output: format!("HALT: {reason:?}").into_bytes(),
-                gas_used,
-                logs: vec![],
-            },
-            other => panic!("Unexpected call result: {other:#?}"),
+        let success = result.is_success();
+        let gas_used = result.gas_used();
+        let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
+        let logs = result.logs().to_vec();
+
+        CallResult {
+            success,
+            output,
+            gas_used,
+            logs,
         }
     }
 
@@ -209,22 +216,28 @@ impl EvmTestHost {
 
     /// Read a storage slot directly from the database.
     pub fn sload(&self, slot: U256) -> U256 {
+        use revm::context_interface::JournalTr;
         use revm::Database;
-        let mut db = self.db.clone();
+        let mut db = self.evm.ctx.journaled_state.db().clone();
         db.storage(self.contract, slot)
             .expect("failed to read storage")
     }
 
     /// Set the caller address for subsequent transactions.
-    /// Ensures the new caller has account info in the DB.
+    /// Ensures the new caller has account info in the DB (only if not already present).
     pub fn set_caller(&mut self, caller: Address) {
-        // Insert account info for the new caller if not already present
-        let caller_info = revm::primitives::AccountInfo {
-            balance: U256::from(1_000_000_000_000_000_000u128),
-            nonce: 0,
-            ..Default::default()
-        };
-        self.db.insert_account_info(caller, caller_info);
+        use revm::context_interface::JournalTr;
+        use revm::Database;
+        let db = self.evm.ctx.journaled_state.db_mut();
+        // Only insert if the account doesn't already exist
+        if db.basic(caller).ok().flatten().is_none() {
+            let caller_info = AccountInfo {
+                balance: U256::from(1_000_000_000_000_000_000u128),
+                nonce: 0,
+                ..Default::default()
+            };
+            db.insert_account_info(caller, caller_info);
+        }
         self.caller = caller;
     }
 }
@@ -269,11 +282,11 @@ pub fn compile_edge_split(
 
 /// Compute the 4-byte function selector from a signature like "transfer(address,uint256)".
 pub fn fn_selector(sig: &str) -> [u8; 4] {
-    use alloy_primitives::keccak256;
-    let hash = keccak256(sig.as_bytes());
-    let mut sel = [0u8; 4];
-    sel.copy_from_slice(&hash[..4]);
-    sel
+    let mut h = Keccak::v256();
+    h.update(sig.as_bytes());
+    let mut out = [0u8; 32];
+    h.finalize(&mut out);
+    [out[0], out[1], out[2], out[3]]
 }
 
 /// ABI-encode a single U256 value (left-padded to 32 bytes).

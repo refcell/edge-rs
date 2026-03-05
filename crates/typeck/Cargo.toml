@@ -1,0 +1,20 @@
+[package]
+name = "edge-typeck"
+description = "Edge Language Type Checker"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-types = { workspace = true }
+edge-ast = { workspace = true }
+thiserror = { workspace = true }
+indexmap = { workspace = true }
+tiny-keccak = { workspace = true }
+alloy-primitives = { workspace = true }
+
+[lints]
+workspace = true

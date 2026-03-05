@@ -80,6 +80,15 @@ pub struct FileArgs {
 }
 
 impl Cli {
+    /// Check if any subcommand has verbose enabled.
+    pub fn is_verbose(&self) -> bool {
+        match &self.command {
+            Commands::Build(args) => args.verbose,
+            Commands::Check(args) => args.verbose,
+            _ => false,
+        }
+    }
+
     /// Execute the CLI command
     pub fn execute(self) -> Result<()> {
         match self.command {
@@ -163,16 +172,21 @@ impl Cli {
             }
             EmitKind::Bytecode => {
                 if let Some(ref bytecode) = output.bytecode {
-                    if args.verbose {
-                        eprintln!("Bytecode size: {} bytes", bytecode.len());
-                    }
-                    if let Some(output_file) = &args.output {
-                        std::fs::write(output_file, bytecode)?;
-                        eprintln!("Wrote bytecode to {}", output_file.display());
+                    if bytecode.is_empty() {
+                        eprintln!("warning: empty bytecode produced");
                     } else {
                         // Print hex-encoded bytecode to stdout
                         let hex: String = bytecode.iter().map(|b| format!("{b:02x}")).collect();
                         println!("{hex}");
+
+                        // Write to output file if specified
+                        if let Some(output_file) = &args.output {
+                            std::fs::write(output_file, bytecode)?;
+                            if args.verbose {
+                                eprintln!("Wrote bytecode to {}", output_file.display());
+                            }
+                        }
+
                         eprintln!(
                             "Compilation successful, {} bytes of bytecode generated",
                             bytecode.len()

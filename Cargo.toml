@@ -4,9 +4,9 @@ resolver = "2"
 
 [workspace.package]
 description = "Edge Language Compiler Workspace"
-version = "0.1.2"
+version = "0.1.6"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.85"
 license = "MIT"
 authors = ["refcell"]
 repository = "https://github.com/refcell/edge-rs"
@@ -59,9 +59,10 @@ edge-lexer = { path = "crates/lexer" }
 edge-ast = { path = "crates/ast" }
 edge-parser = { path = "crates/parser" }
 edge-diagnostics = { path = "crates/diagnostics" }
-edge-driver = { path = "crates/driver" }
+edge-typeck = { path = "crates/typeck" }
 edge-ir = { path = "crates/ir" }
 edge-codegen = { path = "crates/codegen" }
+edge-driver = { path = "crates/driver" }
 anyhow = "1.0.79"
 inquire = "0.6.2"
 tracing = "0.1.40"
@@ -76,6 +77,9 @@ egglog = { git = "https://github.com/egraphs-good/egglog", rev = "161a36f" }
 indexmap = "2.0.0"
 ruint = "1"
 lazy_static = "1"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
+alloy-primitives = { version = "1.5", default-features = false, features = ["serde"] }
+revm = { version = "34.0", default-features = false, features = ["std"] }
 
 [profile.dev]
 incremental = true

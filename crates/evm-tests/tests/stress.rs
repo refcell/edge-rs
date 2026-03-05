@@ -301,6 +301,7 @@ fn stress_loops_collatz() {
 // ═══════════════════════════════════════════════════════════════════
 
 #[test]
+#[ignore] // Slow: compiles 9 contracts at O0/O1/O2 each. Run with --ignored.
 fn stress_gas_comparison() {
     println!("\n{}", "=".repeat(70));
     println!("  Stress Test Gas Comparison: O0 vs O1 vs O2");

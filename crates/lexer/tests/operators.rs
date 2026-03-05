@@ -325,7 +325,7 @@ fn lex_decimal_literal() {
     // Decimal 42 = 0x2a
     assert_eq!(
         tok.kind,
-        TokenKind::Literal(edge_types::bytes::decimal_to_bytes32("42"))
+        TokenKind::Literal(edge_types::bytes::decimal_to_bytes32("42").into())
     );
 }
 
