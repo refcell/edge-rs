@@ -1,0 +1,199 @@
+// arrays.edge — Demonstrates array types and operations
+//
+// What this demonstrates:
+//   - Fixed array declaration: [u256; 5]
+//   - Packed array: packed [u8; 32]
+//   - Array instantiation: [1, 2, 3, 4, 5]
+//   - Element access: arr[0]
+//   - Slice access: arr[1:3]
+//   - Array in storage
+//   - Array iteration with for loop
+//   - Type alias for arrays
+//
+// Run with:
+//   edgec lex examples/types/arrays.edge
+//   edgec parse examples/types/arrays.edge
+
+// ── Type Aliases ──────────────────────────────────────────────────────────────
+
+// A fixed-size array of 5 unsigned 256-bit integers.
+type FiveInts = [u256; 5];
+
+// A 32-byte packed array (one byte per element, tightly packed).
+type Bytes32 = packed [u8; 32];
+
+// An array of addresses.
+type AddressList = [addr; 10];
+
+// A two-element integer array.
+type TwoElementIntegerArray = [u8; 2];
+
+// A packed version for comparison.
+type TwoElementPackedIntegerArray = packed [u8; 2];
+
+// ── Array Instantiation ───────────────────────────────────────────────────────
+
+fn create_array() -> (u256) {
+    // Create a fixed-size array with literal values.
+    let arr: FiveInts;
+    arr = [10, 20, 30, 40, 50];
+
+    // Access individual elements by index.
+    let first: u256;
+    first = arr[0];
+
+    let third: u256;
+    third = arr[2];
+
+    let last: u256;
+    last = arr[4];
+
+    return first + third + last;
+}
+
+// ── Element Access ────────────────────────────────────────────────────────────
+
+fn element_access() -> (u256) {
+    let arr: [u256; 5];
+    arr = [100, 200, 300, 400, 500];
+
+    // Access specific elements.
+    let a: u256;
+    a = arr[0];
+
+    let b: u256;
+    b = arr[1];
+
+    let c: u256;
+    c = arr[2];
+
+    return a + b + c;
+}
+
+// ── Slice Access ──────────────────────────────────────────────────────────────
+
+fn slice_access() -> (u256) {
+    let arr: [u256; 5];
+    arr = [10, 20, 30, 40, 50];
+
+    // Slice access returns a sub-array pointer.
+    // arr[1:3] returns elements at index 1 and 2.
+    let slice: [u256; 2];
+    slice = arr[1:3];
+
+    let first: u256;
+    first = slice[0];
+
+    let second: u256;
+    second = slice[1];
+
+    return first + second;
+}
+
+// ── Packed Arrays ─────────────────────────────────────────────────────────────
+
+fn packed_array_usage() -> (u8) {
+    // Packed arrays store elements tightly by bitsize.
+    // 32 bytes * 8 bits = 256 bits, fits in one word.
+    let data: Bytes32;
+    data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+            16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31];
+
+    let byte_at_5: u8;
+    byte_at_5 = data[5];
+
+    return byte_at_5;
+}
+
+fn packed_small() -> (u8) {
+    // Small packed array.
+    let pair: TwoElementPackedIntegerArray;
+    pair = [42, 99];
+
+    let a: u8;
+    a = pair[0];
+
+    let b: u8;
+    b = pair[1];
+
+    return a;
+}
+
+// ── Array Iteration with For Loop ─────────────────────────────────────────────
+
+fn sum_array() -> (u256) {
+    let arr: [u256; 5];
+    arr = [10, 20, 30, 40, 50];
+
+    let total: u256;
+    total = 0;
+
+    // Iterate using a for loop with index.
+    for (let i: u256 = 0; i < 5; i = i + 1) {
+        total = total + arr[i];
+    }
+
+    return total;
+}
+
+fn find_max() -> (u256) {
+    let arr: [u256; 5];
+    arr = [30, 10, 50, 20, 40];
+
+    let max_val: u256;
+    max_val = arr[0];
+
+    for (let i: u256 = 1; i < 5; i = i + 1) {
+        if (arr[i] > max_val) {
+            max_val = arr[i];
+        }
+    }
+
+    return max_val;
+}
+
+// ── Array in Storage ──────────────────────────────────────────────────────────
+
+contract ArrayStorage {
+    // Fixed-size array stored in persistent storage.
+    // Each element occupies one storage slot.
+    let values: &s [u256; 10];
+
+    // Counter for how many elements are populated.
+    let count: &s u256;
+
+    // Set a value at a given index.
+    pub fn set(index: u256, value: u256) {
+        values[index] = value;
+    }
+
+    // Get a value at a given index.
+    pub fn get(index: u256) -> (u256) {
+        return values[index];
+    }
+
+    // Sum all stored values.
+    pub fn sumAll() -> (u256) {
+        let total: u256;
+        total = 0;
+        let n: u256;
+        n = count;
+        for (let i: u256 = 0; i < n; i = i + 1) {
+            total = total + values[i];
+        }
+        return total;
+    }
+}
+
+// ── Address List Example ──────────────────────────────────────────────────────
+
+fn count_nonzero(list: AddressList) -> (u256) {
+    let count: u256;
+    count = 0;
+    for (let i: u256 = 0; i < 10; i = i + 1) {
+        if (list[i] != 0) {
+            count = count + 1;
+        }
+    }
+    return count;
+}

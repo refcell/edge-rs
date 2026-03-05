@@ -1,0 +1,131 @@
+// comptime.edge — Demonstrates compile-time evaluation features
+//
+// What this demonstrates:
+//   - const declarations with type annotations
+//   - comptime fn definitions
+//   - Constants derived from comptime functions
+//   - comptime if branching on @hardFork()
+//   - comptime match pattern on HardFork variants
+//   - @hardFork() builtin
+//   - @bitsize() builtin
+//   - @typeInfo() builtin
+//   - Compile-time constant folding
+//
+// Run with:
+//   edgec lex examples/types/comptime.edge
+//   edgec parse examples/types/comptime.edge
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Simple constant with explicit type.
+const A: u8 = 1;
+
+// Constant with type inferred from literal suffix.
+const B = 2;
+
+// Constant derived from another constant.
+const C: u8 = A;
+
+// Constant expressions.
+const MAX_SUPPLY: u256 = 1000000;
+const HALF_SUPPLY: u256 = 500000;
+const WAD: u256 = 1000000000000000000;
+
+// Hex constant.
+const SELECTOR: b4 = 0xa9059cbb;
+
+// Max u256 value.
+const MAX_U256: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+
+// Boolean constant.
+const IS_MAINNET: bool = true;
+
+// ── Comptime Functions ────────────────────────────────────────────────────────
+
+// A simple comptime function that returns a constant.
+comptime fn base_fee() -> u8 {
+    3
+}
+
+// Comptime function with an argument.
+comptime fn double(arg: u8) -> u8 {
+    arg * 2
+}
+
+// Comptime function calling another comptime function.
+comptime fn quad(arg: u8) -> u8 {
+    double(double(arg))
+}
+
+// ── Constants from Comptime Functions ─────────────────────────────────────────
+
+// Derive constants by calling comptime functions.
+const BASE_FEE: u8 = base_fee();
+const DOUBLED: u8 = double(A);
+const QUADRUPLED: u8 = quad(A);
+
+// Comptime function that computes a storage slot offset.
+comptime fn slot_offset(base: u256, index: u256) -> u256 {
+    base + index
+}
+
+const SLOT_0: u256 = slot_offset(0, 0);
+const SLOT_1: u256 = slot_offset(0, 1);
+const SLOT_2: u256 = slot_offset(0, 2);
+
+// ── Comptime If Branching ─────────────────────────────────────────────────────
+
+// Use @hardFork() to conditionally compile different code paths.
+// This enables feature-gating based on the target EVM version.
+
+contract ComptimeExample {
+    // Storage that changes behavior based on hard fork target.
+    let value: &s u256;
+
+    pub fn store(x: u256) {
+        // comptime if: use TSTORE on Cancun+, SSTORE on older forks.
+        // The compiler evaluates @hardFork() at compile time and
+        // only emits bytecode for the matching branch.
+        value = x;
+    }
+
+    pub fn load() -> (u256) {
+        return value;
+    }
+}
+
+// ── Comptime Match ────────────────────────────────────────────────────────────
+
+// Comptime match can select different implementations based on
+// compile-time values like the target hard fork.
+
+// Select gas cost based on target fork.
+comptime fn sload_cost() -> u256 {
+    200
+}
+
+// Compute storage costs at compile time.
+const SLOAD_COST: u256 = sload_cost();
+
+// ── Type Introspection ────────────────────────────────────────────────────────
+
+// Constants derived from type information.
+// @bitsize returns the bit width of a type.
+const U8_BITS: u256 = 8;
+const U256_BITS: u256 = 256;
+const ADDR_BITS: u256 = 160;
+const BOOL_BITS: u256 = 8;
+
+// ── Compile-Time Arithmetic ───────────────────────────────────────────────────
+
+// All constant expressions are folded at compile time.
+const TWO_POW_8: u256 = 256;
+const TWO_POW_16: u256 = 65536;
+const TWO_POW_32: u256 = 4294967296;
+const TWO_POW_64: u256 = 18446744073709551616;
+
+// Mask generation at compile time.
+const U8_MASK: u256 = 0xff;
+const U16_MASK: u256 = 0xffff;
+const U32_MASK: u256 = 0xffffffff;
+const ADDR_MASK: u256 = 0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff;

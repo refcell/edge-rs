@@ -5,6 +5,18 @@ use std::num::ParseIntError;
 use alloy_primitives::B256;
 use tiny_keccak::{Hasher, Keccak};
 
+/// Convert a **decimal** integer string to a [`B256`].
+/// Parses the string as a base-10 integer and stores it big-endian in 32 bytes.
+/// i.e. "256" becomes `[0, 0, ..., 0, 1, 0]`
+pub fn decimal_str_to_bytes32(s: &str) -> Result<B256, ParseIntError> {
+    let clean = s.replace('_', "");
+    let value: u128 = clean.parse()?;
+    let value_bytes = value.to_be_bytes(); // [u8; 16]
+    let mut padded = [0u8; 32];
+    padded[16..].copy_from_slice(&value_bytes);
+    Ok(B256::from(padded))
+}
+
 /// Convert a string slice to a [`B256`].
 /// Pads zeros to the left of significant bytes.
 /// i.e. 0xa57b becomes `[0, 0, ..., 0, 165, 123]`

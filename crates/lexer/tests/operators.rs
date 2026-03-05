@@ -216,8 +216,11 @@ fn lex_hex_literal_single_digit() {
 fn lex_decimal_literal() {
     let tok = Lexer::new("42").next().unwrap().unwrap();
     assert!(matches!(tok.kind, TokenKind::Literal(_)));
-    // "42" in hex is "2a", so str_to_bytes32("42") pads it into [u8; 32]
-    assert_eq!(tok.kind, TokenKind::Literal(str_to_bytes32("42").unwrap()));
+    // "42" as a decimal integer: value 42 stored big-endian in 32 bytes.
+    assert_eq!(
+        tok.kind,
+        TokenKind::Literal(decimal_str_to_bytes32("42").unwrap())
+    );
 }
 
 // ─── Keywords ───────────────────────────────────────────────────────

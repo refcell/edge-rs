@@ -7,5 +7,5 @@ pub mod lower;
 pub mod program;
 
 pub use instruction::IrInstruction;
-pub use lower::{FnMeta, LowerError, Lowerer, StorageSlots};
+pub use lower::{EventMeta, FnMeta, LowerError, Lowerer, StorageSlots};
 pub use program::{IrContract, IrFunction, IrProgram};

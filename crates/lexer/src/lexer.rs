@@ -33,6 +33,9 @@ pub struct Lexer<'a> {
     pub eof: bool,
     /// Current context.
     pub context: Context,
+    /// A character that was consumed speculatively and needs to be re-processed.
+    /// Used to handle ambiguous two-character data-location prefixes like `&cd`.
+    pending_char: Option<char>,
 }
 
 impl<'a> Lexer<'a> {
@@ -45,18 +48,37 @@ impl<'a> Lexer<'a> {
             lookback: None,
             eof: false,
             context: Context::Global,
+            pending_char: None,
         }
     }
 
     /// Consumes and returns the next character.
+    /// If a character was pushed back via `push_back`, that is returned first.
     pub fn consume(&mut self) -> Option<char> {
+        if let Some(c) = self.pending_char.take() {
+            return Some(c);
+        }
         let (c, index) = self.chars.next()?;
         self.position = index;
         Some(c)
     }
 
+    /// Push a character back so it will be the next one returned by `consume`.
+    /// Used to handle ambiguous two-character prefixes without a second-level lookahead.
+    fn push_back(&mut self, c: char) {
+        debug_assert!(
+            self.pending_char.is_none(),
+            "push_back called with a character already pending"
+        );
+        self.pending_char = Some(c);
+    }
+
     /// Try to peek at the next character from the source.
+    /// Returns the pending character if one exists, otherwise peeks the real stream.
     pub fn peek(&mut self) -> Option<char> {
+        if let Some(c) = self.pending_char {
+            return Some(c);
+        }
         self.chars.peek().map(|(c, _)| *c)
     }
 
@@ -210,8 +232,8 @@ impl<'a> Lexer<'a> {
                     end: suffix_end as usize,
                     file: None,
                 };
-                let literal =
-                    str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+                let literal = decimal_str_to_bytes32(integer_str.replace('_', "").as_ref())
+                    .map_err(|e| {
                         LexicalError::new(
                             LexicalErrorKind::InvalidHexLiteral(e.to_string()),
                             span.clone(),
@@ -232,12 +254,13 @@ impl<'a> Lexer<'a> {
             end: end as usize,
             file: None,
         };
-        let literal = str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
-            LexicalError::new(
-                LexicalErrorKind::InvalidHexLiteral(e.to_string()),
-                span.clone(),
-            )
-        })?;
+        let literal =
+            decimal_str_to_bytes32(integer_str.replace('_', "").as_ref()).map_err(|e| {
+                LexicalError::new(
+                    LexicalErrorKind::InvalidHexLiteral(e.to_string()),
+                    span.clone(),
+                )
+            })?;
         Ok(Token {
             kind: TokenKind::Literal(literal),
             span,
@@ -611,50 +634,52 @@ impl<'a> Lexer<'a> {
                         }
                         'c' => {
                             // Peek ahead to see if it's &cd
-                            let start = self.position;
                             self.consume(); // consume 'c'
                             if self.peek() == Some('d') {
                                 self.consume(); // consume 'd'
                                 self.single_char_token(TokenKind::Pointer(Location::Calldata))
                             } else {
-                                // Not &cd, just & - return AND and position will be at 'c'
-                                // Actually we already consumed 'c', so we need to handle this carefully
-                                // For now, emit AND with the correct span
-                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
-                                    .into_single_span(start))
+                                // Not &cd — push 'c' back so the next token starts with it
+                                self.push_back('c');
+                                self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                    BitwiseOperator::And,
+                                )))
                             }
                         }
                         'r' => {
-                            let start = self.position;
                             self.consume(); // consume 'r'
                             if self.peek() == Some('d') {
                                 self.consume(); // consume 'd'
                                 self.single_char_token(TokenKind::Pointer(Location::Returndata))
                             } else {
-                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
-                                    .into_single_span(start))
+                                self.push_back('r');
+                                self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                    BitwiseOperator::And,
+                                )))
                             }
                         }
                         'i' => {
-                            let start = self.position;
                             self.consume(); // consume 'i'
                             if self.peek() == Some('c') {
                                 self.consume(); // consume 'c'
                                 self.single_char_token(TokenKind::Pointer(Location::InternalCode))
                             } else {
-                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
-                                    .into_single_span(start))
+                                self.push_back('i');
+                                self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                    BitwiseOperator::And,
+                                )))
                             }
                         }
                         'e' => {
-                            let start = self.position;
                             self.consume(); // consume 'e'
                             if self.peek() == Some('c') {
                                 self.consume(); // consume 'c'
                                 self.single_char_token(TokenKind::Pointer(Location::ExternalCode))
                             } else {
-                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
-                                    .into_single_span(start))
+                                self.push_back('e');
+                                self.single_char_token(TokenKind::Operator(Operator::Bitwise(
+                                    BitwiseOperator::And,
+                                )))
                             }
                         }
                         '=' => {

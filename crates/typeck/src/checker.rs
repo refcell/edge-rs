@@ -5,7 +5,10 @@
 
 use alloy_primitives::Selector;
 use edge_ast::{
+    expr::Expr,
     item::{ContractDecl, ContractFnDecl},
+    lit::Lit,
+    op::BinOp,
     stmt::Stmt,
     ty::{Location, PrimitiveType, TypeSig},
     Program,
@@ -163,13 +166,18 @@ impl TypeChecker {
             .map(|fn_decl| self.check_contract_fn(fn_decl))
             .collect();
 
-        // Process constants
+        // Process constants (evaluate simple literal/arithmetic expressions)
+        let mut const_env: IndexMap<String, u64> = IndexMap::new();
         let consts = contract
             .consts
             .iter()
-            .map(|(decl, expr)| ConstValue {
-                name: decl.name.name.clone(),
-                value: Self::eval_const_expr(expr),
+            .map(|(decl, expr)| {
+                let value = Self::eval_const_expr(expr, &const_env).unwrap_or(0);
+                const_env.insert(decl.name.name.clone(), value);
+                ConstValue {
+                    name: decl.name.name.clone(),
+                    value,
+                }
             })
             .collect();
 
@@ -187,8 +195,10 @@ impl TypeChecker {
         let mut next_slot = 0u32;
 
         for (field_name, ty) in fields {
-            // Only assign storage slots to &s (Stack) pointers
-            if Self::is_stack_pointer(ty) {
+            // Assign slots to &s (persistent) and &t (transient) storage fields.
+            // Transient storage will use TSTORE/TLOAD once those opcodes are added
+            // to the IR; for now the slot numbering is shared.
+            if Self::is_stored_pointer(ty) {
                 slots.insert(field_name.name.clone(), next_slot);
                 next_slot += 1;
             }
@@ -197,32 +207,12 @@ impl TypeChecker {
         StorageLayout { slots }
     }
 
-    /// Evaluate a simple constant expression to a `u64`.
-    ///
-    /// Handles literal integers, hex/binary bytes, booleans, and parenthesised
-    /// wrappers.  All other expression forms evaluate to `0`.
-    fn eval_const_expr(expr: &edge_ast::expr::Expr) -> u64 {
-        use edge_ast::lit::Lit;
-        match expr {
-            edge_ast::expr::Expr::Literal(lit) => match lit.as_ref() {
-                Lit::Int(n, _, _) => *n,
-                Lit::Bool(b, _) => u64::from(*b),
-                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
-                    let start = bytes.len().saturating_sub(8);
-                    bytes[start..]
-                        .iter()
-                        .fold(0u64, |acc, &b| (acc << 8) | u64::from(b))
-                }
-                Lit::Str(_, _) => 0,
-            },
-            edge_ast::expr::Expr::Paren(inner, _) => Self::eval_const_expr(inner),
-            _ => 0,
-        }
-    }
-
-    /// Check if a type is a stack pointer (&s T)
-    const fn is_stack_pointer(ty: &TypeSig) -> bool {
-        matches!(ty, TypeSig::Pointer(Location::Stack, _))
+    /// Check if a type uses contract storage (&s persistent or &t transient).
+    const fn is_stored_pointer(ty: &TypeSig) -> bool {
+        matches!(
+            ty,
+            TypeSig::Pointer(Location::Stack, _) | TypeSig::Pointer(Location::Transient, _)
+        )
     }
 
     /// Check a single contract function
@@ -286,6 +276,51 @@ impl TypeChecker {
                 format!("({inner})")
             }
             _ => "uint256".to_string(), // Fallback for complex types
+        }
+    }
+
+    /// Evaluate a constant expression to a u64 value.
+    /// Supports literals and simple arithmetic over previously-defined constants.
+    fn eval_const_expr(expr: &Expr, env: &IndexMap<String, u64>) -> Option<u64> {
+        match expr {
+            Expr::Literal(lit) => match lit.as_ref() {
+                Lit::Int(n, _, _) => Some(*n),
+                Lit::Bool(b, _) => Some(if *b { 1 } else { 0 }),
+                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
+                    let mut v = 0u64;
+                    for &b in bytes.iter().take(8) {
+                        v = (v << 8) | (b as u64);
+                    }
+                    Some(v)
+                }
+                Lit::Str(_, _) => None,
+            },
+            Expr::Ident(id) => env.get(&id.name).copied(),
+            Expr::Paren(inner, _) => Self::eval_const_expr(inner, env),
+            Expr::Binary(lhs, op, rhs, _) => {
+                let l = Self::eval_const_expr(lhs, env)?;
+                let r = Self::eval_const_expr(rhs, env)?;
+                match op {
+                    BinOp::Add => Some(l.wrapping_add(r)),
+                    BinOp::Sub => Some(l.wrapping_sub(r)),
+                    BinOp::Mul => Some(l.wrapping_mul(r)),
+                    BinOp::Div if r != 0 => Some(l / r),
+                    BinOp::Mod if r != 0 => Some(l % r),
+                    BinOp::BitwiseAnd => Some(l & r),
+                    BinOp::BitwiseOr => Some(l | r),
+                    BinOp::BitwiseXor => Some(l ^ r),
+                    BinOp::Shl => Some(l << (r & 63)),
+                    BinOp::Shr => Some(l >> (r & 63)),
+                    BinOp::Eq => Some(if l == r { 1 } else { 0 }),
+                    BinOp::Neq => Some(if l != r { 1 } else { 0 }),
+                    BinOp::Lt => Some(if l < r { 1 } else { 0 }),
+                    BinOp::Gt => Some(if l > r { 1 } else { 0 }),
+                    BinOp::Lte => Some(if l <= r { 1 } else { 0 }),
+                    BinOp::Gte => Some(if l >= r { 1 } else { 0 }),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 

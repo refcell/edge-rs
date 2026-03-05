@@ -14,6 +14,7 @@ edge-ast = { workspace = true }
 thiserror = { workspace = true }
 indexmap = "2.0"
 alloy-primitives = { workspace = true }
+tiny-keccak = { workspace = true }
 
 [lints]
 workspace = true
