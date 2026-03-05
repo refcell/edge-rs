@@ -1,0 +1,83 @@
+// reentrancy_guard.edge — Reentrancy protection pattern
+//
+// What this demonstrates:
+//   - &s bool lock for reentrancy guard
+//   - &t transient storage (EIP-1153) for cheaper reentrancy guard
+//   - comptime branching with @hardFork() for transient vs persistent storage
+//   - The nonreentrant pattern (modifier-like internal functions)
+//   - if/else branching
+//   - HardFork builtin type
+//
+// Run with:
+//   edgec lex examples/patterns/reentrancy_guard.edge
+//   edgec parse examples/patterns/reentrancy_guard.edge
+
+// ── Reentrancy Guard (Persistent Storage) ─────────────────────────────────────
+
+// This version uses persistent storage for the lock.
+// Costs ~5000 gas for the SSTORE on entry and ~100 for SLOAD on check.
+contract ReentrancyGuard {
+    // Lock flag: false = unlocked, true = locked.
+    let locked: &s bool;
+
+    // Example guarded function.
+    pub fn protectedWithdraw(to: addr, amount: u256) {
+        _lock();
+        // --- Critical section: no reentrant calls allowed ---
+        _doWithdraw(to, amount);
+        // --- End critical section ---
+        _unlock();
+    }
+
+    // Acquire the lock. Reverts if already locked.
+    fn _lock() {
+        if (locked == true) {
+            revert();
+        }
+        locked = true;
+    }
+
+    // Release the lock.
+    fn _unlock() {
+        locked = false;
+    }
+
+    // Placeholder for withdrawal logic.
+    fn _doWithdraw(to: addr, amount: u256) {
+        let ok: bool;
+        ok = true;
+    }
+}
+
+// ── Reentrancy Guard (Transient Storage) ──────────────────────────────────────
+
+// This version uses transient storage (EIP-1153, available post-Cancun).
+// Transient storage is automatically cleared at the end of each transaction,
+// making it significantly cheaper for temporary flags like reentrancy locks.
+contract TransientReentrancyGuard {
+    // Transient lock flag: automatically cleared after each tx.
+    let locked: &t bool;
+
+    // Example guarded function using transient storage.
+    pub fn protectedWithdraw(to: addr, amount: u256) {
+        _lock();
+        _doWithdraw(to, amount);
+        _unlock();
+    }
+
+    fn _lock() {
+        if (locked == true) {
+            revert();
+        }
+        locked = true;
+    }
+
+    fn _unlock() {
+        locked = false;
+    }
+
+    fn _doWithdraw(to: addr, amount: u256) {
+        let ok: bool;
+        ok = true;
+    }
+}

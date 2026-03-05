@@ -1,0 +1,174 @@
+// structs.edge — Demonstrates ALL product type features
+//
+// What this demonstrates:
+//   - Unpacked struct: type Point = { x: u256, y: u256 }
+//   - Packed struct: type Rgb = packed { r: u8, g: u8, b: u8 }
+//   - Tuple: type Pair = (u256, u256)
+//   - Packed tuple: type PackedPair = packed (u128, u128)
+//   - Generic struct: type Wrapper<T> = { value: T, metadata: u256 }
+//   - Nested struct with field access (. notation)
+//   - Storage struct layout
+//   - Impl block on struct with methods
+//
+// Run with:
+//   edgec lex examples/types/structs.edge
+//   edgec parse examples/types/structs.edge
+
+// ── Unpacked Structs ──────────────────────────────────────────────────────────
+
+// Each field occupies its own 256-bit word.
+type Point = {
+    x: u256,
+    y: u256,
+};
+
+// Three-field struct, each in its own word.
+type Rectangle = {
+    origin: Point,
+    width: u256,
+    height: u256,
+};
+
+// ── Packed Structs ────────────────────────────────────────────────────────────
+
+// Fields are packed by bitsize into a single word.
+// r(8) + g(8) + b(8) = 24 bits, fits in one word.
+type Rgb = packed {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+// Packed struct with mixed sizes.
+// addr(160) + u8(8) + bool(8) = 176 bits, fits in one word.
+type TokenInfo = packed {
+    token: addr,
+    decimals: u8,
+    active: bool,
+};
+
+// ── Tuples ────────────────────────────────────────────────────────────────────
+
+// Unnamed product type. Fields accessed by index: pair.0, pair.1
+type Pair = (u256, u256);
+
+// Three-element tuple.
+type Triple = (u256, u256, u256);
+
+// ── Packed Tuples ─────────────────────────────────────────────────────────────
+
+// Packed tuple: u128(128) + u128(128) = 256 bits, fits in one word.
+type PackedPair = packed (u128, u128);
+
+// Packed tuple with smaller types.
+type PackedBytes = packed (u8, u8, u8, u8);
+
+// ── Generic Structs ───────────────────────────────────────────────────────────
+
+// A wrapper that can hold any type alongside metadata.
+type Wrapper<T> = {
+    value: T,
+    metadata: u256,
+};
+
+// ── Storage Layout ────────────────────────────────────────────────────────────
+
+// Struct as a storage layout definition.
+// Each field maps to a sequential storage slot.
+type StorageLayout = {
+    owner: addr,
+    total_supply: u256,
+    paused: bool,
+};
+
+// ── Struct with Impl Block ────────────────────────────────────────────────────
+
+// A 2D vector with methods defined via impl.
+type Vec2 = {
+    x: u256,
+    y: u256,
+};
+
+impl Vec2 {
+    // Add two vectors.
+    fn add(a: Vec2, b: Vec2) -> (Vec2) {
+        let result: Vec2;
+        result = Vec2 { x: a.x + b.x, y: a.y + b.y };
+        return result;
+    }
+
+    // Compute the squared magnitude (avoids square root).
+    fn magnitude_squared(v: Vec2) -> (u256) {
+        return v.x * v.x + v.y * v.y;
+    }
+
+    // Check if a vector is the zero vector.
+    fn is_zero(v: Vec2) -> (bool) {
+        return v.x == 0 && v.y == 0;
+    }
+}
+
+// ── Nested Struct Access ──────────────────────────────────────────────────────
+
+// Demonstrate field access with dot notation.
+fn create_rectangle() -> (u256) {
+    let origin: Point;
+    origin = Point { x: 10, y: 20 };
+
+    let rect: Rectangle;
+    rect = Rectangle { origin: origin, width: 100, height: 50 };
+
+    // Access nested fields.
+    let x: u256;
+    x = rect.origin.x;
+
+    let area: u256;
+    area = rect.width * rect.height;
+
+    return area;
+}
+
+// ── Packed Struct Usage ───────────────────────────────────────────────────────
+
+fn create_color() -> (u8) {
+    let color: Rgb;
+    color = Rgb { r: 255, g: 128, b: 0 };
+
+    // Access individual packed fields.
+    let red: u8;
+    red = color.r;
+
+    return red;
+}
+
+// ── Tuple Usage ───────────────────────────────────────────────────────────────
+
+fn create_pair() -> (u256) {
+    let p: Pair;
+    p = (42, 99);
+
+    // Access tuple fields by index.
+    let first: u256;
+    first = p.0;
+
+    let second: u256;
+    second = p.1;
+
+    return first + second;
+}
+
+// ── Struct Instantiation ──────────────────────────────────────────────────────
+
+fn struct_examples() -> (u256) {
+    // Constant struct.
+    const ORIGIN: Point = Point { x: 0, y: 0 };
+
+    // Packed struct instance.
+    let info: TokenInfo;
+    info = TokenInfo { token: 0, decimals: 18, active: true };
+
+    let dec: u8;
+    dec = info.decimals;
+
+    return dec;
+}

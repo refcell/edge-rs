@@ -142,6 +142,64 @@ impl CodeGenerator {
         Self
     }
 
+    /// Generate EVM deploy (init) bytecode that returns the runtime bytecode on deployment.
+    ///
+    /// Layout:
+    /// ```text
+    /// PUSH2 <runtime_size>
+    /// PUSH2 <runtime_offset>   (= size of initcode prefix)
+    /// PUSH1 0x00
+    /// CODECOPY
+    /// PUSH2 <runtime_size>
+    /// PUSH1 0x00
+    /// RETURN
+    /// <runtime bytecode>
+    /// ```
+    pub fn generate_deploy(&self, input: &ContractInput) -> Result<Vec<u8>, CodeGenError> {
+        let runtime = self.generate(input)?;
+        let runtime_size = runtime.len();
+
+        // Build the initcode prefix: 10 bytes for the CODECOPY + RETURN sequence.
+        // PUSH2 size (3), PUSH2 offset (3), PUSH1 0x00 (2), CODECOPY (1) = 9 bytes
+        // PUSH2 size (3), PUSH1 0x00 (2), RETURN (1) = 6 bytes  → total prefix = 15 bytes
+        let prefix_size = 15usize;
+        let runtime_offset = prefix_size;
+
+        let mut init = Vec::with_capacity(prefix_size + runtime_size);
+
+        // PUSH2 <runtime_size>
+        init.push(0x61); // PUSH2
+        init.push((runtime_size >> 8) as u8);
+        init.push((runtime_size & 0xff) as u8);
+
+        // PUSH2 <runtime_offset>
+        init.push(0x61); // PUSH2
+        init.push((runtime_offset >> 8) as u8);
+        init.push((runtime_offset & 0xff) as u8);
+
+        // PUSH1 0x00
+        init.push(0x60);
+        init.push(0x00);
+
+        // CODECOPY
+        init.push(0x39);
+
+        // PUSH2 <runtime_size>
+        init.push(0x61);
+        init.push((runtime_size >> 8) as u8);
+        init.push((runtime_size & 0xff) as u8);
+
+        // PUSH1 0x00
+        init.push(0x60);
+        init.push(0x00);
+
+        // RETURN
+        init.push(0xf3);
+
+        init.extend_from_slice(&runtime);
+        Ok(init)
+    }
+
     /// Generate EVM runtime bytecode for a contract
     ///
     /// The output is the runtime bytecode (not deploy bytecode).

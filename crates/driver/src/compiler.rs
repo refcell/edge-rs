@@ -2,12 +2,14 @@
 
 use std::fs;
 
-use edge_ast::Program;
+use edge_ast::{stmt::Stmt, ty::EventField, Program};
 use edge_diagnostics::Diagnostic;
+use edge_ir::EventMeta;
 use edge_lexer::lexer::Lexer;
 use edge_parser::Parser;
 use edge_types::tokens::Token;
 use indexmap::IndexMap;
+use tiny_keccak::{Hasher, Keccak};
 
 use crate::{
     config::{CompilerConfig, EmitKind},
@@ -21,10 +23,12 @@ pub struct CompileOutput {
     pub tokens: Option<Vec<Token>>,
     /// Emitted AST (if emit=ast)
     pub ast: Option<Program>,
-    /// Emitted bytecode for the last contract (backward compat)
+    /// Emitted runtime bytecode for the last contract (backward compat)
     pub bytecode: Option<Vec<u8>>,
-    /// Emitted bytecodes for all contracts, keyed by contract name
+    /// Emitted runtime bytecodes for all contracts, keyed by contract name
     pub bytecodes: Option<IndexMap<String, Vec<u8>>>,
+    /// Deploy (initcode) bytecodes for all contracts
+    pub deploy_bytecodes: Option<IndexMap<String, Vec<u8>>>,
 }
 
 /// Compiler errors
@@ -83,6 +87,7 @@ impl Compiler {
                 ast: None,
                 bytecode: None,
                 bytecodes: None,
+                deploy_bytecodes: None,
             });
         }
 
@@ -95,6 +100,7 @@ impl Compiler {
                 ast: Some(ast),
                 bytecode: None,
                 bytecodes: None,
+                deploy_bytecodes: None,
             });
         }
 
@@ -106,8 +112,12 @@ impl Compiler {
             CompileError::TypeCheckErrors
         })?;
 
+        // Extract event declarations from the AST (used for emit→LOG lowering)
+        let event_metas = Self::collect_event_metas(&ast);
+
         // Lower to IR and generate bytecode for each contract
         let mut all_bytecodes: IndexMap<String, Vec<u8>> = IndexMap::new();
+        let mut all_deploy_bytecodes: IndexMap<String, Vec<u8>> = IndexMap::new();
 
         for contract_info in &checked.contracts {
             // Build storage slots for lowerer
@@ -125,9 +135,12 @@ impl Compiler {
                 })
                 .collect();
 
-            // Lower AST to IR
-            let lowerer = edge_ir::Lowerer::new(storage_slots, fn_metas);
-            let ir_program = lowerer.lower(&ast).map_err(|e| {
+            // Lower AST to IR — only lower the target contract so each contract
+            // gets its own storage slots rather than sharing one set across the
+            // entire program (avoids cross-contamination in multi-contract files).
+            let lowerer =
+                edge_ir::Lowerer::new(storage_slots, fn_metas, event_metas.clone());
+            let ir_program = lowerer.lower_one(&ast, &contract_info.name).map_err(|e| {
                 self.session
                     .emit_error(Diagnostic::error(format!("IR lowering error: {e}")));
                 self.session.diagnostics.report_all(&self.session.source);
@@ -149,17 +162,24 @@ impl Compiler {
 
             // Convert IR to codegen input
             let contract_input = Self::ir_to_codegen(ir_contract);
+            let codegen = edge_codegen::CodeGenerator::new();
 
-            // Generate bytecode
-            let bytecode = edge_codegen::CodeGenerator::new()
-                .generate(&contract_input)
-                .map_err(|e| {
-                    self.session
-                        .emit_error(Diagnostic::error(format!("codegen error: {e}")));
-                    CompileError::CodeGenErrors
-                })?;
+            // Generate runtime bytecode
+            let bytecode = codegen.generate(&contract_input).map_err(|e| {
+                self.session
+                    .emit_error(Diagnostic::error(format!("codegen error: {e}")));
+                CompileError::CodeGenErrors
+            })?;
+
+            // Generate deploy (initcode) bytecode
+            let deploy_bytecode = codegen.generate_deploy(&contract_input).map_err(|e| {
+                self.session
+                    .emit_error(Diagnostic::error(format!("deploy codegen error: {e}")));
+                CompileError::CodeGenErrors
+            })?;
 
             all_bytecodes.insert(contract_info.name.clone(), bytecode);
+            all_deploy_bytecodes.insert(contract_info.name.clone(), deploy_bytecode);
         }
 
         // Last contract's bytecode for backward compatibility
@@ -170,6 +190,7 @@ impl Compiler {
             ast: Some(ast),
             bytecode: Some(last_bytecode),
             bytecodes: Some(all_bytecodes),
+            deploy_bytecodes: Some(all_deploy_bytecodes),
         })
     }
 
@@ -294,6 +315,80 @@ impl Compiler {
             edge_ir::IrInstruction::Revert => edge_codegen::GenInstr::Revert,
             edge_ir::IrInstruction::Stop => edge_codegen::GenInstr::Stop,
         }
+    }
+
+    /// Collect event declarations from the AST and compute their keccak256 signature hashes.
+    fn collect_event_metas(program: &Program) -> Vec<EventMeta> {
+        let mut metas = Vec::new();
+        for stmt in &program.stmts {
+            Self::collect_event_metas_from_stmt(stmt, &mut metas);
+        }
+        metas
+    }
+
+    fn collect_event_metas_from_stmt(stmt: &Stmt, metas: &mut Vec<EventMeta>) {
+        match stmt {
+            Stmt::EventDecl(event) => {
+                let sig = Self::event_signature(&event.name.name, &event.fields);
+                let sig_hash = Self::keccak256(sig.as_bytes());
+                let indexed_count = event.fields.iter().filter(|f| f.indexed).count() as u8;
+                metas.push(EventMeta {
+                    name: event.name.name.clone(),
+                    sig_hash,
+                    indexed_count,
+                    total_fields: event.fields.len(),
+                });
+            }
+            Stmt::ContractDecl(contract) => {
+                // Events declared inside contracts
+                for fn_decl in &contract.functions {
+                    for item in &fn_decl.body.stmts {
+                        if let edge_ast::stmt::BlockItem::Stmt(s) = item {
+                            Self::collect_event_metas_from_stmt(s, metas);
+                        }
+                    }
+                }
+            }
+            Stmt::ModuleDecl(module) => {
+                for s in &module.items {
+                    Self::collect_event_metas_from_stmt(s, metas);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Build the ABI event signature string, e.g. "Transfer(address,address,uint256)".
+    fn event_signature(name: &str, fields: &[EventField]) -> String {
+        use edge_ast::ty::{PrimitiveType, TypeSig};
+        fn type_str(ty: &TypeSig) -> String {
+            match ty {
+                TypeSig::Primitive(p) => match p {
+                    PrimitiveType::UInt(n) => format!("uint{n}"),
+                    PrimitiveType::Int(n) => format!("int{n}"),
+                    PrimitiveType::FixedBytes(n) => format!("bytes{n}"),
+                    PrimitiveType::Address => "address".to_string(),
+                    PrimitiveType::Bool | PrimitiveType::Bit => "bool".to_string(),
+                },
+                TypeSig::Pointer(_, inner) => type_str(inner),
+                _ => "uint256".to_string(),
+            }
+        }
+        let params = fields
+            .iter()
+            .map(|f| type_str(&f.ty))
+            .collect::<Vec<_>>()
+            .join(",");
+        format!("{name}({params})")
+    }
+
+    /// Compute keccak256 of a byte slice.
+    fn keccak256(data: &[u8]) -> [u8; 32] {
+        let mut hasher = Keccak::v256();
+        hasher.update(data);
+        let mut out = [0u8; 32];
+        hasher.finalize(&mut out);
+        out
     }
 
     /// Get a reference to the session

@@ -1,0 +1,167 @@
+// enums.edge — Demonstrates ALL sum type features
+//
+// What this demonstrates:
+//   - Simple enum: type Direction = North | South | East | West
+//   - Union with data: type Result<T> = Ok(T) | Err(u256)
+//   - Option<T> = None | Some(T) with impl block
+//   - if matches pattern: if u matches Enum::Variant(x)
+//   - match statement with all arms covered
+//   - Match with wildcard _ and named catch-all
+//   - Union instantiation with :: syntax
+//
+// Run with:
+//   edgec lex examples/types/enums.edge
+//   edgec parse examples/types/enums.edge
+
+// ── Simple Enum (no data) ─────────────────────────────────────────────────────
+
+// A simple enumeration over integers.
+// Direction::North == 0, Direction::South == 1, etc.
+type Direction = North | South | East | West;
+
+// Mutex state: only two variants, no associated data.
+type Mutex = Locked | Unlocked;
+
+// ── Union with Data ───────────────────────────────────────────────────────────
+
+// A result type that carries either a success value or an error code.
+type Result<T> = Ok(T) | Err(u256);
+
+// An option type for nullable values.
+type Option<T> = None | Some(T);
+
+// ── Impl Block on Sum Type ────────────────────────────────────────────────────
+
+impl Option<T> {
+    // Unwrap the inner value, reverting if None.
+    fn unwrap(self) -> T {
+        match self {
+            Option::Some(inner) => return inner,
+            Option::None => revert(),
+        };
+    }
+
+    // Unwrap with a default value if None.
+    fn unwrapOr(self, default: T) -> T {
+        let mut value = default;
+        if self matches Option::Some(inner) {
+            value = inner;
+        }
+        return value;
+    }
+}
+
+// ── Stack vs Memory Unions ────────────────────────────────────────────────────
+
+// Stack union: largest member is u248, fits on stack with discriminant.
+type StackUnion = A(u8) | B(u248);
+
+// ── Pattern Matching Examples ─────────────────────────────────────────────────
+
+// Demonstrate match statement with all arms covered.
+fn direction_to_offset(d: Direction) -> (u256) {
+    let offset: u256;
+    offset = 0;
+
+    match d {
+        Direction::North => {
+            offset = 1;
+        },
+        Direction::South => {
+            offset = 2;
+        },
+        Direction::East => {
+            offset = 3;
+        },
+        Direction::West => {
+            offset = 4;
+        },
+    };
+
+    return offset;
+}
+
+// Demonstrate match with wildcard _ catch-all.
+fn is_north(d: Direction) -> (bool) {
+    match d {
+        Direction::North => {
+            return true;
+        },
+        _ => {
+            return false;
+        },
+    };
+}
+
+// Demonstrate match with named catch-all.
+fn is_horizontal(d: Direction) -> (bool) {
+    match d {
+        Direction::East => {
+            return true;
+        },
+        Direction::West => {
+            return true;
+        },
+        other => {
+            // `other` is inferred to be Direction::North | Direction::South
+            return false;
+        },
+    };
+}
+
+// Demonstrate if matches pattern.
+fn try_unwrap_result(r: Result<u256>) -> (u256) {
+    if r matches Result::Ok(value) {
+        return value;
+    }
+    return 0;
+}
+
+// Demonstrate match on Result with data extraction.
+fn handle_result(r: Result<u256>) -> (u256) {
+    match r {
+        Result::Ok(value) => {
+            return value;
+        },
+        Result::Err(code) => {
+            return code;
+        },
+    };
+}
+
+// ── Union Instantiation ───────────────────────────────────────────────────────
+
+fn create_unions() -> (u256) {
+    // Create a simple enum value.
+    let dir: Direction;
+    dir = Direction::North;
+
+    // Create a union with data.
+    let ok_result: Result<u256>;
+    ok_result = Result::Ok(42);
+
+    let err_result: Result<u256>;
+    err_result = Result::Err(1);
+
+    // Create Option values.
+    let some_val: Option<u256>;
+    some_val = Option::Some(100);
+
+    let none_val: Option<u256>;
+    none_val = Option::None();
+
+    return handle_result(ok_result);
+}
+
+// ── Mutex Pattern ─────────────────────────────────────────────────────────────
+
+fn check_mutex(m: Mutex) -> (bool) {
+    match m {
+        Mutex::Locked => {
+            return true;
+        },
+        Mutex::Unlocked => {
+            return false;
+        },
+    };
+}

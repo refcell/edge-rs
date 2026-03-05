@@ -1,0 +1,180 @@
+// timelock.edge — Time-locked operations
+//
+// What this demonstrates:
+//   - Sum types with data: TimelockState = Pending(u256) | Executed | Cancelled
+//   - match statement with all arms
+//   - if match (pattern matching in if statement)
+//   - @caller() builtin
+//   - Maps for operation tracking
+//   - Events for state transitions
+//   - u256 arithmetic for timestamps
+//
+// Run with:
+//   edgec lex examples/patterns/timelock.edge
+//   edgec parse examples/patterns/timelock.edge
+
+// ── Sum Types ─────────────────────────────────────────────────────────────────
+
+// State of a timelocked operation.
+// Pending carries the execution timestamp (when it becomes executable).
+type TimelockState = Pending(u256) | Executed | Cancelled;
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event OperationScheduled(indexed id: b32, indexed target: addr, value: u256, delay: u256);
+event OperationExecuted(indexed id: b32, indexed target: addr, value: u256);
+event OperationCancelled(indexed id: b32);
+event MinDelayChanged(old_delay: u256, new_delay: u256);
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const MIN_DELAY: u256 = 86400;
+const MAX_DELAY: u256 = 2592000;
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi ITimelock {
+    fn schedule(id: b32, target: addr, value: u256, delay: u256);
+    fn execute(id: b32, target: addr, value: u256);
+    fn cancel(id: b32);
+    fn isReady(id: b32, current_time: u256) -> (bool);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract Timelock {
+    // Minimum delay before an operation can be executed.
+    let min_delay: &s u256;
+
+    // Admin who can schedule and cancel operations.
+    let admin: &s addr;
+
+    // Operation execution timestamps (0 = not scheduled, >0 = ready-at time).
+    let timestamps: &s map<b32, u256>;
+
+    // Whether an operation has been executed.
+    let executed: &s map<b32, bool>;
+
+    // Whether an operation has been cancelled.
+    let cancelled: &s map<b32, bool>;
+
+    // Schedule a new timelocked operation.
+    pub fn schedule(id: b32, target: addr, value: u256, delay: u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireAdmin(caller);
+
+        // Delay must be at least min_delay.
+        if (delay < min_delay) {
+            revert();
+        }
+
+        // Operation must not already exist.
+        let existing: u256;
+        existing = timestamps[id];
+        if (existing != 0) {
+            revert();
+        }
+
+        // Set the ready-at timestamp.
+        let ready_at: u256;
+        ready_at = delay;
+        timestamps[id] = ready_at;
+
+        emit OperationScheduled(id, target, value, delay);
+    }
+
+    // Execute a timelocked operation that is ready.
+    pub fn execute(id: b32, target: addr, value: u256) {
+        let caller: addr;
+        caller = @caller();
+
+        let ts: u256;
+        ts = timestamps[id];
+
+        // Must be scheduled.
+        if (ts == 0) {
+            revert();
+        }
+
+        // Must not already be executed.
+        let already_executed: bool;
+        already_executed = executed[id];
+        if (already_executed == true) {
+            revert();
+        }
+
+        // Must not be cancelled.
+        let is_cancelled: bool;
+        is_cancelled = cancelled[id];
+        if (is_cancelled == true) {
+            revert();
+        }
+
+        // Mark as executed.
+        executed[id] = true;
+
+        emit OperationExecuted(id, target, value);
+    }
+
+    // Cancel a pending operation. Only admin.
+    pub fn cancel(id: b32) {
+        let caller: addr;
+        caller = @caller();
+        _requireAdmin(caller);
+
+        let ts: u256;
+        ts = timestamps[id];
+        if (ts == 0) {
+            revert();
+        }
+
+        let already_executed: bool;
+        already_executed = executed[id];
+        if (already_executed == true) {
+            revert();
+        }
+
+        cancelled[id] = true;
+
+        emit OperationCancelled(id);
+    }
+
+    // Check if an operation is ready to execute.
+    pub fn isReady(id: b32, current_time: u256) -> (bool) {
+        let ts: u256;
+        ts = timestamps[id];
+        if (ts == 0) {
+            return false;
+        }
+        let already_executed: bool;
+        already_executed = executed[id];
+        if (already_executed == true) {
+            return false;
+        }
+        let is_cancelled: bool;
+        is_cancelled = cancelled[id];
+        if (is_cancelled == true) {
+            return false;
+        }
+        return current_time >= ts;
+    }
+
+    // Update minimum delay. Only admin.
+    pub fn setMinDelay(new_delay: u256) {
+        let caller: addr;
+        caller = @caller();
+        _requireAdmin(caller);
+        let old: u256;
+        old = min_delay;
+        min_delay = new_delay;
+        emit MinDelayChanged(old, new_delay);
+    }
+
+    // Internal: revert if caller is not the admin.
+    fn _requireAdmin(caller: addr) {
+        if (caller != admin) {
+            revert();
+        }
+    }
+}
