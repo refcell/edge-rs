@@ -8,19 +8,15 @@
 // Import and call the functions directly from any contract.
 //
 // Import graph:
-//   safe_transfer → tokens::erc20::IERC20 (for typed cross-contract calls)
+//   safe_transfer -> std::tokens::erc20::IERC20 (for typed cross-contract calls)
 //
 // Usage:
-//   use lib::safe_transfer;
+//   use std::tokens::safe_transfer;
 //   safe_transfer::safe_transfer(tokenAddr, recipient, amount);
-//
-// Run with:
-//   edgec lex examples/lib/safe_transfer.edge
-//   edgec parse examples/lib/safe_transfer.edge
 
 mod safe_transfer;
 
-use tokens::erc20::IERC20;
+use std::tokens::erc20::IERC20;
 
 // ── Low-Level Transfer ABI ────────────────────────────────────────────────────
 

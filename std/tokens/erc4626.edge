@@ -9,19 +9,18 @@
 // so other contracts can call it in a type-safe way.
 //
 // Import graph:
-//   erc4626 → std::math          (mul_div_down, mul_div_up, WAD)
-//   erc4626 → std::tokens::safe_transfer (safe_transfer, safe_transfer_from)
-//   erc4626 → std::auth           (IOwned, for owner-gated emergency functions)
-//   erc4626 → std::tokens::erc20  (IERC20, for calling the underlying asset)
+//   erc4626 -> std::math          (mul_div_down, mul_div_up, WAD)
+//   erc4626 -> std::tokens::safe_transfer (safe_transfer, safe_transfer_from)
+//   erc4626 -> std::auth          (IOwned, for owner-gated emergency functions)
+//   erc4626 -> std::tokens::erc20 (IERC20, for calling the underlying asset)
 //
-// Run with:
-//   edgec lex examples/tokens/erc4626.edge
-//   edgec parse examples/tokens/erc4626.edge
+// Usage:
+//   use std::tokens::erc4626::IERC4626;
 
 mod tokens;
 
-use std::math::mul_div_down;
-use std::tokens::safe_transfer::SafeTransfer;
+use std::math;
+use std::tokens::safe_transfer;
 use std::auth::IOwned;
 use std::tokens::erc20::IERC20;
 
@@ -126,7 +125,7 @@ contract ERC4626 {
 
     // ── Share / Asset Conversions ─────────────────────────────────────────────
 
-    // Convert assets → shares rounding down.
+    // Convert assets -> shares rounding down.
     // During deposit the vault wants to give the user as few shares as possible.
     pub fn convertToShares(assets: u256) -> (u256) {
         let supply: u256;
@@ -137,7 +136,7 @@ contract ERC4626 {
         return math::mul_div_down(assets, supply, total_assets);
     }
 
-    // Convert shares → assets rounding down.
+    // Convert shares -> assets rounding down.
     // During redemption the user receives floor(shares * totalAssets / totalShares).
     pub fn convertToAssets(shares: u256) -> (u256) {
         let supply: u256;

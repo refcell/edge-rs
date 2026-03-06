@@ -179,7 +179,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_ownable_owner_initially_zero() {
-    let bc = compile_named("examples/access/ownable.edge", "Ownable");
+    let bc = compile_named("std/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("owner()"), &[]));
     assert!(ok, "owner() reverted");
@@ -192,7 +192,7 @@ fn test_ownable_owner_initially_zero() {
 
 #[test]
 fn test_ownable_pending_owner_initially_zero() {
-    let bc = compile_named("examples/access/ownable.edge", "Ownable");
+    let bc = compile_named("std/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("pendingOwner()"), &[]));
     assert!(ok, "pendingOwner() reverted");
@@ -205,7 +205,7 @@ fn test_ownable_pending_owner_initially_zero() {
 
 #[test]
 fn test_ownable_transfer_sets_pending_owner() {
-    let bc = compile_named("examples/access/ownable.edge", "Ownable");
+    let bc = compile_named("std/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
 
     // transferOwnership(alice) — auth guard bypassed (internal call stub)
@@ -227,7 +227,7 @@ fn test_ownable_transfer_sets_pending_owner() {
 
 #[test]
 fn test_ownable_accept_ownership_sets_owner() {
-    let bc = compile_named("examples/access/ownable.edge", "Ownable");
+    let bc = compile_named("std/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
 
     // Set caller (0x0) as pending owner so acceptOwnership() passes the guard
@@ -253,7 +253,7 @@ fn test_ownable_accept_ownership_sets_owner() {
 
 #[test]
 fn test_ownable_unknown_selector_reverts() {
-    let bc = compile_named("examples/access/ownable.edge", "Ownable");
+    let bc = compile_named("std/access/ownable.edge", "Ownable");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -265,7 +265,7 @@ fn test_ownable_unknown_selector_reverts() {
 
 #[test]
 fn test_pausable_initially_not_paused() {
-    let bc = compile_contract("examples/access/pausable.edge");
+    let bc = compile_contract("std/access/pausable.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("paused()"), &[]));
     assert!(ok, "paused() reverted");
@@ -274,7 +274,7 @@ fn test_pausable_initially_not_paused() {
 
 #[test]
 fn test_pausable_pause_sets_flag() {
-    let bc = compile_contract("examples/access/pausable.edge");
+    let bc = compile_contract("std/access/pausable.edge");
     let mut evm = EvmHandle::new(bc);
 
     // pause() — owner guard bypassed by internal call stub
@@ -288,7 +288,7 @@ fn test_pausable_pause_sets_flag() {
 
 #[test]
 fn test_pausable_unpause_clears_flag() {
-    let bc = compile_contract("examples/access/pausable.edge");
+    let bc = compile_contract("std/access/pausable.edge");
     let mut evm = EvmHandle::new(bc);
 
     let (ok, _) = evm.call(calldata(selector("pause()"), &[]));
@@ -304,7 +304,7 @@ fn test_pausable_unpause_clears_flag() {
 
 #[test]
 fn test_pausable_guarded_transfer_succeeds_when_not_paused() {
-    let bc = compile_contract("examples/access/pausable.edge");
+    let bc = compile_contract("std/access/pausable.edge");
     let mut evm = EvmHandle::new(bc);
 
     let (ok, out) = evm.call(calldata(
@@ -321,7 +321,7 @@ fn test_pausable_guarded_transfer_succeeds_when_not_paused() {
 
 #[test]
 fn test_pausable_unknown_selector_reverts() {
-    let bc = compile_contract("examples/access/pausable.edge");
+    let bc = compile_contract("std/access/pausable.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -333,7 +333,7 @@ fn test_pausable_unknown_selector_reverts() {
 
 #[test]
 fn test_auth_owned_get_owner_initially_zero() {
-    let bc = compile_named("examples/lib/auth.edge", "Owned");
+    let bc = compile_named("std/auth.edge", "Owned");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getOwner()"), &[]));
     assert!(ok, "getOwner() reverted");
@@ -346,7 +346,7 @@ fn test_auth_owned_get_owner_initially_zero() {
 
 #[test]
 fn test_auth_owned_transfer_ownership() {
-    let bc = compile_named("examples/lib/auth.edge", "Owned");
+    let bc = compile_named("std/auth.edge", "Owned");
     let mut evm = EvmHandle::new(bc);
 
     // Step 1: transferOwnership(alice) sets pending_owner (2-step pattern)
@@ -371,7 +371,7 @@ fn test_auth_owned_transfer_ownership() {
 
 #[test]
 fn test_auth_isauthorized_zero_caller_with_zero_owner() {
-    let bc = compile_named("examples/lib/auth.edge", "Auth");
+    let bc = compile_named("std/auth.edge", "Auth");
     let mut evm = EvmHandle::new(bc);
 
     // isAuthorized(0x0) — owner is initially 0x0, so caller==owner → returns true
@@ -389,7 +389,7 @@ fn test_auth_isauthorized_zero_caller_with_zero_owner() {
 
 #[test]
 fn test_auth_get_owner_initially_zero() {
-    let bc = compile_named("examples/lib/auth.edge", "Auth");
+    let bc = compile_named("std/auth.edge", "Auth");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getOwner()"), &[]));
     assert!(ok, "getOwner() reverted");
@@ -398,7 +398,7 @@ fn test_auth_get_owner_initially_zero() {
 
 #[test]
 fn test_auth_get_authority_initially_zero() {
-    let bc = compile_named("examples/lib/auth.edge", "Auth");
+    let bc = compile_named("std/auth.edge", "Auth");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getAuthority()"), &[]));
     assert!(ok, "getAuthority() reverted");
@@ -411,7 +411,7 @@ fn test_auth_get_authority_initially_zero() {
 
 #[test]
 fn test_roles_has_role_initially_false() {
-    let bc = compile_contract("examples/access/roles.edge");
+    let bc = compile_contract("std/access/roles.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("hasRole(bytes32,address)"),
@@ -423,7 +423,7 @@ fn test_roles_has_role_initially_false() {
 
 #[test]
 fn test_roles_get_role_admin_initially_zero() {
-    let bc = compile_contract("examples/access/roles.edge");
+    let bc = compile_contract("std/access/roles.edge");
     let mut evm = EvmHandle::new(bc);
     // getRoleAdmin for a non-zero role → should return bytes32(0)
     let mut role = [0u8; 32];
@@ -435,7 +435,7 @@ fn test_roles_get_role_admin_initially_zero() {
 
 #[test]
 fn test_roles_unknown_selector_reverts() {
-    let bc = compile_contract("examples/access/roles.edge");
+    let bc = compile_contract("std/access/roles.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");

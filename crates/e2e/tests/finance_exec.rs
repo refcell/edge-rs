@@ -144,7 +144,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_staking_total_staked_initially_zero() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("totalStaked()"), &[]));
     assert!(ok, "totalStaked() reverted");
@@ -153,7 +153,7 @@ fn test_staking_total_staked_initially_zero() {
 
 #[test]
 fn test_staking_staked_balance_initially_zero() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
     let addr = [0u8; 20];
     let (ok, out) = evm.call(calldata(
@@ -166,7 +166,7 @@ fn test_staking_staked_balance_initially_zero() {
 
 #[test]
 fn test_staking_stake_increases_total() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
 
     let (ok, _) = evm.call(calldata(selector("stake(uint256)"), &[encode_u256(100)]));
@@ -179,7 +179,7 @@ fn test_staking_stake_increases_total() {
 
 #[test]
 fn test_staking_stake_increases_balance() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
 
     let (ok, _) = evm.call(calldata(selector("stake(uint256)"), &[encode_u256(100)]));
@@ -196,7 +196,7 @@ fn test_staking_stake_increases_balance() {
 
 #[test]
 fn test_staking_withdraw_decreases() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
 
     // Stake 100
@@ -225,7 +225,7 @@ fn test_staking_withdraw_decreases() {
 
 #[test]
 fn test_staking_unknown_selector_reverts() {
-    let bc = compile_contract("examples/finance/staking.edge");
+    let bc = compile_contract("std/finance/staking.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -237,7 +237,7 @@ fn test_staking_unknown_selector_reverts() {
 
 #[test]
 fn test_multisig_threshold_initially_zero() {
-    let bc = compile_contract("examples/finance/multisig.edge");
+    let bc = compile_contract("std/finance/multisig.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getThreshold()"), &[]));
     assert!(ok, "getThreshold() reverted");
@@ -246,7 +246,7 @@ fn test_multisig_threshold_initially_zero() {
 
 #[test]
 fn test_multisig_confirmations_initially_zero() {
-    let bc = compile_contract("examples/finance/multisig.edge");
+    let bc = compile_contract("std/finance/multisig.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("getConfirmations(uint256)"),
@@ -258,7 +258,7 @@ fn test_multisig_confirmations_initially_zero() {
 
 #[test]
 fn test_multisig_propose_reverts_for_non_owner() {
-    let bc = compile_contract("examples/finance/multisig.edge");
+    let bc = compile_contract("std/finance/multisig.edge");
     let mut evm = EvmHandle::new(bc);
 
     // propose() calls _requireOwner which checks is_owner[caller].
@@ -273,7 +273,7 @@ fn test_multisig_propose_reverts_for_non_owner() {
 
 #[test]
 fn test_multisig_unknown_selector_reverts() {
-    let bc = compile_contract("examples/finance/multisig.edge");
+    let bc = compile_contract("std/finance/multisig.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");

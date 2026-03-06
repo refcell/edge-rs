@@ -650,7 +650,7 @@ impl Parser {
         let start_tok = self.expect(TokenKind::Keyword(Keyword::Use))?;
         let root = self.parse_ident()?;
 
-        let path = if self.check(&TokenKind::DoubleColon) {
+        let (segments, path) = if self.check(&TokenKind::DoubleColon) {
             self.advance();
             self.skip_whitespace_and_comments();
 
@@ -671,7 +671,7 @@ impl Parser {
                     }
                 }
                 self.expect(TokenKind::CloseBrace)?;
-                Some(edge_ast::ImportPath::Nested(nested))
+                (Vec::new(), Some(edge_ast::ImportPath::Nested(nested)))
             } else if self.check(&TokenKind::Operator(
                 edge_types::tokens::Operator::Arithmetic(
                     edge_types::tokens::ArithmeticOperator::Mul,
@@ -679,15 +679,15 @@ impl Parser {
             )) {
                 // Glob import: `use root::*`
                 self.advance();
-                Some(edge_ast::ImportPath::All)
+                (Vec::new(), Some(edge_ast::ImportPath::All))
             } else {
-                // Simple path: `use a::b::c`
+                // Simple or deep path: `use a::b::c` or `use a::b::c::{d, e}`
                 let mut path_segments = vec![self.parse_ident()?];
                 while self.check(&TokenKind::DoubleColon) {
                     self.advance();
                     self.skip_whitespace_and_comments();
                     if self.check(&TokenKind::OpenBrace) {
-                        // `use a::b::{c, d}`
+                        // `use a::b::{c, d}` — path_segments are intermediate segments
                         self.advance();
                         let mut nested = Vec::new();
                         while !self.check(&TokenKind::CloseBrace) && !self.is_at_end() {
@@ -702,9 +702,6 @@ impl Parser {
                             }
                         }
                         self.expect(TokenKind::CloseBrace)?;
-                        // return the nested import under the accumulated prefix
-                        // For simplicity, store nested paths directly
-                        let _ = path_segments; // prefix context available if needed later
                         self.expect(TokenKind::Semicolon)?;
                         let span = Span {
                             start: start_tok.span.start,
@@ -713,19 +710,41 @@ impl Parser {
                         };
                         return Ok(Stmt::ModuleImport(edge_ast::ModuleImport {
                             root,
+                            segments: path_segments,
                             path: Some(edge_ast::ImportPath::Nested(nested)),
+                            is_pub: false,
+                            span,
+                        }));
+                    }
+                    if self.check(&TokenKind::Operator(
+                        edge_types::tokens::Operator::Arithmetic(
+                            edge_types::tokens::ArithmeticOperator::Mul,
+                        ),
+                    )) {
+                        // `use a::b::*` — glob after intermediate segments
+                        self.advance();
+                        self.expect(TokenKind::Semicolon)?;
+                        let span = Span {
+                            start: start_tok.span.start,
+                            end: self.tokens[self.cursor - 1].span.end,
+                            file: start_tok.span.file,
+                        };
+                        return Ok(Stmt::ModuleImport(edge_ast::ModuleImport {
+                            root,
+                            segments: path_segments,
+                            path: Some(edge_ast::ImportPath::All),
                             is_pub: false,
                             span,
                         }));
                     }
                     path_segments.push(self.parse_ident()?);
                 }
-                path_segments
-                    .last()
-                    .map(|last| edge_ast::ImportPath::Ident(last.clone()))
+                // Split: all but last are intermediate segments, last is the import target
+                let last = path_segments.pop().map(edge_ast::ImportPath::Ident);
+                (path_segments, last)
             }
         } else {
-            None
+            (Vec::new(), None)
         };
 
         self.expect(TokenKind::Semicolon)?;
@@ -738,6 +757,7 @@ impl Parser {
 
         Ok(Stmt::ModuleImport(edge_ast::ModuleImport {
             root,
+            segments,
             path,
             is_pub: false,
             span,

@@ -1,0 +1,74 @@
+// signed_wad.edge — Signed fixed-point arithmetic
+//
+// Provides signed versions of WAD (1e18) fixed-point math operations.
+// Inspired by solmate's SignedWadMath.sol.
+//
+// In Edge, u256 is used for all values. Sign is tracked via a separate
+// flag to simulate signed arithmetic until native i256 support lands.
+//
+// Usage:
+//   use std::math::signed_wad;
+//   let result: u256 = signed_wad::signed_wad_mul(x, x_neg, y, y_neg);
+
+// ── Constants ────────────────────────────────────────────────────────────────
+
+// 1e18 — standard WAD fixed-point unit
+const WAD: u256 = 1000000000000000000;
+
+// ── Functions ─────────────────────────────────────────────────────────────────
+
+// Signed WAD multiplication.
+// x and y are absolute values; x_neg and y_neg indicate sign.
+// Returns (result, result_neg) where result is the absolute value
+// and result_neg indicates whether the result is negative.
+fn signed_wad_mul(x: u256, x_neg: bool, y: u256, y_neg: bool) -> (u256, bool) {
+    let product: u256;
+    product = x * y;
+    let result: u256;
+    result = product / WAD;
+
+    // Result is negative if exactly one operand is negative.
+    let result_neg: bool;
+    if (x_neg == y_neg) {
+        result_neg = false;
+    } else {
+        result_neg = true;
+    }
+
+    return (result, result_neg);
+}
+
+// Signed WAD division.
+// x and y are absolute values; x_neg and y_neg indicate sign.
+// Returns (result, result_neg).
+fn signed_wad_div(x: u256, x_neg: bool, y: u256, y_neg: bool) -> (u256, bool) {
+    let scaled: u256;
+    scaled = x * WAD;
+    let result: u256;
+    result = scaled / y;
+
+    // Result is negative if exactly one operand is negative.
+    let result_neg: bool;
+    if (x_neg == y_neg) {
+        result_neg = false;
+    } else {
+        result_neg = true;
+    }
+
+    return (result, result_neg);
+}
+
+// Convert an unsigned integer to WAD-scaled representation.
+// Warning: no overflow check — caller must ensure value fits.
+fn to_wad_unsafe(x: u256) -> (u256) {
+    let result: u256;
+    result = x * WAD;
+    return result;
+}
+
+// Convert a WAD-scaled value back to an unsigned integer (truncates).
+fn from_wad(x: u256) -> (u256) {
+    let result: u256;
+    result = x / WAD;
+    return result;
+}

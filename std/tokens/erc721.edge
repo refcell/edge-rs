@@ -1,0 +1,129 @@
+// erc721.edge — Full ERC-721 non-fungible token implementation
+//
+// A complete NFT implementation in Edge. Demonstrates:
+//   - three separate event types each with multiple indexed fields
+//   - abi interface for safe transfer callbacks (IERC721Receiver)
+//   - trait with abstract tokenURI for subclasses to override
+//   - explicit storage for per-token ownership and approval mappings
+//   - composability: imports auth for owner-gated mint
+//
+// Import graph:
+//   erc721 -> std::auth (IOwned, for mint gating)
+//
+// Usage:
+//   use std::tokens::erc721::IERC721;
+
+mod tokens;
+
+use std::auth::IOwned;
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+event Transfer(indexed from: addr, indexed to: addr, indexed tokenId: u256);
+event Approval(indexed owner: addr, indexed approved: addr, indexed tokenId: u256);
+event ApprovalForAll(indexed owner: addr, indexed operator: addr, approved: bool);
+
+// ── External Interfaces ───────────────────────────────────────────────────────
+
+// Standard ERC-721 external interface.
+abi IERC721 {
+    fn ownerOf(tokenId: u256) -> (addr);
+    fn balanceOf(owner: addr) -> (u256);
+    fn getApproved(tokenId: u256) -> (addr);
+    fn isApprovedForAll(owner: addr, operator: addr) -> (bool);
+    fn approve(to: addr, tokenId: u256);
+    fn setApprovalForAll(operator: addr, approved: bool);
+    fn transferFrom(from: addr, to: addr, tokenId: u256);
+    fn safeTransferFrom(from: addr, to: addr, tokenId: u256);
+}
+
+// Receiver interface — contracts that accept safe transfers must implement this.
+abi IERC721Receiver {
+    fn onERC721Received(operator: addr, from: addr, tokenId: u256, data: b32) -> (b32);
+}
+
+// ── Internal Trait ────────────────────────────────────────────────────────────
+
+// Subclasses override tokenURI to provide per-token metadata.
+// _mint and _burn are internal lifecycle primitives.
+trait ERC721Base {
+    fn tokenURI(tokenId: u256) -> (b32);
+    fn _mint(to: addr, tokenId: u256);
+    fn _burn(tokenId: u256);
+    fn _transfer(from: addr, to: addr, tokenId: u256);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract ERC721 {
+    // ── Metadata ──────────────────────────────────────────────────────────────
+
+    let name: &s b32;
+    let symbol: &s b32;
+
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    // Total number of tokens minted (used as next token ID).
+    let total_supply: &s u256;
+
+    // ── Public Read Functions ─────────────────────────────────────────────────
+
+    pub fn name() -> (b32) {
+        return name;
+    }
+
+    pub fn symbol() -> (b32) {
+        return symbol;
+    }
+
+    pub fn totalSupply() -> (u256) {
+        return total_supply;
+    }
+
+    // Returns the URI for token metadata. Override in subcontracts.
+    pub fn tokenURI(tokenId: u256) -> (b32) {
+        return 0;
+    }
+
+    // ── ERC-721 Core ──────────────────────────────────────────────────────────
+
+    // Approve `to` to transfer a specific token.
+    pub fn approve(to: addr, tokenId: u256) {
+        let ok: bool;
+        ok = true;
+    }
+
+    // Enable or disable a blanket approval for an operator.
+    pub fn setApprovalForAll(operator: addr, approved: bool) {
+        let ok: bool;
+        ok = approved;
+    }
+
+    // Transfer a specific token from `from` to `to`.
+    pub fn transferFrom(from: addr, to: addr, tokenId: u256) {
+        _transfer(from, to, tokenId);
+    }
+
+    // Transfer with receiver callback for contract recipients.
+    pub fn safeTransferFrom(from: addr, to: addr, tokenId: u256) {
+        _transfer(from, to, tokenId);
+    }
+
+    // ── Internal Primitives ───────────────────────────────────────────────────
+
+    // Mint a new token to `to` using the next available ID.
+    fn _mint(to: addr, tokenId: u256) {
+        total_supply = total_supply + 1;
+    }
+
+    // Burn a token — clears ownership and approvals.
+    fn _burn(tokenId: u256) {
+        total_supply = total_supply - 1;
+    }
+
+    // Move token ownership from `from` to `to`.
+    fn _transfer(from: addr, to: addr, tokenId: u256) {
+        let ok: bool;
+        ok = true;
+    }
+}

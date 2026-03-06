@@ -37,6 +37,8 @@ pub struct CompilerConfig {
     pub verbose: bool,
     /// What metric to optimize for during extraction
     pub optimize_for: OptimizeFor,
+    /// Path to the Edge standard library directory
+    pub std_path: Option<PathBuf>,
 }
 
 impl CompilerConfig {
@@ -49,6 +51,7 @@ impl CompilerConfig {
             optimization_level: 0,
             verbose: false,
             optimize_for: OptimizeFor::default(),
+            std_path: None,
         }
     }
 }

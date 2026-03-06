@@ -148,7 +148,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_math_safe_add() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("safe_add(uint256,uint256)"),
@@ -160,7 +160,7 @@ fn test_math_safe_add() {
 
 #[test]
 fn test_math_safe_sub() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("safe_sub(uint256,uint256)"),
@@ -172,7 +172,7 @@ fn test_math_safe_sub() {
 
 #[test]
 fn test_math_saturating_sub_underflow() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     // 5 - 10 would underflow; saturating_sub returns 0
     let (ok, out) = evm.call(calldata(
@@ -189,7 +189,7 @@ fn test_math_saturating_sub_underflow() {
 
 #[test]
 fn test_math_saturating_sub_no_underflow() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("saturating_sub(uint256,uint256)"),
@@ -205,7 +205,7 @@ fn test_math_saturating_sub_no_underflow() {
 
 #[test]
 fn test_math_max() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("max(uint256,uint256)"),
@@ -217,7 +217,7 @@ fn test_math_max() {
 
 #[test]
 fn test_math_max_equal() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("max(uint256,uint256)"),
@@ -229,7 +229,7 @@ fn test_math_max_equal() {
 
 #[test]
 fn test_math_min() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("min(uint256,uint256)"),
@@ -241,7 +241,7 @@ fn test_math_min() {
 
 #[test]
 fn test_math_clamp_within_range() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("clamp(uint256,uint256,uint256)"),
@@ -253,7 +253,7 @@ fn test_math_clamp_within_range() {
 
 #[test]
 fn test_math_clamp_below_lo() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("clamp(uint256,uint256,uint256)"),
@@ -269,7 +269,7 @@ fn test_math_clamp_below_lo() {
 
 #[test]
 fn test_math_clamp_above_hi() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("clamp(uint256,uint256,uint256)"),
@@ -285,7 +285,7 @@ fn test_math_clamp_above_hi() {
 
 #[test]
 fn test_math_mul_div_down_exact() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     // 6 * 4 / 3 = 8 (exact)
     let (ok, out) = evm.call(calldata(
@@ -302,7 +302,7 @@ fn test_math_mul_div_down_exact() {
 
 #[test]
 fn test_math_mul_div_down_truncates() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     // 10 * 3 / 4 = 7.5 → truncates to 7
     let (ok, out) = evm.call(calldata(
@@ -319,7 +319,7 @@ fn test_math_mul_div_down_truncates() {
 
 #[test]
 fn test_math_mul_div_up_exact() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     // 6 * 4 / 3 = 8 (exact, no rounding up)
     let (ok, out) = evm.call(calldata(
@@ -332,7 +332,7 @@ fn test_math_mul_div_up_exact() {
 
 #[test]
 fn test_math_mul_div_up_rounds_up() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     // 10 * 3 / 4 = 7.5 → rounds up to 8
     let (ok, out) = evm.call(calldata(
@@ -349,7 +349,7 @@ fn test_math_mul_div_up_rounds_up() {
 
 #[test]
 fn test_math_unknown_selector_reverts() {
-    let bc = compile_contract("examples/lib/math.edge");
+    let bc = compile_contract("std/math.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -361,7 +361,7 @@ fn test_math_unknown_selector_reverts() {
 
 #[test]
 fn test_bits_most_significant_bit_zero() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("most_significant_bit(uint256)"),
@@ -373,7 +373,7 @@ fn test_bits_most_significant_bit_zero() {
 
 #[test]
 fn test_bits_most_significant_bit_one() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("most_significant_bit(uint256)"),
@@ -385,7 +385,7 @@ fn test_bits_most_significant_bit_one() {
 
 #[test]
 fn test_bits_most_significant_bit_powers_of_two() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // msb(2) = 1, msb(4) = 2, msb(8) = 3, msb(256) = 8
@@ -405,7 +405,7 @@ fn test_bits_most_significant_bit_powers_of_two() {
 
 #[test]
 fn test_bits_popcount_zero() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("popcount(uint256)"), &[encode_u256(0)]));
     assert!(ok, "popcount reverted");
@@ -414,7 +414,7 @@ fn test_bits_popcount_zero() {
 
 #[test]
 fn test_bits_popcount_values() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     for (input, expected) in [(1u64, 1u64), (3, 2), (7, 3), (255, 8)] {
@@ -433,7 +433,7 @@ fn test_bits_popcount_values() {
 
 #[test]
 fn test_bits_is_power_of_two_true() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     for input in [1u64, 2, 4, 8, 16, 256] {
@@ -448,7 +448,7 @@ fn test_bits_is_power_of_two_true() {
 
 #[test]
 fn test_bits_is_power_of_two_false() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     for input in [0u64, 3, 5, 6, 7, 9, 10] {
@@ -466,7 +466,7 @@ fn test_bits_is_power_of_two_false() {
 
 #[test]
 fn test_bits_extract_bit() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // 5 = 0b101: bit0=1, bit1=0, bit2=1
@@ -486,7 +486,7 @@ fn test_bits_extract_bit() {
 
 #[test]
 fn test_bits_set_bit() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // set_bit(4, 0) = 5 (4=100b, set bit 0 → 101b=5)
@@ -500,7 +500,7 @@ fn test_bits_set_bit() {
 
 #[test]
 fn test_bits_clear_bit() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // clear_bit(5, 0) = 4 (5=101b, clear bit 0 → 100b=4)
@@ -514,7 +514,7 @@ fn test_bits_clear_bit() {
 
 #[test]
 fn test_bits_toggle_bit() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // toggle_bit(5, 2) = 1 (5=101b, toggle bit 2 → 001b=1)
@@ -528,7 +528,7 @@ fn test_bits_toggle_bit() {
 
 #[test]
 fn test_bits_least_significant_bit_zero() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
 
     // lsb(0) = 256 (no bits set)
@@ -546,7 +546,7 @@ fn test_bits_least_significant_bit_zero() {
 
 #[test]
 fn test_bits_unknown_selector_reverts() {
-    let bc = compile_contract("examples/utils/bits.edge");
+    let bc = compile_contract("std/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -560,7 +560,7 @@ fn test_bits_unknown_selector_reverts() {
 
 #[test]
 fn test_bytes_is_zero_true() {
-    let bc = compile_contract("examples/utils/bytes.edge");
+    let bc = compile_contract("std/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("is_zero(bytes32)"), &[[0u8; 32]]));
     assert!(ok, "is_zero reverted");
@@ -569,7 +569,7 @@ fn test_bytes_is_zero_true() {
 
 #[test]
 fn test_bytes_is_zero_false() {
-    let bc = compile_contract("examples/utils/bytes.edge");
+    let bc = compile_contract("std/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("is_zero(bytes32)"), &[encode_u256(1)]));
     assert!(ok, "is_zero reverted");
@@ -578,7 +578,7 @@ fn test_bytes_is_zero_false() {
 
 #[test]
 fn test_bytes_left_pad_zero_shift() {
-    let bc = compile_contract("examples/utils/bytes.edge");
+    let bc = compile_contract("std/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
     // left_pad(0xff, 0) = 0xff (shift by 0 bytes = no shift)
     let (ok, out) = evm.call(calldata(
@@ -595,7 +595,7 @@ fn test_bytes_left_pad_zero_shift() {
 
 #[test]
 fn test_bytes_left_pad_one_byte() {
-    let bc = compile_contract("examples/utils/bytes.edge");
+    let bc = compile_contract("std/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
     // left_pad(0x01, 1) = 0x0100 (shift left by 8 bits)
     let (ok, out) = evm.call(calldata(
@@ -612,7 +612,7 @@ fn test_bytes_left_pad_one_byte() {
 
 #[test]
 fn test_bytes_unknown_selector_reverts() {
-    let bc = compile_contract("examples/utils/bytes.edge");
+    let bc = compile_contract("std/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
