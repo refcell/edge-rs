@@ -82,11 +82,18 @@ contract ComptimeExample {
     // Storage that changes behavior based on hard fork target.
     let value: &s u256;
 
-    pub fn store(x: u256) {
+    fn base_fee2(x: u8, y: u8) -> u8 {
+        return x + y;
+    }
+
+    pub fn store(x: u256) -> (u256) {
+        let y: u256;
+        y = base_fee2(x, 1234);
         // comptime if: use TSTORE on Cancun+, SSTORE on older forks.
         // The compiler evaluates @hardFork() at compile time and
         // only emits bytecode for the matching branch.
         value = x;
+        return y;
     }
 
     pub fn load() -> (u256) {

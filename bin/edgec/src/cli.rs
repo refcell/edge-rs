@@ -150,6 +150,13 @@ impl Cli {
                         println!();
                         println!(";; Runtime:");
                         println!("{}", edge_ir::sexp::expr_to_pretty(&contract.runtime, 0));
+                        if !contract.internal_functions.is_empty() {
+                            println!();
+                            println!(";; Internal functions:");
+                            for func in &contract.internal_functions {
+                                println!("{}", edge_ir::sexp::expr_to_pretty(func, 0));
+                            }
+                        }
                     }
                     for func in &ir.free_functions {
                         println!();

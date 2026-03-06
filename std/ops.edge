@@ -1,0 +1,39 @@
+// ops.edge — Operator overloading traits
+//
+// Implement these traits for user-defined types to enable
+// operator syntax (e.g., `a + b` dispatches to `Add::add(a, b)`).
+//
+// Usage:
+//   use std::ops::Add;
+//   impl MyType: Add { fn add(self: MyType, rhs: MyType) -> (MyType) { ... } }
+
+trait Add {
+    fn add(self: Self, rhs: Self) -> (Self);
+}
+
+trait Sub {
+    fn sub(self: Self, rhs: Self) -> (Self);
+}
+
+trait Mul {
+    fn mul(self: Self, rhs: Self) -> (Self);
+}
+
+trait Div {
+    fn div(self: Self, rhs: Self) -> (Self);
+}
+
+trait Mod {
+    fn mod_(self: Self, rhs: Self) -> (Self);
+}
+
+trait Eq {
+    fn eq(self: Self, rhs: Self) -> (bool);
+}
+
+trait Ord {
+    fn lt(self: Self, rhs: Self) -> (bool);
+    fn gt(self: Self, rhs: Self) -> (bool);
+    fn le(self: Self, rhs: Self) -> (bool);
+    fn ge(self: Self, rhs: Self) -> (bool);
+}

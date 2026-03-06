@@ -205,8 +205,8 @@
 ;; External call: (ExtCall target value argsOffset argsLen retOffset retLen state) -> (success, state)
 (constructor ExtCall (EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr) EvmExpr)
 
-;; Internal function call: (Call name args) -> result
-(constructor Call (String EvmExpr) EvmExpr)
+;; Internal function call: (Call name args...) -> result
+(constructor Call (String ListExpr) EvmExpr)
 
 ;; Function selector constant (keccak256 of signature, top 4 bytes)
 (constructor Selector (String) EvmExpr)

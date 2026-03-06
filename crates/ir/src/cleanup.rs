@@ -139,7 +139,10 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
 
         EvmExpr::VarStore(name, val) => Rc::new(EvmExpr::VarStore(name.clone(), cleanup_expr(val))),
 
-        EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(name.clone(), cleanup_expr(args))),
+        EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(
+            name.clone(),
+            args.iter().map(cleanup_expr).collect(),
+        )),
 
         EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
             name.clone(),

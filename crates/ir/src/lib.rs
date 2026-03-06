@@ -46,6 +46,20 @@ pub enum IrError {
     /// Error during AST lowering
     #[error("lowering error: {0}")]
     Lowering(String),
+    /// Error during AST lowering with source span for diagnostics
+    #[error("{message}")]
+    LoweringSpanned {
+        /// The error message
+        message: String,
+        /// Source location where the error occurred
+        span: edge_types::span::Span,
+    },
+    /// Rich diagnostic error with multiple labels and notes
+    #[error("{}", .0.message)]
+    Diagnostic(
+        /// The full diagnostic with labels, notes, and severity
+        edge_diagnostics::Diagnostic,
+    ),
     /// Error during egglog execution
     #[error("egglog error: {0}")]
     Egglog(String),
@@ -75,6 +89,7 @@ pub fn prologue(optimize_for: OptimizeFor) -> String {
         include_str!("optimizations/type_propagation.egg"),
         include_str!("optimizations/checked_arithmetic.egg"),
         include_str!("optimizations/cse.egg"),
+        include_str!("optimizations/inline.egg"),
         &schedule::rulesets(),
     ]
     .join("\n")
@@ -109,7 +124,8 @@ pub fn lower_and_optimize(
 
     // 2. Variable optimizations (store-forwarding, dead elim, inlining, const prop)
     // Runs at ALL optimization levels since these are cheap deterministic transforms.
-    var_opt::optimize_program(&mut ir_program);
+    // Monomorphization only at O1+ (egglog decides inlining); at O0 keep original calls.
+    var_opt::optimize_program(&mut ir_program, optimization_level);
 
     // 3. Storage optimizations:
     //    a) Hoist storage ops out of loops (LICM) — egglog can't model iteration
@@ -136,10 +152,19 @@ pub fn lower_and_optimize(
             .map(|name| format!("(ImmutableVar \"{name}\")\n"))
             .collect();
 
+        // Include internal function definitions in the same egraph so that
+        // the inline rule (Call + Function → body) can fire.
+        let mut func_lets = String::new();
+        for (i, func) in contract.internal_functions.iter().enumerate() {
+            let func_sexp = sexp::expr_to_sexp(func);
+            func_lets.push_str(&format!("(let __fn_{i} {func_sexp})\n"));
+        }
+
         let egglog_program = format!(
-            "{}\n\n(let __runtime {})\n\n{}\n{}\n\n(extract __runtime)\n",
+            "{}\n\n(let __runtime {})\n{}\n{}\n{}\n\n(extract __runtime)\n",
             prologue(optimize_for),
             runtime_sexp,
+            func_lets,
             immutable_facts,
             schedule
         );
@@ -165,11 +190,63 @@ pub fn lower_and_optimize(
         // Post-egglog cleanup: simplify state params and remove dead code
         optimized_runtime = cleanup::cleanup_expr_pub(&optimized_runtime);
 
+        // Only keep internal functions still referenced (directly or transitively)
+        // by Call nodes in the optimized runtime. Monomorphized functions that
+        // were inlined by egglog are no longer needed.
+        let mut referenced = collect_call_names(&optimized_runtime);
+        // Transitively collect: if a kept function calls another, keep that too
+        loop {
+            let mut new_names = std::collections::HashSet::new();
+            for func in &contract.internal_functions {
+                if let EvmExpr::Function(name, _, _, body) = func.as_ref() {
+                    if referenced.contains(name.as_str()) {
+                        for n in collect_call_names(body) {
+                            if !referenced.contains(&n) {
+                                new_names.insert(n);
+                            }
+                        }
+                    }
+                }
+            }
+            if new_names.is_empty() {
+                break;
+            }
+            referenced.extend(new_names);
+        }
+        let mut optimized_functions = Vec::new();
+        for func in &contract.internal_functions {
+            let name = match func.as_ref() {
+                EvmExpr::Function(n, ..) => n,
+                _ => continue,
+            };
+            if !referenced.contains(name.as_str()) {
+                continue;
+            }
+            let func_sexp = sexp::expr_to_sexp(func);
+            let func_program = format!(
+                "{}\n\n(let __func {})\n\n{}\n\n(extract __func)\n",
+                prologue(optimize_for),
+                func_sexp,
+                schedule
+            );
+            let mut func_egraph = create_egraph();
+            let func_outputs = func_egraph
+                .parse_and_run_program(None, &func_program)
+                .map_err(|e| IrError::Egglog(format!("{e}")))?;
+            let func_extracted = func_outputs
+                .last()
+                .ok_or_else(|| IrError::Extraction("no output from func extract".to_owned()))?;
+            let optimized_func = sexp::sexp_to_expr(func_extracted)?;
+            let optimized_func = cleanup::cleanup_expr_pub(&optimized_func);
+            optimized_functions.push(optimized_func);
+        }
+
         optimized_contracts.push(EvmContract {
             name: contract.name.clone(),
             storage_fields: contract.storage_fields.clone(),
             constructor: Rc::clone(&contract.constructor),
             runtime: optimized_runtime,
+            internal_functions: optimized_functions,
             memory_high_water: contract.memory_high_water,
         });
     }
@@ -185,6 +262,66 @@ pub fn lower_and_optimize(
     storage_hoist::forward_stores_program(&mut result);
 
     Ok(result)
+}
+
+/// Collect all function names referenced by `Call` nodes in an expression.
+fn collect_call_names(expr: &schema::RcExpr) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    collect_call_names_rec(expr, &mut names);
+    names
+}
+
+fn collect_call_names_rec(expr: &schema::RcExpr, names: &mut std::collections::HashSet<String>) {
+    match expr.as_ref() {
+        EvmExpr::Call(name, args) => {
+            names.insert(name.clone());
+            for a in args {
+                collect_call_names_rec(a, names);
+            }
+        }
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
+            collect_call_names_rec(a, names);
+            collect_call_names_rec(b, names);
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::VarStore(_, a) => {
+            collect_call_names_rec(a, names);
+        }
+        EvmExpr::Get(a, _) => collect_call_names_rec(a, names),
+        EvmExpr::If(c, i, t, e) => {
+            collect_call_names_rec(c, names);
+            collect_call_names_rec(i, names);
+            collect_call_names_rec(t, names);
+            collect_call_names_rec(e, names);
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            collect_call_names_rec(init, names);
+            collect_call_names_rec(body, names);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            collect_call_names_rec(a, names);
+            collect_call_names_rec(b, names);
+            collect_call_names_rec(c, names);
+        }
+        EvmExpr::Log(_, topics, d, s, st) => {
+            for t in topics {
+                collect_call_names_rec(t, names);
+            }
+            collect_call_names_rec(d, names);
+            collect_call_names_rec(s, names);
+            collect_call_names_rec(st, names);
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            collect_call_names_rec(a, names);
+            collect_call_names_rec(b, names);
+            collect_call_names_rec(c, names);
+            collect_call_names_rec(d, names);
+            collect_call_names_rec(e, names);
+            collect_call_names_rec(f, names);
+            collect_call_names_rec(g, names);
+        }
+        EvmExpr::Function(_, _, _, body) => collect_call_names_rec(body, names),
+        _ => {}
+    }
 }
 
 #[cfg(test)]

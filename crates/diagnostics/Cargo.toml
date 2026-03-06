@@ -11,6 +11,7 @@ homepage = { workspace = true }
 [dependencies]
 edge-types = { workspace = true }
 thiserror = { workspace = true }
+ariadne = { workspace = true }
 
 [lints]
 workspace = true

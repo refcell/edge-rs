@@ -37,6 +37,9 @@ pub fn hoist_program(program: &mut crate::schema::EvmProgram) {
     let mut counter = 0usize;
     for contract in &mut program.contracts {
         contract.runtime = hoist_expr(&contract.runtime, &mut counter);
+        for func in &mut contract.internal_functions {
+            *func = hoist_expr(func, &mut counter);
+        }
     }
 }
 
@@ -54,6 +57,9 @@ pub fn hoist_program(program: &mut crate::schema::EvmProgram) {
 pub fn forward_stores_program(program: &mut crate::schema::EvmProgram) {
     for contract in &mut program.contracts {
         contract.runtime = forward_stores_expr(&contract.runtime);
+        for func in &mut contract.internal_functions {
+            *func = forward_stores_expr(func);
+        }
     }
 }
 
@@ -279,7 +285,9 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
         )),
         EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(
             name.clone(),
-            replace_sloads_inline(args, known),
+            args.iter()
+                .map(|a| replace_sloads_inline(a, known))
+                .collect(),
         )),
         EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
             name.clone(),
@@ -394,7 +402,11 @@ fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>) {
                 collect_sload_slots_inner(x, out);
             }
         }
-        EvmExpr::Call(_, args) => collect_sload_slots_inner(args, out),
+        EvmExpr::Call(_, args) => {
+            for arg in args {
+                collect_sload_slots_inner(arg, out);
+            }
+        }
         EvmExpr::Function(_, _, _, body) => collect_sload_slots_inner(body, out),
         _ => {}
     }
@@ -788,7 +800,7 @@ fn has_disqualifying_ops(expr: &RcExpr) -> bool {
         }
         EvmExpr::EnvRead(_, s) => has_disqualifying_ops(s),
         EvmExpr::EnvRead1(_, a, s) => has_disqualifying_ops(a) || has_disqualifying_ops(s),
-        EvmExpr::Call(_, args) => has_disqualifying_ops(args),
+        EvmExpr::Call(_, args) => args.iter().any(has_disqualifying_ops),
         EvmExpr::Function(_, _, _, body) => has_disqualifying_ops(body),
         _ => false,
     }
@@ -880,7 +892,11 @@ fn collect_storage_slots(expr: &RcExpr, result: &mut HashMap<SlotKey, SlotUsage>
                 collect_storage_slots(x, result);
             }
         }
-        EvmExpr::Call(_, args) => collect_storage_slots(args, result),
+        EvmExpr::Call(_, args) => {
+            for arg in args {
+                collect_storage_slots(arg, result);
+            }
+        }
         EvmExpr::Function(_, _, _, body) => collect_storage_slots(body, result),
         _ => {}
     }
@@ -1018,8 +1034,11 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
             Rc::new(EvmExpr::ExtCall(na, nb, nc, nd, ne, nf, ng))
         }
         EvmExpr::Call(name, args) => {
-            let na = replace_storage(args, key, var_name, replace_stores);
-            Rc::new(EvmExpr::Call(name.clone(), na))
+            let new_args: Vec<_> = args
+                .iter()
+                .map(|a| replace_storage(a, key, var_name, replace_stores))
+                .collect();
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
             let nb = replace_storage(body, key, var_name, replace_stores);

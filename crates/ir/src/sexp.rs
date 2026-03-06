@@ -115,7 +115,11 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             )
         }
         EvmExpr::Call(name, args) => {
-            format!("(Call \"{}\" {})", name, expr_to_sexp(args))
+            let mut list = "(Nil)".to_string();
+            for arg in args.iter().rev() {
+                list = format!("(Cons {} {})", expr_to_sexp(arg), list);
+            }
+            format!("(Call \"{name}\" {list})")
         }
         EvmExpr::Selector(sig) => format!("(Selector \"{sig}\")"),
         EvmExpr::LetBind(name, value, body) => {
@@ -484,7 +488,7 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                 }
                 "Call" => {
                     let name = atom_string(&items[1])?;
-                    let args = sexp_to_evm_expr(&items[2])?;
+                    let args = sexp_to_list(&items[2])?;
                     Ok(Rc::new(EvmExpr::Call(name, args)))
                 }
                 "Selector" => {

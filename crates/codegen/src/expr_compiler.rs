@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 
 use edge_ir::{
-    schema::{EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmUnaryOp, RcExpr},
+    schema::{
+        EvmBinaryOp, EvmConstant, EvmEnvOp, EvmExpr, EvmTernaryOp, EvmType, EvmUnaryOp, RcExpr,
+    },
     var_opt::{AllocationMode, VarAllocation},
 };
 
@@ -38,6 +40,9 @@ pub struct ExprCompiler<'a> {
     stack_depth: usize,
     /// Label for shared overflow revert trampoline (lazily created)
     overflow_revert_label: Option<String>,
+    /// Inner function metadata: name -> (`param_count`, `return_count`)
+    /// Populated by a pre-pass over the IR tree before compilation.
+    fn_info: HashMap<String, (usize, usize)>,
 }
 
 impl<'a> ExprCompiler<'a> {
@@ -73,6 +78,7 @@ impl<'a> ExprCompiler<'a> {
             stack_vars: HashMap::new(),
             stack_depth: 0,
             overflow_revert_label: None,
+            fn_info: HashMap::new(),
         }
     }
 
@@ -82,6 +88,32 @@ impl<'a> ExprCompiler<'a> {
             .get(name)
             .map(|a| a.mode)
             .unwrap_or(AllocationMode::Memory)
+    }
+
+    /// Pre-pass: collect Function metadata (param count, return count) from the IR tree.
+    /// Must be called before `compile_expr` so that `Call` nodes can look up stack info.
+    pub fn collect_fn_info(&mut self, expr: &EvmExpr) {
+        match expr {
+            EvmExpr::Function(name, in_ty, _out_ty, body) => {
+                let param_count = Self::type_slot_count(in_ty);
+                let ret_count = Self::count_stack_values(body);
+                self.fn_info.insert(name.clone(), (param_count, ret_count));
+                self.collect_fn_info(body);
+            }
+            EvmExpr::Concat(a, b) => {
+                self.collect_fn_info(a);
+                self.collect_fn_info(b);
+            }
+            EvmExpr::If(_, _, t, e) => {
+                self.collect_fn_info(t);
+                self.collect_fn_info(e);
+            }
+            EvmExpr::LetBind(_, v, b) => {
+                self.collect_fn_info(v);
+                self.collect_fn_info(b);
+            }
+            _ => {}
+        }
     }
 
     /// Compile an IR expression, pushing its result onto the stack.
@@ -98,11 +130,26 @@ impl<'a> ExprCompiler<'a> {
                 self.stack_depth += 1;
             }
 
-            EvmExpr::Arg(_, _) | EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
-                // Arg: Function argument is already on the stack at entry.
+            EvmExpr::Arg(ty, _) => {
+                // Function argument(s) already on the stack.
+                // For single-param functions, DUP the arg (non-destructive).
+                let n = Self::type_slot_count(ty);
+                if n == 1 {
+                    // Single arg: DUP from its position
+                    let dup_depth = self.stack_depth; // arg0 is at position 0
+                    debug_assert!(
+                        (1..=16).contains(&dup_depth),
+                        "Arg DUP depth {dup_depth} out of range"
+                    );
+                    self.asm.emit_op(Opcode::dup_n(dup_depth as u8));
+                    self.stack_depth += 1;
+                }
+                // Multi-arg Arg should be accessed via Get(Arg, i), not bare.
+            }
+            EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
                 // Empty: unit — no value on stack.
                 // StorageField: declarations don't emit code.
-                // All are no-ops.
+                // No-ops.
             }
 
             EvmExpr::Bop(op, lhs, rhs) => {
@@ -114,19 +161,35 @@ impl<'a> ExprCompiler<'a> {
             }
 
             EvmExpr::Get(tuple, idx) => {
-                self.compile_expr(tuple);
-                let n = Self::count_stack_values(tuple);
-                if n > 1 {
-                    let depth = n - 1 - idx;
-                    if depth > 0 && depth <= 16 {
-                        self.asm.emit_op(Opcode::swap_n(depth as u8));
+                if let EvmExpr::Arg(ty, _) = tuple.as_ref() {
+                    // Function parameter access: DUP from known stack position.
+                    // At function entry, args are on the stack: [arg0, ..., argN-1]
+                    // arg0 is deepest, argN-1 is closest to TOS.
+                    // Arg at index i is at stack_depth - (param_count - i) from TOS.
+                    let param_count = Self::type_slot_count(ty);
+                    let dup_depth = self.stack_depth - *idx;
+                    debug_assert!(
+                        (1..=16).contains(&dup_depth),
+                        "Arg DUP depth {dup_depth} out of range (param_count={param_count}, idx={idx}, stack_depth={})",
+                        self.stack_depth
+                    );
+                    self.asm.emit_op(Opcode::dup_n(dup_depth as u8));
+                    self.stack_depth += 1;
+                } else {
+                    self.compile_expr(tuple);
+                    let n = Self::count_stack_values(tuple);
+                    if n > 1 {
+                        let depth = n - 1 - idx;
+                        if depth > 0 && depth <= 16 {
+                            self.asm.emit_op(Opcode::swap_n(depth as u8));
+                        }
+                        for _ in 0..(n - 1) {
+                            self.asm.emit_op(Opcode::Pop);
+                            self.stack_depth -= 1;
+                        }
                     }
-                    for _ in 0..(n - 1) {
-                        self.asm.emit_op(Opcode::Pop);
-                        self.stack_depth -= 1;
-                    }
+                    // Net: count(tuple) - (n-1) = 1
                 }
-                // Net: count(tuple) - (n-1) = 1
             }
 
             EvmExpr::Concat(a, b) => {
@@ -184,11 +247,32 @@ impl<'a> ExprCompiler<'a> {
             }
 
             EvmExpr::Call(name, args) => {
-                self.compile_expr(args);
-                let label = format!("fn_{name}");
-                let ret_label = self.asm.fresh_label(&format!("ret_{name}"));
-                self.asm.emit(AsmInstruction::JumpTo(label));
-                // JumpTo: PUSH label (+1), JUMP (-1) → net 0
+                // Internal function call.
+                // Calling convention:
+                //   Push return address, push args, JUMP to function.
+                //   Function returns: ret_addr consumed, return values on stack.
+                let ret_label = self.asm.fresh_label(&format!("ret_fn_{name}"));
+                let fn_label = format!("fn_{name}");
+
+                let (_param_count, ret_count) = self.fn_info.get(name).copied().unwrap_or((0, 1));
+
+                self.asm.emit(AsmInstruction::PushLabel(ret_label.clone()));
+                self.stack_depth += 1;
+                let mut arg_count = 0;
+                for arg in args {
+                    self.compile_expr(arg);
+                    arg_count += Self::count_stack_values(arg);
+                }
+
+                self.asm.emit(AsmInstruction::JumpTo(fn_label));
+
+                // Stack accounting:
+                //   Before jump: stack has [... ret_addr arg0..argN]
+                //   After return: stack has [... ret0..retM]
+                //   Delta: -(1 + arg_count) + ret_count
+                self.stack_depth -= 1 + arg_count;
+                self.stack_depth += ret_count;
+
                 self.asm.emit(AsmInstruction::Label(ret_label));
             }
 
@@ -216,10 +300,86 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_drop(name);
             }
 
-            EvmExpr::Function(name, _in_ty, _out_ty, body) => {
-                let label = format!("fn_{name}");
-                self.asm.emit(AsmInstruction::Label(label));
+            EvmExpr::Function(name, in_ty, _out_ty, body) => {
+                // Emit function body as a labeled subroutine.
+                // Calling convention:
+                //   Stack on entry: [...caller_stack, ret_addr, arg0, ..., argN-1]
+                //   Body compiles, producing return values.
+                //   Stack on exit:  [...caller_stack, ret0, ..., retM]
+                //   Return: SWAP(ret_count) to bring ret_addr to TOS, JUMP.
+                let skip_label = self.asm.fresh_label(&format!("skip_fn_{name}"));
+                let fn_label = format!("fn_{name}");
+
+                // Jump over the function body during linear execution
+                self.asm.emit(AsmInstruction::JumpTo(skip_label.clone()));
+                self.asm.emit(AsmInstruction::Label(fn_label));
+
+                // Save compiler state — the function body compiles in its own
+                // context. The EVM stack is shared at runtime, but the compiler's
+                // depth tracking must be isolated (this code runs at call time,
+                // not definition time).
+                let saved_depth = self.stack_depth;
+                let saved_let_bindings = self.let_bindings.clone();
+                let saved_stack_vars = self.stack_vars.clone();
+                let saved_free_slots = self.free_slots.clone();
+                let saved_next_let_offset = self.next_let_offset;
+
+                // Count params from in_ty
+                let param_count = Self::type_slot_count(in_ty);
+
+                // At call time, stack has: [ret_addr, arg0, ..., argN-1]
+                // We track only the args (ret_addr is below, handled by SWAP+JUMP).
+                self.stack_depth = param_count;
+                self.let_bindings.clear();
+                self.stack_vars.clear();
+
                 self.compile_expr(body);
+
+                // After body, stack is: [ret_addr, arg0..argN-1, retval0..retvalM]
+                // Need to remove the N args from under the return values.
+                let ret_count = Self::count_stack_values(body);
+
+                if ret_count == 0 {
+                    // No return values — just pop all args and JUMP
+                    for _ in 0..param_count {
+                        self.asm.emit_op(Opcode::Pop);
+                    }
+                    self.asm.emit_op(Opcode::Jump);
+                } else if ret_count == 1 {
+                    // Single return value — SWAP1+POP for each arg, then SWAP1+JUMP
+                    for _ in 0..param_count {
+                        self.asm.emit_op(Opcode::Swap1);
+                        self.asm.emit_op(Opcode::Pop);
+                    }
+                    self.asm.emit_op(Opcode::Swap1);
+                    self.asm.emit_op(Opcode::Jump);
+                } else {
+                    // Multiple return values — swap past all args + ret_addr
+                    let total_below = param_count + 1; // args + ret_addr
+                    assert!(
+                        ret_count + total_below <= 17,
+                        "Function {name}: too many values on stack for SWAP"
+                    );
+                    // For each return value (bottom to top), swap it past the args
+                    // This is complex; for now just handle common cases
+                    // TODO: handle multi-return + multi-param properly
+                    self.asm
+                        .emit_op(Opcode::swap_n((ret_count + param_count) as u8));
+                    self.asm.emit_op(Opcode::Jump);
+                    // Clean up remaining args
+                    for _ in 0..param_count {
+                        self.asm.emit_op(Opcode::Pop);
+                    }
+                }
+
+                // Restore compiler state
+                self.stack_depth = saved_depth;
+                self.let_bindings = saved_let_bindings;
+                self.stack_vars = saved_stack_vars;
+                self.free_slots = saved_free_slots;
+                self.next_let_offset = saved_next_let_offset;
+
+                self.asm.emit(AsmInstruction::Label(skip_label));
             }
         }
     }
@@ -237,8 +397,11 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_expr(body);
 
                 // Only clean up if the variable wasn't already dropped by an
-                // early Drop node (e.g. in a halting branch)
-                if self.stack_vars.contains_key(name) {
+                // early Drop node (e.g. in a halting branch).
+                // Also skip cleanup if the body definitely halts — the cleanup
+                // code is unreachable and the stack accounting would be wrong.
+                let body_halts = Self::expr_definitely_halts(body.as_ref());
+                if self.stack_vars.contains_key(name) && !body_halts {
                     // Clean up: remove variable from under body's results
                     let body_count = Self::count_stack_values(body);
                     if body_count == 0 {
@@ -962,6 +1125,16 @@ impl<'a> ExprCompiler<'a> {
         self.stack_depth -= 2 + topic_count;
     }
 
+    /// How many EVM stack slots a type occupies.
+    fn type_slot_count(ty: &EvmType) -> usize {
+        use edge_ir::schema::EvmBaseType;
+        match ty {
+            EvmType::TupleT(elems) => elems.len(),
+            EvmType::Base(EvmBaseType::UnitT) | EvmType::Base(EvmBaseType::StateT) => 0,
+            EvmType::Base(_) => 1,
+        }
+    }
+
     /// Estimate how many stack values an expression pushes.
     ///
     /// Must be accurate for stack-mode `LetBind` cleanup (SWAP+POP).
@@ -975,7 +1148,9 @@ impl<'a> ExprCompiler<'a> {
             | EvmExpr::ReturnOp(_, _, _)
             | EvmExpr::Log(_, _, _, _, _)
             | EvmExpr::Function(_, _, _, _)
+            | EvmExpr::DoWhile(_, _)
             | EvmExpr::StorageField(_, _, _) => 0,
+            EvmExpr::Arg(ty, _) => Self::type_slot_count(ty),
             EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
             // Side-effect ternary ops push nothing onto the stack
             EvmExpr::Top(op, _, _, _) => match op {

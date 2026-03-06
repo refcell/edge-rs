@@ -183,7 +183,7 @@ pub fn do_while(inputs: RcExpr, pred_and_body: RcExpr) -> RcExpr {
 // ---- EVM-specific ----
 
 /// Internal function call.
-pub fn call(name: String, args: RcExpr) -> RcExpr {
+pub fn call(name: String, args: Vec<RcExpr>) -> RcExpr {
     Rc::new(EvmExpr::Call(name, args))
 }
 

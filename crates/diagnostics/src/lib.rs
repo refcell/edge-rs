@@ -1,6 +1,7 @@
 //! Edge Language Diagnostics
 //!
 //! Provides error reporting and diagnostic infrastructure for the Edge compiler.
+//! Uses [ariadne](https://docs.rs/ariadne) for pretty-printed diagnostics.
 #![warn(
     missing_debug_implementations,
     missing_docs,
@@ -67,7 +68,7 @@ impl Diagnostic {
         }
     }
 
-    /// Add a label pointing to a source location
+    /// Add a primary label pointing to a source location (colored by diagnostic severity)
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push(Label {
             message: message.into(),
@@ -77,7 +78,17 @@ impl Diagnostic {
         self
     }
 
-    /// Add a note
+    /// Add a secondary/info label (blue) pointing to a source location
+    pub fn with_help_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.labels.push(Label {
+            message: message.into(),
+            span,
+            severity: Severity::Note,
+        });
+        self
+    }
+
+    /// Add a note appended after the diagnostic
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
@@ -129,49 +140,94 @@ impl DiagnosticBag {
         &self.diagnostics
     }
 
-    /// Print all diagnostics to stderr with source context
+    /// Print all diagnostics to stderr using ariadne for pretty output.
+    ///
+    /// `source` is the main source text, used as fallback when a span has no
+    /// associated file.
     pub fn report_all(&self, source: &str) {
+        self.report_all_with_path("<input>", source);
+    }
+
+    /// Print all diagnostics to stderr using ariadne, with an explicit file path
+    /// for the primary source.
+    pub fn report_all_with_path(&self, path: &str, source: &str) {
+        use std::collections::HashMap;
+
+        // Collect all unique sources referenced by spans.
+        let mut source_map: HashMap<String, String> = HashMap::new();
+        source_map.insert(path.to_string(), source.to_string());
+
         for diag in &self.diagnostics {
-            let prefix = match diag.severity {
-                Severity::Error => "error",
-                Severity::Warning => "warning",
-                Severity::Note => "note",
-            };
-            eprintln!("{}: {}", prefix, diag.message);
-
             for label in &diag.labels {
-                let line_num = source[..label.span.start.min(source.len())]
-                    .chars()
-                    .filter(|&c| c == '\n')
-                    .count()
-                    + 1;
-                let line_start = source[..label.span.start.min(source.len())]
-                    .rfind('\n')
-                    .map(|i| i + 1)
-                    .unwrap_or(0);
-                let line_end = source[label.span.start.min(source.len())..]
-                    .find('\n')
-                    .map(|i| label.span.start + i)
-                    .unwrap_or(source.len());
-                let line = &source[line_start..line_end.min(source.len())];
-                let col = label.span.start.saturating_sub(line_start) + 1;
-                let len = (label.span.end.saturating_sub(label.span.start)).max(1);
+                if let Some(ref file) = label.span.file {
+                    if let Some(ref src) = file.source {
+                        source_map
+                            .entry(file.path.clone())
+                            .or_insert_with(|| src.clone());
+                    }
+                }
+            }
+        }
 
-                eprintln!("  --> line {line_num}:{col}");
-                eprintln!("   |");
-                eprintln!("   | {line}");
-                eprintln!(
-                    "   | {}{} {}",
-                    " ".repeat(col.saturating_sub(1)),
-                    "^".repeat(len),
-                    label.message
+        let mut cache = ariadne::sources(source_map);
+
+        for diag in &self.diagnostics {
+            let kind = match diag.severity {
+                Severity::Error => ariadne::ReportKind::Error,
+                Severity::Warning => ariadne::ReportKind::Warning,
+                Severity::Note => ariadne::ReportKind::Advice,
+            };
+
+            // Determine the primary span for the report header.
+            // Prefer the first label matching the diagnostic severity (the primary error site).
+            let primary_label = diag
+                .labels
+                .iter()
+                .find(|l| l.severity == diag.severity)
+                .or_else(|| diag.labels.first());
+            let (file_id, offset) = primary_label.map_or_else(
+                || (path.to_string(), 0),
+                |label| {
+                    let fid = label
+                        .span
+                        .file
+                        .as_ref()
+                        .map_or_else(|| path.to_string(), |f| f.path.clone());
+                    (fid, label.span.start)
+                },
+            );
+
+            let mut builder = ariadne::Report::build(kind, (file_id.clone(), offset..offset))
+                .with_message(&diag.message);
+
+            for (i, label) in diag.labels.iter().enumerate() {
+                let fid = label
+                    .span
+                    .file
+                    .as_ref()
+                    .map_or_else(|| path.to_string(), |f| f.path.clone());
+                let start = label.span.start;
+                // Our spans use inclusive end; ariadne uses exclusive ranges
+                let end = (label.span.end + 1).max(start + 1);
+                let color = match label.severity {
+                    Severity::Error => ariadne::Color::Red,
+                    Severity::Warning => ariadne::Color::Yellow,
+                    Severity::Note => ariadne::Color::Blue,
+                };
+                builder.add_label(
+                    ariadne::Label::new((fid, start..end))
+                        .with_message(&label.message)
+                        .with_color(color)
+                        .with_order(i as i32),
                 );
-                eprintln!("   |");
             }
 
             for note in &diag.notes {
-                eprintln!("   = note: {note}");
+                builder.add_note(note);
             }
+
+            let report = builder.finish();
+            let _ = report.eprint(&mut cache);
         }
     }
 }

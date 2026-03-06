@@ -1,0 +1,91 @@
+// test_traits.edge — Execution tests for trait declarations and implementations
+//
+// Tests trait method dispatch via qualified calls (Trait::method()),
+// and operator overloading via std::ops traits.
+
+use std::ops::Add;
+use std::ops::Eq;
+
+type Wrapper = {
+    val: u256,
+};
+
+trait Doubler {
+    fn double(self: Wrapper) -> (u256);
+}
+
+trait Tripler {
+    fn triple(self: Wrapper) -> (u256);
+}
+
+impl Wrapper: Doubler {
+    fn double(self: Wrapper) -> (u256) {
+        return self.val * 2;
+    }
+}
+
+impl Wrapper: Tripler {
+    fn triple(self: Wrapper) -> (u256) {
+        return self.val * 3;
+    }
+}
+
+impl Wrapper: Add {
+    fn add(self: Wrapper, other: Wrapper) -> (Wrapper) {
+        return Wrapper { val: self.val + other.val };
+    }
+}
+
+impl Wrapper: Eq {
+    fn eq(self: Wrapper, other: Wrapper) -> (bool) {
+        return self.val == other.val;
+    }
+}
+
+contract TestTraits {
+    // Test qualified trait call: Doubler::double(w) where w.val = 21
+    pub fn test_double() -> (u256) {
+        let w: Wrapper;
+        w = Wrapper { val: 21 };
+        return Doubler::double(w);
+    }
+
+    // Test qualified trait call: Tripler::triple(w) where w.val = 10
+    pub fn test_triple() -> (u256) {
+        let w: Wrapper;
+        w = Wrapper { val: 10 };
+        return Tripler::triple(w);
+    }
+
+    // Test chaining trait calls
+    pub fn test_double_then_triple() -> (u256) {
+        let w: Wrapper;
+        w = Wrapper { val: 5 };
+        let doubled: u256;
+        doubled = Doubler::double(w);
+        return doubled * 3;
+    }
+
+    // Test operator overloading: + dispatches to Add::add
+    pub fn test_add_overload() -> (u256) {
+        let a: Wrapper;
+        a = Wrapper { val: 10 };
+        let b: Wrapper;
+        b = Wrapper { val: 32 };
+        let c: Wrapper;
+        c = a + b;
+        return c.val;
+    }
+
+    // Test operator overloading: == dispatches to Eq::eq
+    pub fn test_eq_overload() -> (u256) {
+        let a: Wrapper;
+        a = Wrapper { val: 42 };
+        let b: Wrapper;
+        b = Wrapper { val: 42 };
+        if a == b {
+            return 1;
+        }
+        return 0;
+    }
+}

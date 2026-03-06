@@ -1,0 +1,74 @@
+// test_impl.edge — Execution tests for impl blocks and method calls
+//
+// Tests inherent impl methods, method call syntax (obj.method()),
+// and qualified method calls (Type::method()).
+
+type Point = {
+    x: u256,
+    y: u256,
+};
+
+impl Point {
+    fn sum(self: Point) -> (u256) {
+        return self.x + self.y;
+    }
+
+    fn scale(self: Point, factor: u256) -> (u256) {
+        return self.x * factor + self.y * factor;
+    }
+
+    fn x_val(self: Point) -> (u256) {
+        return self.x;
+    }
+}
+
+type Counter = {
+    value: u256,
+};
+
+impl Counter {
+    fn get(self: Counter) -> (u256) {
+        return self.value;
+    }
+
+    fn add(self: Counter, n: u256) -> (u256) {
+        return self.value + n;
+    }
+}
+
+contract TestImpl {
+    // Test method call: point.sum()
+    pub fn test_point_sum() -> (u256) {
+        let p: Point;
+        p = Point { x: 10, y: 20 };
+        return p.sum();
+    }
+
+    // Test method call with args: point.scale(3)
+    pub fn test_point_scale() -> (u256) {
+        let p: Point;
+        p = Point { x: 5, y: 7 };
+        return p.scale(3);
+    }
+
+    // Test method call: point.x_val()
+    pub fn test_point_x() -> (u256) {
+        let p: Point;
+        p = Point { x: 42, y: 99 };
+        return p.x_val();
+    }
+
+    // Test counter.get()
+    pub fn test_counter_get() -> (u256) {
+        let c: Counter;
+        c = Counter { value: 100 };
+        return c.get();
+    }
+
+    // Test counter.add(n)
+    pub fn test_counter_add() -> (u256) {
+        let c: Counter;
+        c = Counter { value: 100 };
+        return c.add(50);
+    }
+}

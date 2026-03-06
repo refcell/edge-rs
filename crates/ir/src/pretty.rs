@@ -36,6 +36,11 @@ pub fn pretty_print_contract(contract: &EvmContract) -> String {
     pp(&contract.runtime, 2, &mut buf);
     buf.push('\n');
 
+    for func in &contract.internal_functions {
+        pp(func, 2, &mut buf);
+        buf.push('\n');
+    }
+
     buf.push_str("}\n");
     buf
 }
@@ -415,16 +420,15 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
         }
         EvmExpr::Call(name, args) => {
             indent(depth, buf);
-            if fits_inline(args, budget(depth).saturating_sub(name.len() + 7)) {
-                buf.push_str(&format!("call {name}("));
-                pp_inline(args, buf);
-            } else {
-                buf.push_str(&format!("call {name}(\n"));
-                pp(args, depth + 1, buf);
+            buf.push_str(&format!("call {name}("));
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                pp_inline(arg, buf);
             }
             buf.push(')');
         }
-
         // ---- Let bindings ----
         EvmExpr::LetBind(name, init, body) => {
             indent(depth, buf);
@@ -571,7 +575,12 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
         EvmExpr::ExtCall(..) => buf.push_str("CALL(...)"),
         EvmExpr::Call(name, args) => {
             buf.push_str(&format!("call {name}("));
-            pp_oneline(args, buf);
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                pp_oneline(arg, buf);
+            }
             buf.push(')');
         }
         EvmExpr::Function(name, _, _, _) => buf.push_str(&format!("fn {name}()")),
@@ -648,7 +657,12 @@ pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
         }
         EvmExpr::Call(name, args) => {
             buf.push_str(&format!("call {name}("));
-            pp_oneline(args, &mut buf);
+            for (i, arg) in args.iter().enumerate() {
+                if i > 0 {
+                    buf.push_str(", ");
+                }
+                pp_oneline(arg, &mut buf);
+            }
             buf.push(')');
         }
         EvmExpr::Function(name, _, _, _) => {

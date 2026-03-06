@@ -39,4 +39,10 @@ impl Session {
     pub fn has_errors(&self) -> bool {
         self.diagnostics.has_errors()
     }
+
+    /// Print all accumulated diagnostics to stderr via ariadne.
+    pub fn report_diagnostics(&self) {
+        let path = self.config.input_file.display().to_string();
+        self.diagnostics.report_all_with_path(&path, &self.source);
+    }
 }
