@@ -1,8 +1,10 @@
 //! The main compiler struct that orchestrates the compilation pipeline
 
-use std::collections::HashSet;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use edge_ast::Program;
 use edge_diagnostics::Diagnostic;
@@ -387,8 +389,10 @@ impl Compiler {
 
             // Collect all top-level items from the imported module, skipping its own imports.
             for stmt in imported_program.stmts {
-                if matches!(&stmt, edge_ast::Stmt::ModuleImport(_) | edge_ast::Stmt::ModuleDecl(_))
-                {
+                if matches!(
+                    &stmt,
+                    edge_ast::Stmt::ModuleImport(_) | edge_ast::Stmt::ModuleDecl(_)
+                ) {
                     continue;
                 }
                 new_stmts.push(stmt);

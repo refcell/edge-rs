@@ -16,8 +16,7 @@
 //! - `std/tokens/erc20.edge`     → key `"tokens/erc20"`
 //! - `std/math/signed_wad.edge`  → key `"math/signed_wad"`
 
-use std::fs;
-use std::path::Path;
+use std::{fs, path::Path};
 
 fn main() {
     // Locate std/ relative to this crate's manifest directory.
@@ -35,8 +34,11 @@ fn main() {
         // crate that didn't check out the full workspace).  Emit an empty table
         // so the crate still compiles; imports will only work if the user
         // provides --std-path / EDGE_STD_PATH at runtime.
-        fs::write(&out_path, "pub static STD_SOURCES: &[(&str, &str)] = &[];\n")
-            .expect("failed to write std_embedded.rs");
+        fs::write(
+            &out_path,
+            "pub static STD_SOURCES: &[(&str, &str)] = &[];\n",
+        )
+        .expect("failed to write std_embedded.rs");
         return;
     }
 
