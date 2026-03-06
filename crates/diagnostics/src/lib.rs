@@ -207,7 +207,8 @@ impl DiagnosticBag {
                     .as_ref()
                     .map_or_else(|| path.to_string(), |f| f.path.clone());
                 let start = label.span.start;
-                let end = label.span.end.max(start + 1);
+                // Our spans use inclusive end; ariadne uses exclusive ranges
+                let end = (label.span.end + 1).max(start + 1);
                 let color = match label.severity {
                     Severity::Error => ariadne::Color::Red,
                     Severity::Warning => ariadne::Color::Yellow,
