@@ -36,13 +36,16 @@ impl AstToEgglog {
                     {
                         return self.lower_union_instantiation_expr(&mangled, variant_name, args);
                     }
-                    return Err(IrError::LoweringSpanned {
-                        message: format!(
-                            "cannot infer type parameters for generic type `{type_name}` \
-                             from `{type_name}::{variant_name}(...)` — provide explicit type arguments",
-                        ),
-                        span: span.clone(),
-                    });
+                    return Err(IrError::Diagnostic(
+                        edge_diagnostics::Diagnostic::error(format!(
+                            "cannot infer type parameters for generic type `{type_name}`",
+                        ))
+                        .with_label(
+                            span.clone(),
+                            format!("cannot infer type arguments from `{type_name}::{variant_name}(...)`"),
+                        )
+                        .with_note("provide explicit type arguments, e.g. `{type_name}<u256>::{variant_name}(...)`".to_string()),
+                    ));
                 }
             }
         }
@@ -191,10 +194,24 @@ impl AstToEgglog {
 
         // If receiver type is known but no method found, give a clear error
         if let Some(ref type_name) = receiver_type {
-            return Err(IrError::LoweringSpanned {
-                message: format!("no method `{method_name}` found for type `{type_name}`"),
-                span: span.clone(),
-            });
+            let mut diag = edge_diagnostics::Diagnostic::error(format!(
+                "no method named `{method_name}` found for type `{type_name}`",
+            ))
+            .with_label(span.clone(), format!("method not found in `{type_name}`"));
+            // Check if there are any inherent methods to suggest
+            if let Some(methods) = self.inherent_methods.get(type_name) {
+                let available: Vec<&str> = methods
+                    .iter()
+                    .map(|m| m.fn_decl.name.name.as_str())
+                    .collect();
+                if !available.is_empty() {
+                    diag = diag.with_note(format!(
+                        "available methods for `{type_name}`: {}",
+                        available.join(", "),
+                    ));
+                }
+            }
+            return Err(IrError::Diagnostic(diag));
         }
 
         // Fallback: treat as FunctionCall(FieldAccess(...), args) — lower normally
@@ -224,10 +241,15 @@ impl AstToEgglog {
                 .collect();
             return self.inline_function_call(&params, &body, args);
         }
-        Err(IrError::LoweringSpanned {
-            message: format!("no method `{method_name}` found for type `{type_name}`"),
-            span: span.clone(),
-        })
+        Err(IrError::Diagnostic(
+            edge_diagnostics::Diagnostic::error(format!(
+                "no method named `{method_name}` found for type `{type_name}`",
+            ))
+            .with_label(
+                span.clone(),
+                format!("`{type_name}` does not have a method named `{method_name}`"),
+            ),
+        ))
     }
 
     /// Lower a qualified trait call: `Trait::method(receiver`, args...)
@@ -240,10 +262,15 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         // Determine the concrete type from the first argument
         if args.is_empty() {
-            return Err(IrError::LoweringSpanned {
-                message: format!("qualified trait call `{trait_name}::{method_name}` requires at least one argument"),
-                span: span.clone(),
-            });
+            return Err(IrError::Diagnostic(
+                edge_diagnostics::Diagnostic::error(format!(
+                    "`{trait_name}::{method_name}` requires at least one argument (the receiver)",
+                ))
+                .with_label(span.clone(), "expected at least one argument")
+                .with_note(format!(
+                    "qualified trait calls pass the receiver explicitly: `{trait_name}::{method_name}(value, ...)`",
+                )),
+            ));
         }
 
         // Try to infer receiver type
@@ -261,11 +288,14 @@ impl AstToEgglog {
             }
         }
 
-        // If we can't determine the type, just inline as a regular call attempt
-        Err(IrError::LoweringSpanned {
-            message: format!("cannot resolve `{trait_name}::{method_name}` — type not determined"),
-            span: span.clone(),
-        })
+        // If we can't determine the type or no impl found
+        let msg = receiver_type.as_ref().map_or_else(
+            || format!("cannot resolve `{trait_name}::{method_name}`: could not determine receiver type"),
+            |type_name| format!("type `{type_name}` does not implement trait `{trait_name}`"),
+        );
+        Err(IrError::Diagnostic(
+            edge_diagnostics::Diagnostic::error(&msg).with_label(span.clone(), msg),
+        ))
     }
 
     /// Lower a generic function call by monomorphizing with inferred types.

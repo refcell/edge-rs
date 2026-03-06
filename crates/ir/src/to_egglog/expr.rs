@@ -213,7 +213,7 @@ impl AstToEgglog {
         match expr {
             edge_ast::Expr::Literal(lit) => self.lower_literal(lit),
 
-            edge_ast::Expr::Ident(ident) => self.lower_ident(&ident.name),
+            edge_ast::Expr::Ident(ident) => self.lower_ident(&ident.name, Some(&ident.span)),
 
             edge_ast::Expr::Binary(lhs, op, rhs, span) => {
                 // Check for operator overloading on user-defined types
@@ -331,7 +331,7 @@ impl AstToEgglog {
                 }
                 // Resolve module-prefixed paths or error on invalid partial paths.
                 let name = self.resolve_path_to_name(components)?;
-                self.lower_ident(&name)
+                self.lower_ident(&name, components.last().map(|c| &c.span))
             }
 
             edge_ast::Expr::TupleInstantiation(_, elements, _span) => {
@@ -439,7 +439,11 @@ impl AstToEgglog {
     }
 
     /// Lower an identifier reference.
-    pub(crate) fn lower_ident(&self, name: &str) -> Result<RcExpr, IrError> {
+    pub(crate) fn lower_ident(
+        &self,
+        name: &str,
+        span: Option<&edge_types::span::Span>,
+    ) -> Result<RcExpr, IrError> {
         // Search scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.bindings.get(name) {
@@ -471,7 +475,17 @@ impl AstToEgglog {
                 };
             }
         }
-        Err(IrError::Lowering(format!("undefined variable: {name}")))
+        span.map_or_else(
+            || Err(IrError::Lowering(format!("undefined variable: {name}"))),
+            |span| {
+                Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "cannot find value `{name}` in this scope",
+                    ))
+                    .with_label(span.clone(), "not found in this scope"),
+                ))
+            },
+        )
     }
 
     /// Lower an assignment expression.
@@ -526,9 +540,12 @@ impl AstToEgglog {
                         };
                     }
                 }
-                Err(IrError::Lowering(format!(
-                    "assignment to undefined variable: {name}"
-                )))
+                Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "cannot find value `{name}` in this scope",
+                    ))
+                    .with_label(ident.span.clone(), "not found in this scope"),
+                ))
             }
             edge_ast::Expr::ArrayIndex(base, index, _end_index, _span) => {
                 // Check storage array write first
@@ -637,15 +654,19 @@ impl AstToEgglog {
             // Only dispatch to operator traits from std::ops.
             // User-defined traits named "Add" etc. do NOT get operator overloading.
             if !self.std_ops_traits.contains(trait_name) {
-                // std::ops trait not imported — cannot use operator on this type
-                return Err(IrError::LoweringSpanned {
-                    message: format!(
-                        "cannot use operator `{op}` on type `{type_name}`: \
-                         import `use std::ops::{trait_name};` and implement it for `{type_name}`",
-                        op = Self::op_symbol(op),
-                    ),
-                    span: span.clone(),
-                });
+                let op_sym = Self::op_symbol(op);
+                return Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "cannot apply operator `{op_sym}` to type `{type_name}`",
+                    ))
+                    .with_label(
+                        span.clone(),
+                        format!("no implementation for `{type_name} {op_sym} {type_name}`"),
+                    )
+                    .with_note(format!(
+                        "the trait `std::ops::{trait_name}` is not imported; add `use std::ops::{trait_name};` and implement it for `{type_name}`",
+                    )),
+                ));
             }
 
             // Look up trait impl for this type
@@ -662,14 +683,19 @@ impl AstToEgglog {
                 return Ok(Some(result));
             }
             // std::ops trait is imported but type doesn't implement it
-            return Err(IrError::LoweringSpanned {
-                message: format!(
-                    "type `{type_name}` does not implement `std::ops::{trait_name}` \
-                     (required for operator `{op}`)",
-                    op = Self::op_symbol(op),
-                ),
-                span: span.clone(),
-            });
+            let op_sym = Self::op_symbol(op);
+            return Err(IrError::Diagnostic(
+                edge_diagnostics::Diagnostic::error(format!(
+                    "cannot apply operator `{op_sym}` to type `{type_name}`",
+                ))
+                .with_label(
+                    span.clone(),
+                    format!("no implementation for `{type_name} {op_sym} {type_name}`"),
+                )
+                .with_note(format!(
+                    "an implementation of `std::ops::{trait_name}` might be missing for `{type_name}`",
+                )),
+            ));
         }
 
         // Primitive types — use built-in ops
@@ -732,13 +758,19 @@ impl AstToEgglog {
             .collect::<Vec<_>>()
             .join("::");
         let last = &components.last().unwrap().name;
-        Err(IrError::LoweringSpanned {
-            message: format!(
-                "unresolved path `{path_str}`. \
-                 Use the unqualified name `{last}` (with a `use` import) instead"
-            ),
-            span: components[0].span.clone(),
-        })
+        // Span the full path from first to last component
+        let full_span = edge_types::span::Span {
+            start: components.first().unwrap().span.start,
+            end: components.last().unwrap().span.end,
+            file: components.first().unwrap().span.file.clone(),
+        };
+        Err(IrError::Diagnostic(
+            edge_diagnostics::Diagnostic::error(format!("unresolved path `{path_str}`",))
+                .with_label(full_span, "not found in this scope")
+                .with_note(format!(
+                    "use the unqualified name `{last}` with a `use` import instead",
+                )),
+        ))
     }
 
     /// Lower a builtin call (@caller, @callvalue, etc.).

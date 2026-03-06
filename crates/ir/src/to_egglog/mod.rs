@@ -511,16 +511,34 @@ impl AstToEgglog {
 
                         // Validate: all required trait methods must be provided
                         if let Some(trait_info) = self.trait_registry.get(&trait_name.name) {
-                            for (req_name, _) in &trait_info.required_methods {
-                                if !methods.contains_key(req_name) {
-                                    return Err(IrError::LoweringSpanned {
-                                        message: format!(
-                                            "impl `{type_name}: {}` is missing required method `{req_name}`",
-                                            trait_name.name,
-                                        ),
-                                        span: impl_block.span.clone(),
-                                    });
+                            let missing: Vec<&(String, edge_ast::item::FnDecl)> = trait_info
+                                .required_methods
+                                .iter()
+                                .filter(|(name, _)| !methods.contains_key(name))
+                                .collect();
+                            if !missing.is_empty() {
+                                let missing_names: Vec<&str> =
+                                    missing.iter().map(|(n, _)| n.as_str()).collect();
+                                let mut diag = edge_diagnostics::Diagnostic::error(format!(
+                                    "not all trait items implemented, missing: `{}`",
+                                    missing_names.join("`, `"),
+                                ));
+                                // Add trait method labels first (earlier in file)
+                                for (name, fn_decl) in &missing {
+                                    diag = diag.with_help_label(
+                                        fn_decl.span.clone(),
+                                        format!("`{name}` from trait"),
+                                    );
                                 }
+                                // Then the impl block label (the primary error site)
+                                diag = diag.with_label(
+                                    impl_block.span.clone(),
+                                    format!(
+                                        "missing `{}` in implementation",
+                                        missing_names.join("`, `"),
+                                    ),
+                                );
+                                return Err(IrError::Diagnostic(diag));
                             }
                         }
 

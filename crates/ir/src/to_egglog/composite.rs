@@ -33,8 +33,10 @@ impl AstToEgglog {
             .iter()
             .position(|(name, _)| name == variant_name)
             .ok_or_else(|| {
+                let available: Vec<&str> = variants.iter().map(|(n, _)| n.as_str()).collect();
                 IrError::Lowering(format!(
-                    "unknown variant {variant_name} in union {type_name}"
+                    "no variant named `{variant_name}` in union `{type_name}`; available variants: {}",
+                    available.join(", "),
                 ))
             })
     }
@@ -251,7 +253,7 @@ impl AstToEgglog {
 
         // Fallback: treat as contract storage field access
         let _obj_ir = self.lower_expr(obj)?;
-        self.lower_ident(field_name)
+        self.lower_ident(field_name, None)
     }
 
     /// Look up composite (struct/array) type info for a variable.

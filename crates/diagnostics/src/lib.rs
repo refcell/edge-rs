@@ -68,7 +68,7 @@ impl Diagnostic {
         }
     }
 
-    /// Add a label pointing to a source location
+    /// Add a primary label pointing to a source location (colored by diagnostic severity)
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {
         self.labels.push(Label {
             message: message.into(),
@@ -78,7 +78,17 @@ impl Diagnostic {
         self
     }
 
-    /// Add a note
+    /// Add a secondary/info label (blue) pointing to a source location
+    pub fn with_help_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.labels.push(Label {
+            message: message.into(),
+            span,
+            severity: Severity::Note,
+        });
+        self
+    }
+
+    /// Add a note appended after the diagnostic
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
@@ -169,22 +179,28 @@ impl DiagnosticBag {
             };
 
             // Determine the primary span for the report header.
-            let (file_id, offset) = diag.labels.first().map_or_else(
+            // Prefer the first label matching the diagnostic severity (the primary error site).
+            let primary_label = diag
+                .labels
+                .iter()
+                .find(|l| l.severity == diag.severity)
+                .or_else(|| diag.labels.first());
+            let (file_id, offset) = primary_label.map_or_else(
                 || (path.to_string(), 0),
-                |first_label| {
-                    let fid = first_label
+                |label| {
+                    let fid = label
                         .span
                         .file
                         .as_ref()
                         .map_or_else(|| path.to_string(), |f| f.path.clone());
-                    (fid, first_label.span.start)
+                    (fid, label.span.start)
                 },
             );
 
             let mut builder = ariadne::Report::build(kind, (file_id.clone(), offset..offset))
                 .with_message(&diag.message);
 
-            for label in &diag.labels {
+            for (i, label) in diag.labels.iter().enumerate() {
                 let fid = label
                     .span
                     .file
@@ -200,7 +216,8 @@ impl DiagnosticBag {
                 builder.add_label(
                     ariadne::Label::new((fid, start..end))
                         .with_message(&label.message)
-                        .with_color(color),
+                        .with_color(color)
+                        .with_order(i as i32),
                 );
             }
 

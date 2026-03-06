@@ -54,6 +54,12 @@ pub enum IrError {
         /// Source location where the error occurred
         span: edge_types::span::Span,
     },
+    /// Rich diagnostic error with multiple labels and notes
+    #[error("{}", .0.message)]
+    Diagnostic(
+        /// The full diagnostic with labels, notes, and severity
+        edge_diagnostics::Diagnostic,
+    ),
     /// Error during egglog execution
     #[error("egglog error: {0}")]
     Egglog(String),

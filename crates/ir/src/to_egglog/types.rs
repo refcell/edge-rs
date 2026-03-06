@@ -342,9 +342,15 @@ impl AstToEgglog {
 
         if template.type_params.len() != type_args.len() {
             return Err(IrError::Lowering(format!(
-                "type {generic_name} expects {} type arguments, got {}",
+                "type `{generic_name}` expects {} type argument{}, but {} {} supplied",
                 template.type_params.len(),
-                type_args.len()
+                if template.type_params.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
+                type_args.len(),
+                if type_args.len() == 1 { "was" } else { "were" },
             )));
         }
 
@@ -403,10 +409,14 @@ impl AstToEgglog {
         // Check all type params were inferred
         for tp in type_params {
             if !inferred.contains_key(&tp.name.name) {
-                return Err(IrError::Lowering(format!(
-                    "could not infer type parameter `{}`",
-                    tp.name.name
-                )));
+                return Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "type annotations needed: cannot infer type for parameter `{}`",
+                        tp.name.name,
+                    ))
+                    .with_label(tp.name.span.clone(), "cannot infer type for this parameter")
+                    .with_note("consider providing explicit type arguments"),
+                ));
             }
         }
 

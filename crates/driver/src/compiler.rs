@@ -138,12 +138,12 @@ impl Compiler {
             self.session.config.optimize_for,
         )
         .map_err(|e| {
-            let diag = match &e {
+            let diag = match e {
+                edge_ir::IrError::Diagnostic(d) => d,
                 edge_ir::IrError::LoweringSpanned { message, span } => {
-                    Diagnostic::error(message.clone())
-                        .with_label(span.clone(), "error occurred here")
+                    Diagnostic::error(message).with_label(span, "error occurred here")
                 }
-                _ => Diagnostic::error(format!("IR lowering error: {e}")),
+                other => Diagnostic::error(format!("IR lowering error: {other}")),
             };
             self.session.emit_error(diag);
             self.session.report_diagnostics();

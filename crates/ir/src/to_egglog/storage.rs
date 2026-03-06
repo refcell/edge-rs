@@ -320,7 +320,7 @@ impl AstToEgglog {
             }
         }
         Err(IrError::Lowering(format!(
-            "storage field not found: {name}"
+            "cannot find storage field `{name}` in the current contract"
         )))
     }
 }
