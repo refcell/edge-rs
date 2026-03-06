@@ -173,7 +173,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_reentrancy_guard_protected_withdraw_succeeds() {
-    let bc = compile_named("examples/patterns/reentrancy_guard.edge", "ReentrancyGuard");
+    let bc = compile_named("std/patterns/reentrancy_guard.edge", "ReentrancyGuard");
     let mut evm = EvmHandle::new(bc);
 
     // protectedWithdraw calls _lock, _doWithdraw, _unlock — all internal stubs.
@@ -187,7 +187,7 @@ fn test_reentrancy_guard_protected_withdraw_succeeds() {
 
 #[test]
 fn test_reentrancy_guard_unknown_selector_reverts() {
-    let bc = compile_named("examples/patterns/reentrancy_guard.edge", "ReentrancyGuard");
+    let bc = compile_named("std/patterns/reentrancy_guard.edge", "ReentrancyGuard");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -200,7 +200,7 @@ fn test_reentrancy_guard_unknown_selector_reverts() {
 #[test]
 fn test_transient_reentrancy_guard_protected_withdraw_succeeds() {
     let bc = compile_named(
-        "examples/patterns/reentrancy_guard.edge",
+        "std/patterns/reentrancy_guard.edge",
         "TransientReentrancyGuard",
     );
     let mut evm = EvmHandle::new(bc);
@@ -215,7 +215,7 @@ fn test_transient_reentrancy_guard_protected_withdraw_succeeds() {
 #[test]
 fn test_transient_reentrancy_guard_unknown_selector_reverts() {
     let bc = compile_named(
-        "examples/patterns/reentrancy_guard.edge",
+        "std/patterns/reentrancy_guard.edge",
         "TransientReentrancyGuard",
     );
     let mut evm = EvmHandle::new(bc);
@@ -229,7 +229,7 @@ fn test_transient_reentrancy_guard_unknown_selector_reverts() {
 
 #[test]
 fn test_timelock_is_ready_unscheduled_returns_false() {
-    let bc = compile_contract("examples/patterns/timelock.edge");
+    let bc = compile_contract("std/patterns/timelock.edge");
     let mut evm = EvmHandle::new(bc);
 
     // isReady(id=0, current_time=9999) — nothing scheduled, ts=0 → returns false
@@ -246,7 +246,7 @@ fn test_timelock_is_ready_unscheduled_returns_false() {
 
 #[test]
 fn test_timelock_schedule_and_is_ready() {
-    let bc = compile_contract("examples/patterns/timelock.edge");
+    let bc = compile_contract("std/patterns/timelock.edge");
     let mut evm = EvmHandle::new(bc);
 
     // min_delay is 0 initially (uninitialized storage), so any delay >= 0 passes.
@@ -282,7 +282,7 @@ fn test_timelock_schedule_and_is_ready() {
 
 #[test]
 fn test_timelock_unknown_selector_reverts() {
-    let bc = compile_contract("examples/patterns/timelock.edge");
+    let bc = compile_contract("std/patterns/timelock.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -294,7 +294,7 @@ fn test_timelock_unknown_selector_reverts() {
 
 #[test]
 fn test_factory_is_deployed_initially_false() {
-    let bc = compile_contract("examples/patterns/factory.edge");
+    let bc = compile_contract("std/patterns/factory.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("isDeployed(bytes32)"), &[[0u8; 32]]));
     assert!(ok, "isDeployed() reverted");
@@ -303,7 +303,7 @@ fn test_factory_is_deployed_initially_false() {
 
 #[test]
 fn test_factory_unknown_selector_reverts() {
-    let bc = compile_contract("examples/patterns/factory.edge");
+    let bc = compile_contract("std/patterns/factory.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");

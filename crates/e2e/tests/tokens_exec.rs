@@ -164,7 +164,7 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 
 #[test]
 fn test_weth_total_supply_initially_zero() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("totalSupply()"), &[]));
     assert!(ok, "totalSupply() reverted");
@@ -173,7 +173,7 @@ fn test_weth_total_supply_initially_zero() {
 
 #[test]
 fn test_weth_balance_of_zero_initially() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("balanceOf(address)"),
@@ -185,7 +185,7 @@ fn test_weth_balance_of_zero_initially() {
 
 #[test]
 fn test_weth_approve_returns_true() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("approve(address,uint256)"),
@@ -197,7 +197,7 @@ fn test_weth_approve_returns_true() {
 
 #[test]
 fn test_weth_allowance_initially_zero() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("allowance(address,address)"),
@@ -209,7 +209,7 @@ fn test_weth_allowance_initially_zero() {
 
 #[test]
 fn test_weth_deposit_increases_total_supply() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
 
     // deposit() — sends ETH value, mints WETH
@@ -228,7 +228,7 @@ fn test_weth_deposit_increases_total_supply() {
 
 #[test]
 fn test_weth_deposit_increases_balance() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
 
     let deposit_amount: u64 = 500_000;
@@ -250,7 +250,7 @@ fn test_weth_deposit_increases_balance() {
 
 #[test]
 fn test_weth_unknown_selector_reverts() {
-    let bc = compile_contract("examples/tokens/weth.edge");
+    let bc = compile_contract("std/tokens/weth.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -262,7 +262,7 @@ fn test_weth_unknown_selector_reverts() {
 
 #[test]
 fn test_amm_total_supply_initially_zero() {
-    let bc = compile_contract("examples/finance/amm.edge");
+    let bc = compile_contract("std/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("totalSupply()"), &[]));
     assert!(ok, "totalSupply() reverted");
@@ -271,7 +271,7 @@ fn test_amm_total_supply_initially_zero() {
 
 #[test]
 fn test_amm_balance_of_initially_zero() {
-    let bc = compile_contract("examples/finance/amm.edge");
+    let bc = compile_contract("std/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(
         selector("balanceOf(address)"),
@@ -283,7 +283,7 @@ fn test_amm_balance_of_initially_zero() {
 
 #[test]
 fn test_amm_get_reserves_initially_zero() {
-    let bc = compile_contract("examples/finance/amm.edge");
+    let bc = compile_contract("std/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("getReserves()"), &[]));
     assert!(ok, "getReserves() reverted");
@@ -299,7 +299,7 @@ fn test_amm_get_reserves_initially_zero() {
 
 #[test]
 fn test_amm_unknown_selector_reverts() {
-    let bc = compile_contract("examples/finance/amm.edge");
+    let bc = compile_contract("std/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
@@ -311,7 +311,7 @@ fn test_amm_unknown_selector_reverts() {
 
 #[test]
 fn test_erc721_total_supply_initially_zero() {
-    let bc = compile_contract("examples/tokens/erc721.edge");
+    let bc = compile_contract("std/tokens/erc721.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, out) = evm.call(calldata(selector("totalSupply()"), &[]));
     assert!(ok, "totalSupply() reverted");
@@ -320,7 +320,7 @@ fn test_erc721_total_supply_initially_zero() {
 
 #[test]
 fn test_erc721_unknown_selector_reverts() {
-    let bc = compile_contract("examples/tokens/erc721.edge");
+    let bc = compile_contract("std/tokens/erc721.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
