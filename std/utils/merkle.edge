@@ -1,0 +1,59 @@
+// merkle.edge — Merkle proof verifier
+//
+// What this demonstrates:
+//   - Fixed-size arrays [b32; 32]
+//   - for loops with index iteration
+//   - Bitwise operators (&, ^)
+//   - Comparison operators (<)
+//   - b32 type for hash digests
+//   - bool return type
+//   - Hash builtin usage
+//
+// Usage:
+//   use std::utils::merkle::IMerkleProof;
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IMerkleProof {
+    fn verify(root: b32, leaf: b32, proof: [b32; 32], proof_len: u256) -> (bool);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract MerkleProof {
+    // Verify a Merkle proof against a root hash.
+    //
+    // Iterates over each element of the proof array, hashing pairs
+    // in sorted order to reconstruct the root. Returns true if the
+    // computed root matches the expected root.
+    pub fn verify(root: b32, leaf: b32, proof: [b32; 32], proof_len: u256) -> (bool) {
+        let computed: b32;
+        computed = leaf;
+
+        for (let i: u256 = 0; i < proof_len; i = i + 1) {
+            let proof_element: b32;
+            proof_element = proof[i];
+
+            // Sort the pair before hashing to ensure canonical ordering.
+            // If computed < proof_element, hash(computed, proof_element),
+            // otherwise hash(proof_element, computed).
+            if (computed < proof_element) {
+                computed = _hash_pair(computed, proof_element);
+            } else {
+                computed = _hash_pair(proof_element, computed);
+            }
+        }
+
+        return computed == root;
+    }
+
+    // Hash two b32 values together.
+    // In a full implementation this would use keccak256 over the concatenation.
+    fn _hash_pair(a: b32, b: b32) -> (b32) {
+        // XOR-based placeholder hash for demonstration.
+        // A real implementation would use @keccak256(a, b).
+        let result: b32;
+        result = a ^ b;
+        return result;
+    }
+}

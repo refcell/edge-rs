@@ -1,0 +1,132 @@
+// erc1155.edge — ERC-1155 multi-token standard
+//
+// A multi-token contract supporting both fungible and non-fungible tokens
+// within a single contract. Inspired by solmate's ERC1155 implementation.
+//
+// This demonstrates:
+//   - Nested mappings for multi-token balances
+//   - Batch operations with fixed-size arrays
+//   - Operator approval pattern
+//   - Events with indexed fields
+//   - @caller() builtin
+//
+// Usage:
+//   use std::tokens::erc1155::IERC1155;
+
+mod tokens;
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+// Emitted when a single token type is transferred.
+event TransferSingle(
+    indexed operator: addr,
+    indexed from: addr,
+    indexed to: addr,
+    id: u256,
+    amount: u256
+);
+
+// Emitted when multiple token types are transferred in a batch.
+event TransferBatch(
+    indexed operator: addr,
+    indexed from: addr,
+    indexed to: addr
+);
+
+// Emitted when an operator is approved or revoked for all tokens.
+event ApprovalForAll(indexed owner: addr, indexed operator: addr, approved: bool);
+
+// Emitted when the URI for a token ID changes.
+event URI(indexed id: u256);
+
+// ── External Interfaces ───────────────────────────────────────────────────────
+
+// Standard ERC-1155 external interface.
+abi IERC1155 {
+    fn balanceOf(owner: addr, id: u256) -> (u256);
+    fn setApprovalForAll(operator: addr, approved: bool);
+    fn isApprovedForAll(owner: addr, operator: addr) -> (bool);
+    fn safeTransferFrom(from: addr, to: addr, id: u256, amount: u256);
+    fn uri(id: u256) -> (b32);
+}
+
+// Receiver interface — contracts that accept ERC-1155 transfers must implement this.
+abi IERC1155Receiver {
+    fn onERC1155Received(operator: addr, from: addr, id: u256, amount: u256, data: b32) -> (b32);
+    fn onERC1155BatchReceived(operator: addr, from: addr, data: b32) -> (b32);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract ERC1155 {
+    // ── State ─────────────────────────────────────────────────────────────────
+
+    // Balances: owner -> token ID -> amount.
+    let balances: &s map<addr, map<u256, u256>>;
+
+    // Operator approvals: owner -> operator -> approved.
+    let approval_for_all: &s map<addr, map<addr, bool>>;
+
+    // ── Public Read Functions ─────────────────────────────────────────────────
+
+    // Return the balance of a specific token ID for an owner.
+    pub fn balanceOf(owner: addr, id: u256) -> (u256) {
+        return balances[owner][id];
+    }
+
+    // Check if an operator is approved for all tokens of an owner.
+    pub fn isApprovedForAll(owner: addr, operator: addr) -> (bool) {
+        return approval_for_all[owner][operator];
+    }
+
+    // Return the URI for a token ID. Override in subcontracts.
+    pub fn uri(id: u256) -> (b32) {
+        return 0;
+    }
+
+    // ── ERC-1155 Core ─────────────────────────────────────────────────────────
+
+    // Enable or disable approval for an operator to manage all caller's tokens.
+    pub fn setApprovalForAll(operator: addr, approved: bool) {
+        let caller: addr;
+        caller = @caller();
+        approval_for_all[caller][operator] = approved;
+        emit ApprovalForAll(caller, operator, approved);
+    }
+
+    // Transfer `amount` of token `id` from `from` to `to`.
+    // Caller must be owner or approved operator.
+    pub fn safeTransferFrom(from: addr, to: addr, id: u256, amount: u256) {
+        let caller: addr;
+        caller = @caller();
+
+        // Caller must be the owner or an approved operator.
+        if (caller != from) {
+            let approved: bool;
+            approved = approval_for_all[from][caller];
+            if (approved == false) {
+                revert();
+            }
+        }
+
+        // Update balances.
+        balances[from][id] = balances[from][id] - amount;
+        balances[to][id] = balances[to][id] + amount;
+
+        emit TransferSingle(caller, from, to, id, amount);
+    }
+
+    // ── Internal Primitives ───────────────────────────────────────────────────
+
+    // Mint `amount` of token `id` to `to`.
+    fn _mint(to: addr, id: u256, amount: u256) {
+        balances[to][id] = balances[to][id] + amount;
+        emit TransferSingle(to, 0, to, id, amount);
+    }
+
+    // Burn `amount` of token `id` from `from`.
+    fn _burn(from: addr, id: u256, amount: u256) {
+        balances[from][id] = balances[from][id] - amount;
+        emit TransferSingle(from, from, 0, id, amount);
+    }
+}

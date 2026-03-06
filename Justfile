@@ -68,6 +68,20 @@ check-examples:
     done < <(find examples -name '*.edge' -print0 | sort -z)
     exit $failed
 
+# Parse all stdlib contracts with edgec
+check-stdlib:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    failed=0
+    while IFS= read -r -d '' f; do
+        echo "parsing $f"
+        if ! cargo run --bin edgec --quiet -- parse "$f" 2>&1; then
+            echo "FAILED: $f"
+            failed=1
+        fi
+    done < <(find std -name '*.edge' -print0 | sort -z)
+    exit $failed
+
 # Run acceptance tests
 e2e:
     cargo test -p edge-e2e

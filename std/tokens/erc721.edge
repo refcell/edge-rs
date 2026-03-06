@@ -8,11 +8,10 @@
 //   - composability: imports auth for owner-gated mint
 //
 // Import graph:
-//   erc721 → std::auth::IOwned (for mint gating)
+//   erc721 -> std::auth (IOwned, for mint gating)
 //
-// Run with:
-//   edgec lex examples/tokens/erc721.edge
-//   edgec parse examples/tokens/erc721.edge
+// Usage:
+//   use std::tokens::erc721::IERC721;
 
 mod tokens;
 

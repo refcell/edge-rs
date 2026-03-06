@@ -35,6 +35,10 @@ pub struct Cli {
     #[arg(long, value_parser = ["gas", "size"], default_value = "gas")]
     pub optimize_for: String,
 
+    /// Path to the Edge standard library directory
+    #[arg(long, env = "EDGE_STD_PATH")]
+    pub std_path: Option<PathBuf>,
+
     /// Verbosity level (-v warn, -vv info, -vvv debug, -vvvv trace)
     #[arg(short, action = ArgAction::Count, global = true)]
     pub verbose: u8,
@@ -65,9 +69,9 @@ impl Cli {
     /// Execute the CLI command
     pub fn execute(self) -> Result<()> {
         match self.command {
-            Some(Commands::Check(args)) => Self::check(args),
-            Some(Commands::Lex(args)) => Self::lex(args),
-            Some(Commands::Parse(args)) => Self::parse(args),
+            Some(Commands::Check(args)) => Self::check(args, self.std_path),
+            Some(Commands::Lex(args)) => Self::lex(args, self.std_path),
+            Some(Commands::Parse(args)) => Self::parse(args, self.std_path),
             None => {
                 if let Some(file) = self.file {
                     Self::compile(
@@ -76,6 +80,7 @@ impl Cli {
                         &self.emit,
                         self.opt_level,
                         &self.optimize_for,
+                        self.std_path,
                     )
                 } else {
                     bail!("no input file specified")
@@ -90,6 +95,7 @@ impl Cli {
         emit: &str,
         opt_level: u8,
         optimize_for: &str,
+        std_path: Option<PathBuf>,
     ) -> Result<()> {
         let emit_kind = match emit {
             "tokens" => EmitKind::Tokens,
@@ -109,6 +115,7 @@ impl Cli {
             "size" => OptimizeFor::Size,
             _ => OptimizeFor::Gas,
         };
+        config.std_path = std_path;
 
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
         let result = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -191,16 +198,18 @@ impl Cli {
         Ok(())
     }
 
-    fn check(args: FileArgs) -> Result<()> {
-        let config = CompilerConfig::new(args.file);
+    fn check(args: FileArgs, std_path: Option<PathBuf>) -> Result<()> {
+        let mut config = CompilerConfig::new(args.file);
+        config.std_path = std_path;
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
         compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
         Ok(())
     }
 
-    fn lex(args: FileArgs) -> Result<()> {
+    fn lex(args: FileArgs, std_path: Option<PathBuf>) -> Result<()> {
         let mut config = CompilerConfig::new(args.file);
         config.emit = EmitKind::Tokens;
+        config.std_path = std_path;
 
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
         let output = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;
@@ -214,9 +223,10 @@ impl Cli {
         Ok(())
     }
 
-    fn parse(args: FileArgs) -> Result<()> {
+    fn parse(args: FileArgs, std_path: Option<PathBuf>) -> Result<()> {
         let mut config = CompilerConfig::new(args.file);
         config.emit = EmitKind::Ast;
+        config.std_path = std_path;
 
         let mut compiler = Compiler::new(config).map_err(|e| anyhow::anyhow!("{}", e))?;
         let output = compiler.compile().map_err(|e| anyhow::anyhow!("{}", e))?;

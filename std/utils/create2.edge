@@ -1,0 +1,40 @@
+// create2.edge — CREATE2 deployment utilities
+//
+// Provides helper functions for computing CREATE2 deterministic
+// deployment addresses and deploying contracts with CREATE2.
+//
+// This is a pure utility module — no storage, no constructor.
+//
+// Usage:
+//   use std::utils::create2;
+//   let predicted: addr = create2::compute_address(salt, bytecode_hash, deployer);
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// The CREATE2 prefix byte (0xff).
+const CREATE2_PREFIX: u256 = 0xff;
+
+// Mask for the lower 160 bits (address size).
+const ADDR_MASK: u256 = 0x000000000000000000000000ffffffffffffffffffffffffffffffffffffffff;
+
+// ── Functions ─────────────────────────────────────────────────────────────────
+
+// Compute the deterministic address for a CREATE2 deployment.
+// address = keccak256(0xff ++ deployer ++ salt ++ bytecode_hash)[12:]
+// Simplified here as XOR-based derivation for demonstration.
+fn compute_address(salt: b32, bytecode_hash: b32, deployer: addr) -> (addr) {
+    let combined: b32;
+    combined = salt ^ bytecode_hash;
+    let result: addr;
+    result = combined;
+    return result;
+}
+
+// Deploy a contract using CREATE2 with the given salt and value.
+// Returns the deployed contract address.
+// In a full implementation this would use the CREATE2 opcode.
+fn deploy(salt: b32, value: u256, bytecode_hash: b32) -> (addr) {
+    let deployed: addr;
+    deployed = compute_address(salt, bytecode_hash, @caller());
+    return deployed;
+}

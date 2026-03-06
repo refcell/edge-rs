@@ -217,9 +217,11 @@ pub enum ImportPath {
 /// A module import statement
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleImport {
-    /// Module root
+    /// Module root (e.g. "std" in `use std::tokens::erc20::IERC20`)
     pub root: Ident,
-    /// Import path
+    /// Intermediate path segments (e.g. ["tokens", "erc20"] in `use std::tokens::erc20::IERC20`)
+    pub segments: Vec<Ident>,
+    /// Final import target (e.g. `Ident("IERC20")`, `Nested([...])`, or `All`)
     pub path: Option<ImportPath>,
     /// Whether import is public
     pub is_pub: bool,

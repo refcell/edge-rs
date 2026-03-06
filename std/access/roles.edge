@@ -1,0 +1,120 @@
+// roles.edge — Multi-role authority with role-based access control
+//
+// What this demonstrates:
+//   - Nested maps: map<addr, map<b32, bool>>
+//   - const role identifiers (b32 type)
+//   - hasRole/grantRole/revokeRole pattern
+//   - Events with indexed fields
+//   - @caller() builtin
+//   - if branching for access checks
+//   - Multiple storage mappings
+//
+// Usage:
+//   use std::access::roles::IAccessControl;
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+// Role identifiers are b32 hashes.
+// DEFAULT_ADMIN_ROLE is the role that can grant and revoke other roles.
+const DEFAULT_ADMIN_ROLE: b32 = 0x0000000000000000000000000000000000000000000000000000000000000000;
+
+// Example roles for common access patterns.
+const MINTER_ROLE: b32 = 0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6;
+const PAUSER_ROLE: b32 = 0x65d7a28e3265b37a6474929f336521b332c1681b933f6cb9f3376673440d862a;
+const UPGRADER_ROLE: b32 = 0x189ab7a9244df0848122154315af71fe140f3db0fe014031783b0946b8c9d2e3;
+
+// ── Events ────────────────────────────────────────────────────────────────────
+
+event RoleGranted(indexed role: b32, indexed account: addr, indexed sender: addr);
+event RoleRevoked(indexed role: b32, indexed account: addr, indexed sender: addr);
+event RoleAdminChanged(indexed role: b32, indexed previousAdmin: b32, indexed newAdmin: b32);
+
+// ── External Interface ────────────────────────────────────────────────────────
+
+abi IAccessControl {
+    fn hasRole(role: b32, account: addr) -> (bool);
+    fn grantRole(role: b32, account: addr);
+    fn revokeRole(role: b32, account: addr);
+    fn renounceRole(role: b32, account: addr);
+    fn getRoleAdmin(role: b32) -> (b32);
+}
+
+// ── Contract ──────────────────────────────────────────────────────────────────
+
+contract AccessControl {
+    // Nested mapping: role -> account -> has role.
+    let roles: &s map<b32, map<addr, bool>>;
+
+    // Mapping from role to its admin role.
+    let role_admin: &s map<b32, b32>;
+
+    // Check if an account has a specific role.
+    pub fn hasRole(role: b32, account: addr) -> (bool) {
+        return roles[role][account];
+    }
+
+    // Grant a role to an account. Caller must have the admin role.
+    pub fn grantRole(role: b32, account: addr) {
+        let caller: addr;
+        caller = @caller();
+        let admin_role: b32;
+        admin_role = role_admin[role];
+        _requireRole(admin_role, caller);
+
+        let has: bool;
+        has = roles[role][account];
+        if (has == false) {
+            roles[role][account] = true;
+            emit RoleGranted(role, account, caller);
+        }
+    }
+
+    // Revoke a role from an account. Caller must have the admin role.
+    pub fn revokeRole(role: b32, account: addr) {
+        let caller: addr;
+        caller = @caller();
+        let admin_role: b32;
+        admin_role = role_admin[role];
+        _requireRole(admin_role, caller);
+
+        let has: bool;
+        has = roles[role][account];
+        if (has == true) {
+            roles[role][account] = false;
+            emit RoleRevoked(role, account, caller);
+        }
+    }
+
+    // Renounce a role. An account can only renounce its own role.
+    pub fn renounceRole(role: b32, account: addr) {
+        let caller: addr;
+        caller = @caller();
+        if (caller != account) {
+            revert();
+        }
+        roles[role][account] = false;
+        emit RoleRevoked(role, account, caller);
+    }
+
+    // Return the admin role for a given role.
+    pub fn getRoleAdmin(role: b32) -> (b32) {
+        return role_admin[role];
+    }
+
+    // Set the admin role for a given role. Only callable internally.
+    fn _setRoleAdmin(role: b32, adminRole: b32) {
+        let prev: b32;
+        prev = role_admin[role];
+        role_admin[role] = adminRole;
+        emit RoleAdminChanged(role, prev, adminRole);
+    }
+
+    // Internal: revert if account does not have the required role.
+    fn _requireRole(role: b32, account: addr) {
+        let has: bool;
+        has = roles[role][account];
+        if (has == false) {
+            revert();
+        }
+    }
+}
