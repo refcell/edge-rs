@@ -75,13 +75,14 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
                 expr_to_sexp(st)
             )
         }
-        EvmExpr::Log(n, topics, data, st) => {
+        EvmExpr::Log(n, topics, data_offset, data_size, st) => {
             let topics_s = list_to_sexp(topics);
             format!(
-                "(Log {} {} {} {})",
+                "(Log {} {} {} {} {})",
                 n,
                 topics_s,
-                expr_to_sexp(data),
+                expr_to_sexp(data_offset),
+                expr_to_sexp(data_size),
                 expr_to_sexp(st)
             )
         }
@@ -246,6 +247,7 @@ const fn ternop_sexp(op: &EvmTernaryOp) -> &'static str {
         EvmTernaryOp::MStore8 => "(OpMStore8)",
         EvmTernaryOp::Keccak256 => "(OpKeccak256)",
         EvmTernaryOp::Select => "(OpSelect)",
+        EvmTernaryOp::CalldataCopy => "(OpCalldataCopy)",
     }
 }
 
@@ -453,9 +455,10 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                 "Log" => {
                     let n = atom_i64(&items[1])? as usize;
                     let topics = sexp_to_list(&items[2])?;
-                    let data = sexp_to_evm_expr(&items[3])?;
-                    let st = sexp_to_evm_expr(&items[4])?;
-                    Ok(Rc::new(EvmExpr::Log(n, topics, data, st)))
+                    let data_offset = sexp_to_evm_expr(&items[3])?;
+                    let data_size = sexp_to_evm_expr(&items[4])?;
+                    let st = sexp_to_evm_expr(&items[5])?;
+                    Ok(Rc::new(EvmExpr::Log(n, topics, data_offset, data_size, st)))
                 }
                 "Revert" => {
                     let off = sexp_to_evm_expr(&items[1])?;
@@ -715,6 +718,7 @@ fn sexp_to_ternop(sexp: &Sexp) -> Result<EvmTernaryOp, IrError> {
                 "OpMStore8" => Ok(EvmTernaryOp::MStore8),
                 "OpKeccak256" => Ok(EvmTernaryOp::Keccak256),
                 "OpSelect" => Ok(EvmTernaryOp::Select),
+                "OpCalldataCopy" => Ok(EvmTernaryOp::CalldataCopy),
                 other => Err(IrError::Extraction(format!("unknown ternary op: {other}"))),
             }
         }
@@ -953,7 +957,7 @@ fn is_leaf_form(tree: &STree) -> bool {
                     | "OpAnd" | "OpOr" | "OpXor" | "OpShl" | "OpShr" | "OpSar" | "OpByte"
                     | "OpLogAnd" | "OpLogOr" | "OpSLoad" | "OpTLoad" | "OpMLoad" | "OpCalldataLoad"
                     | "OpIsZero" | "OpNot" | "OpNeg" | "OpSignExtend"
-                    | "OpSStore" | "OpTStore" | "OpMStore" | "OpMStore8" | "OpKeccak256" | "OpSelect"
+                    | "OpSStore" | "OpTStore" | "OpMStore" | "OpMStore8" | "OpKeccak256" | "OpSelect" | "OpCalldataCopy"
                     // Types
                     | "UIntT" | "IntT" | "BytesT" | "AddrT" | "BoolT" | "UnitT" | "StateT"
                     | "Base" | "TupleT" | "TLCons" | "TLNil"

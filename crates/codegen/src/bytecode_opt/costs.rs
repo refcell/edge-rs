@@ -34,8 +34,8 @@ pub(crate) fn inst_gas_cost(name: &str) -> u32 {
         // Block hash (20)
         "IBlockHash" => 20,
 
-        // MCopy (3 base + 3 per word — approximate)
-        "IMCopy" => 6,
+        // CallDataCopy / MCopy (3 base + 3 per word — approximate)
+        "ICallDataCopy" | "IMCopy" => 6,
 
         // Storage (warm)
         "ISLoad" => 2100,

@@ -249,7 +249,7 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             replace_sloads_inline(b, known),
             replace_sloads_inline(c, known),
         )),
-        EvmExpr::Log(count, topics, data, state) => {
+        EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics
                 .iter()
                 .map(|t| replace_sloads_inline(t, known))
@@ -257,7 +257,8 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             Rc::new(EvmExpr::Log(
                 *count,
                 ts,
-                replace_sloads_inline(data, known),
+                replace_sloads_inline(data_offset, known),
+                replace_sloads_inline(data_size, known),
                 replace_sloads_inline(state, known),
             ))
         }
@@ -375,11 +376,12 @@ fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>) {
             collect_sload_slots_inner(body, out);
         }
         EvmExpr::VarStore(_, val) => collect_sload_slots_inner(val, out),
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
                 collect_sload_slots_inner(t, out);
             }
-            collect_sload_slots_inner(data, out);
+            collect_sload_slots_inner(data_offset, out);
+            collect_sload_slots_inner(data_size, out);
             collect_sload_slots_inner(state, out);
         }
         EvmExpr::EnvRead(_, s) => collect_sload_slots_inner(s, out),
@@ -778,9 +780,10 @@ fn has_disqualifying_ops(expr: &RcExpr) -> bool {
             has_disqualifying_ops(init) || has_disqualifying_ops(body)
         }
         EvmExpr::VarStore(_, val) => has_disqualifying_ops(val),
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             topics.iter().any(has_disqualifying_ops)
-                || has_disqualifying_ops(data)
+                || has_disqualifying_ops(data_offset)
+                || has_disqualifying_ops(data_size)
                 || has_disqualifying_ops(state)
         }
         EvmExpr::EnvRead(_, s) => has_disqualifying_ops(s),
@@ -859,11 +862,12 @@ fn collect_storage_slots(expr: &RcExpr, result: &mut HashMap<SlotKey, SlotUsage>
         EvmExpr::VarStore(_, val) => {
             collect_storage_slots(val, result);
         }
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
                 collect_storage_slots(t, result);
             }
-            collect_storage_slots(data, result);
+            collect_storage_slots(data_offset, result);
+            collect_storage_slots(data_size, result);
             collect_storage_slots(state, result);
         }
         EvmExpr::EnvRead(_, s) => collect_storage_slots(s, result),
@@ -993,14 +997,15 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
             let ns = replace_storage(s, key, var_name, replace_stores);
             Rc::new(EvmExpr::EnvRead1(*op, na, ns))
         }
-        EvmExpr::Log(count, topics, data, state) => {
+        EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics
                 .iter()
                 .map(|t| replace_storage(t, key, var_name, replace_stores))
                 .collect();
-            let nd = replace_storage(data, key, var_name, replace_stores);
+            let noff = replace_storage(data_offset, key, var_name, replace_stores);
+            let nsz = replace_storage(data_size, key, var_name, replace_stores);
             let ns = replace_storage(state, key, var_name, replace_stores);
-            Rc::new(EvmExpr::Log(*count, ts, nd, ns))
+            Rc::new(EvmExpr::Log(*count, ts, noff, nsz, ns))
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
             let na = replace_storage(a, key, var_name, replace_stores);

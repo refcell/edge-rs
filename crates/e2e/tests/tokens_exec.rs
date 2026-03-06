@@ -261,7 +261,6 @@ fn test_weth_unknown_selector_reverts() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires tuple instantiation in egglog IR"]
 fn test_amm_total_supply_initially_zero() {
     let bc = compile_contract("examples/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
@@ -271,7 +270,6 @@ fn test_amm_total_supply_initially_zero() {
 }
 
 #[test]
-#[ignore = "requires tuple instantiation in egglog IR"]
 fn test_amm_balance_of_initially_zero() {
     let bc = compile_contract("examples/finance/amm.edge");
     let mut evm = EvmHandle::new(bc);
@@ -284,9 +282,45 @@ fn test_amm_balance_of_initially_zero() {
 }
 
 #[test]
-#[ignore = "requires tuple instantiation in egglog IR"]
+fn test_amm_get_reserves_initially_zero() {
+    let bc = compile_contract("examples/finance/amm.edge");
+    let mut evm = EvmHandle::new(bc);
+    let (ok, out) = evm.call(calldata(selector("getReserves()"), &[]));
+    assert!(ok, "getReserves() reverted");
+    // Tuple return: 64 bytes (two u256 values)
+    assert!(
+        out.len() >= 64,
+        "getReserves should return 64 bytes, got {}",
+        out.len()
+    );
+    assert_eq!(decode_u256(&out[0..32]), 0, "reserve0 should be 0");
+    assert_eq!(decode_u256(&out[32..64]), 0, "reserve1 should be 0");
+}
+
+#[test]
 fn test_amm_unknown_selector_reverts() {
     let bc = compile_contract("examples/finance/amm.edge");
+    let mut evm = EvmHandle::new(bc);
+    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!ok, "unknown selector should revert");
+}
+
+// =============================================================================
+// ERC721
+// =============================================================================
+
+#[test]
+fn test_erc721_total_supply_initially_zero() {
+    let bc = compile_contract("examples/tokens/erc721.edge");
+    let mut evm = EvmHandle::new(bc);
+    let (ok, out) = evm.call(calldata(selector("totalSupply()"), &[]));
+    assert!(ok, "totalSupply() reverted");
+    assert_eq!(decode_u256(&out), 0, "ERC721 totalSupply should start at 0");
+}
+
+#[test]
+fn test_erc721_unknown_selector_reverts() {
+    let bc = compile_contract("examples/tokens/erc721.edge");
     let mut evm = EvmHandle::new(bc);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");

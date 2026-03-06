@@ -199,6 +199,9 @@ pub enum EvmTernaryOp {
     Keccak256,
     /// Conditional select: (cond, `true_val`, `false_val`) -> val
     Select,
+    /// Calldata copy: (`dest_offset`, `cd_offset`, `size`) -> state
+    /// Copies `size` bytes from calldata at `cd_offset` to memory at `dest_offset`.
+    CalldataCopy,
 }
 
 // ============================================================
@@ -288,8 +291,8 @@ pub enum EvmExpr {
     EnvRead1(EvmEnvOp, RcExpr, RcExpr),
 
     // ---- EVM-specific ----
-    /// Log event: (`topic_count`, topics, data, state) -> state
-    Log(usize, Vec<RcExpr>, RcExpr, RcExpr),
+    /// Log event: (`topic_count`, topics, `data_offset`, `data_size`, state) -> state
+    Log(usize, Vec<RcExpr>, RcExpr, RcExpr, RcExpr),
     /// Revert: (offset, size, state) -> !
     Revert(RcExpr, RcExpr, RcExpr),
     /// Return: (offset, size, state) -> !
@@ -332,6 +335,9 @@ pub struct EvmContract {
     pub constructor: RcExpr,
     /// Runtime body (dispatcher + function bodies)
     pub runtime: RcExpr,
+    /// First free memory offset after IR-allocated regions (arrays, structs, etc.)
+    /// Codegen should start `LetBind` variable slots at or above this address.
+    pub memory_high_water: usize,
 }
 
 /// A complete program (one or more contracts + free functions).
@@ -429,6 +435,7 @@ impl std::fmt::Display for EvmTernaryOp {
             Self::MStore8 => "MSTORE8",
             Self::Keccak256 => "KECCAK256",
             Self::Select => "SELECT",
+            Self::CalldataCopy => "CALLDATACOPY",
         };
         write!(f, "{s}")
     }

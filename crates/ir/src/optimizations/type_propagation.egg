@@ -77,6 +77,7 @@
 (rule ((= e (Top (OpTStore) slot val state)))       ((HasType e (Base (StateT)))) :ruleset type-propagation)
 (rule ((= e (Top (OpMStore) offset val state)))     ((HasType e (Base (StateT)))) :ruleset type-propagation)
 (rule ((= e (Top (OpMStore8) offset val state)))    ((HasType e (Base (StateT)))) :ruleset type-propagation)
+(rule ((= e (Top (OpCalldataCopy) dest cd_off size))) ((HasType e (Base (StateT)))) :ruleset type-propagation)
 
 ;; ---- Keccak256 → u256 ----
 (rule ((= e (Top (OpKeccak256) offset size state))) ((HasType e (Base (UIntT 256)))) :ruleset type-propagation)
@@ -97,7 +98,7 @@
       :ruleset type-propagation)
 
 ;; ---- Log → state ----
-(rule ((= e (Log n topics data state)))
+(rule ((= e (Log n topics doff dsz state)))
       ((HasType e (Base (StateT))))
       :ruleset type-propagation)
 

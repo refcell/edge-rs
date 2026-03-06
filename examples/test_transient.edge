@@ -1,0 +1,38 @@
+// test_transient.edge — Execution tests for transient storage (EIP-1153)
+
+contract TestTransient {
+    let tval: &t u256;
+    let tval2: &t u256;
+    let counter: &s u256;
+
+    pub fn set_tval(v: u256) {
+        tval = v;
+    }
+
+    pub fn get_tval() -> (u256) {
+        return tval;
+    }
+
+    pub fn set_tval2(v: u256) {
+        tval2 = v;
+    }
+
+    pub fn get_tval2() -> (u256) {
+        return tval2;
+    }
+
+    // Persistent counter to prove tx boundaries
+    pub fn inc_counter() {
+        counter = counter + 1;
+    }
+
+    pub fn get_counter() -> (u256) {
+        return counter;
+    }
+
+    // Set transient + persistent in same call
+    pub fn set_both(tv: u256, cv: u256) {
+        tval = tv;
+        counter = cv;
+    }
+}

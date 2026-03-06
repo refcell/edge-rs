@@ -287,3 +287,24 @@ fn test_timelock_unknown_selector_reverts() {
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");
 }
+
+// =============================================================================
+// Factory
+// =============================================================================
+
+#[test]
+fn test_factory_is_deployed_initially_false() {
+    let bc = compile_contract("examples/patterns/factory.edge");
+    let mut evm = EvmHandle::new(bc);
+    let (ok, out) = evm.call(calldata(selector("isDeployed(bytes32)"), &[[0u8; 32]]));
+    assert!(ok, "isDeployed() reverted");
+    assert!(!decode_bool(&out), "isDeployed should be false initially");
+}
+
+#[test]
+fn test_factory_unknown_selector_reverts() {
+    let bc = compile_contract("examples/patterns/factory.edge");
+    let mut evm = EvmHandle::new(bc);
+    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!ok, "unknown selector should revert");
+}

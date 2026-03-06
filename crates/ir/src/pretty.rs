@@ -345,7 +345,7 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
         }
 
         // ---- EVM ops ----
-        EvmExpr::Log(n, topics, data, _state) => {
+        EvmExpr::Log(n, topics, data_offset, data_size, _state) => {
             indent(depth, buf);
             buf.push_str(&format!("LOG{n}("));
             // Try to inline topics
@@ -367,12 +367,9 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             }
             indent(depth + 1, buf);
             buf.push_str("data=");
-            if fits_inline(data, budget(depth + 1).saturating_sub(5)) {
-                pp_inline(data, buf);
-            } else {
-                buf.push('\n');
-                pp(data, depth + 2, buf);
-            }
+            pp_inline(data_offset, buf);
+            buf.push_str(", ");
+            pp_inline(data_size, buf);
             buf.push(')');
         }
         EvmExpr::Revert(offset, size, _state) => {
@@ -556,7 +553,7 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
             buf.push_str(&format!("${name} = "));
             pp_oneline(val, buf);
         }
-        EvmExpr::Log(n, _, _, _) => buf.push_str(&format!("LOG{n}(...)")),
+        EvmExpr::Log(n, _, _, _, _) => buf.push_str(&format!("LOG{n}(...)")),
         EvmExpr::Revert(off, size, _) => {
             buf.push_str("revert(");
             pp_oneline(off, buf);
@@ -624,7 +621,7 @@ pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
             pp_oneline(size, &mut buf);
             buf.push(')');
         }
-        EvmExpr::Log(n, topics, data, _) => {
+        EvmExpr::Log(n, topics, data_offset, data_size, _) => {
             buf.push_str(&format!("LOG{n}("));
             for (i, t) in topics.iter().enumerate() {
                 pp_oneline(t, &mut buf);
@@ -633,7 +630,9 @@ pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
                 }
             }
             buf.push_str(", data=");
-            pp_oneline(data, &mut buf);
+            pp_oneline(data_offset, &mut buf);
+            buf.push_str(", ");
+            pp_oneline(data_size, &mut buf);
             buf.push(')');
         }
         EvmExpr::ExtCall(target, value, args_off, args_len, _ret_off, _ret_len, _) => {

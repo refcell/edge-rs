@@ -121,6 +121,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("OpMStore", 3);
     m.insert("OpMStore8", 3);
     m.insert("OpSelect", 10);
+    m.insert("OpCalldataCopy", 9); // 3 base + 3*words (typically 1-2 words)
 
     // -- EvmEnvOp variants --
     for op in &[

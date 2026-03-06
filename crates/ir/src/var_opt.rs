@@ -112,11 +112,12 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
             collect_allocations(a, result);
             collect_allocations(s, result);
         }
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
                 collect_allocations(t, result);
             }
-            collect_allocations(data, result);
+            collect_allocations(data_offset, result);
+            collect_allocations(data_size, result);
             collect_allocations(state, result);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
@@ -233,11 +234,12 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             }
             Rc::new(EvmExpr::EnvRead1(*op, a, s))
         }
-        EvmExpr::Log(count, topics, data, state) => {
+        EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics.iter().map(optimize_expr).collect();
-            let d = optimize_expr(data);
+            let doff = optimize_expr(data_offset);
+            let dsz = optimize_expr(data_size);
             let s = optimize_expr(state);
-            Rc::new(EvmExpr::Log(*count, ts, d, s))
+            Rc::new(EvmExpr::Log(*count, ts, doff, dsz, s))
         }
         EvmExpr::Revert(off, sz, state) => {
             let o = optimize_expr(off);
@@ -439,11 +441,12 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
             analyze_var_inner(name, a, in_loop, info);
         }
         // Log: last arg is state — skip it.
-        EvmExpr::Log(_, topics, data, _state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, _state) => {
             for t in topics {
                 analyze_var_inner(name, t, in_loop, info);
             }
-            analyze_var_inner(name, data, in_loop, info);
+            analyze_var_inner(name, data_offset, in_loop, info);
+            analyze_var_inner(name, data_size, in_loop, info);
         }
         // ExtCall: last arg (g) is state — skip it.
         EvmExpr::ExtCall(a, b, c, d, e, f, _g) => {
@@ -589,11 +592,12 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
             collect_immutable_vars_rec(b, out);
             collect_immutable_vars_rec(c, out);
         }
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
                 collect_immutable_vars_rec(t, out);
             }
-            collect_immutable_vars_rec(data, out);
+            collect_immutable_vars_rec(data_offset, out);
+            collect_immutable_vars_rec(data_size, out);
             collect_immutable_vars_rec(state, out);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
@@ -742,9 +746,10 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
         }
         EvmExpr::EnvRead(_, s) => references_var(s, name),
         EvmExpr::EnvRead1(_, a, s) => references_var(a, name) || references_var(s, name),
-        EvmExpr::Log(_, topics, data, state) => {
+        EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             topics.iter().any(|t| references_var(t, name))
-                || references_var(data, name)
+                || references_var(data_offset, name)
+                || references_var(data_size, name)
                 || references_var(state, name)
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
@@ -854,14 +859,15 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
             let s2 = substitute_var(name, replacement, state);
             Rc::new(EvmExpr::EnvRead1(*op, a2, s2))
         }
-        EvmExpr::Log(count, topics, data, state) => {
+        EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics
                 .iter()
                 .map(|t| substitute_var(name, replacement, t))
                 .collect();
-            let d2 = substitute_var(name, replacement, data);
+            let doff = substitute_var(name, replacement, data_offset);
+            let dsz = substitute_var(name, replacement, data_size);
             let s2 = substitute_var(name, replacement, state);
-            Rc::new(EvmExpr::Log(*count, ts, d2, s2))
+            Rc::new(EvmExpr::Log(*count, ts, doff, dsz, s2))
         }
         EvmExpr::Revert(a, b, c) => {
             let a2 = substitute_var(name, replacement, a);

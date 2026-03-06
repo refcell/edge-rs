@@ -170,6 +170,7 @@ pub fn lower_and_optimize(
             storage_fields: contract.storage_fields.clone(),
             constructor: Rc::clone(&contract.constructor),
             runtime: optimized_runtime,
+            memory_high_water: contract.memory_high_water,
         });
     }
 

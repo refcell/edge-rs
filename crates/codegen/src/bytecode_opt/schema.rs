@@ -39,6 +39,7 @@ const NULLARY_INSTS: &[&str] = &[
     "ICaller",
     "ICallValue",
     "ICallDataLoad",
+    "ICallDataCopy",
     "ICallDataSize",
     "ICodeSize",
     "IGasPrice",

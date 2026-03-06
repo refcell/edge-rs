@@ -41,6 +41,6 @@
 
 ;; ---- MLoad through Log ----
 ;; LOG instructions don't modify memory.
-(rewrite (Bop (OpMLoad) offset (Log n topics data state))
+(rewrite (Bop (OpMLoad) offset (Log n topics doff dsz state))
          (Bop (OpMLoad) offset state)
          :subsume :ruleset memory-opt)

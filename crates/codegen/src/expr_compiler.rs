@@ -51,10 +51,23 @@ impl<'a> ExprCompiler<'a> {
         asm: &'a mut Assembler,
         allocation_modes: HashMap<String, VarAllocation>,
     ) -> Self {
+        Self::with_allocations_and_base(asm, allocation_modes, LET_BIND_BASE_OFFSET)
+    }
+
+    /// Create an expression compiler with pre-computed allocation modes and
+    /// a custom base offset for `LetBind` memory slots.
+    ///
+    /// Use `memory_base` to avoid colliding with IR-allocated memory regions
+    /// (arrays, structs, etc. placed during lowering).
+    pub fn with_allocations_and_base(
+        asm: &'a mut Assembler,
+        allocation_modes: HashMap<String, VarAllocation>,
+        memory_base: usize,
+    ) -> Self {
         Self {
             asm,
             let_bindings: HashMap::new(),
-            next_let_offset: LET_BIND_BASE_OFFSET,
+            next_let_offset: memory_base,
             free_slots: Vec::new(),
             allocation_modes,
             stack_vars: HashMap::new(),
@@ -138,8 +151,8 @@ impl<'a> ExprCompiler<'a> {
                 // compile_env_read1 handles depth tracking internally
             }
 
-            EvmExpr::Log(topic_count, topics, data, _state) => {
-                self.compile_log(*topic_count, topics, data);
+            EvmExpr::Log(topic_count, topics, data_offset, data_size, _state) => {
+                self.compile_log(*topic_count, topics, data_offset, data_size);
             }
 
             EvmExpr::Revert(offset, size, _state) => {
@@ -294,7 +307,13 @@ impl<'a> ExprCompiler<'a> {
             self.stack_depth += 1;
         } else {
             // Memory mode: PUSH offset, MLOAD
-            let offset = self.let_bindings[name];
+            let offset = *self.let_bindings.get(name).unwrap_or_else(|| {
+                panic!(
+                    "no entry found for key: {name}; let_bindings keys: {:?}, stack_vars keys: {:?}",
+                    self.let_bindings.keys().collect::<Vec<_>>(),
+                    self.stack_vars.keys().collect::<Vec<_>>()
+                )
+            });
             self.asm.emit_push_usize(offset);
             self.stack_depth += 1;
             self.asm.emit_op(Opcode::MLoad);
@@ -750,6 +769,15 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit_op(Opcode::Keccak256);
                 self.stack_depth -= 1; // pops 2, pushes 1
             }
+            EvmTernaryOp::CalldataCopy => {
+                // CalldataCopy(dest_offset, cd_offset, size)
+                // EVM stack order: CALLDATACOPY(destOffset, offset, size) — pops 3, pushes 0
+                self.compile_expr(c); // size
+                self.compile_expr(b); // cd_offset
+                self.compile_expr(a); // dest_offset
+                self.asm.emit_op(Opcode::CallDataCopy);
+                self.stack_depth -= 3; // pops 3, pushes 0
+            }
             EvmTernaryOp::Select => {
                 // Select(cond, true_val, false_val) → if cond then true_val else false_val
                 let else_label = self.asm.fresh_label("select_else");
@@ -808,6 +836,10 @@ impl<'a> ExprCompiler<'a> {
         self.asm.emit(AsmInstruction::JumpTo(end_label.clone())); // net 0
 
         let depth_after_then = self.stack_depth;
+        let stack_vars_after_then = self.stack_vars.clone();
+        let let_bindings_after_then = self.let_bindings.clone();
+        let free_slots_after_then = self.free_slots.clone();
+
         // Restore all compiler state for the else path
         self.stack_depth = depth_before_branches;
         self.stack_vars = stack_vars_before;
@@ -819,22 +851,25 @@ impl<'a> ExprCompiler<'a> {
 
         let depth_after_else = self.stack_depth;
 
-        // Reconcile stack depths across branches:
-        // - If one branch halts, its depth is irrelevant — use the other's.
+        // Reconcile stack depths and variable state across branches:
+        // - If one branch halts, its state is irrelevant — use the other's.
         // - If neither halts, they must match.
         if then_halts && !else_halts {
-            // Use else branch's depth (then never reaches end label)
+            // Use else branch's state (then never reaches end label)
             self.stack_depth = depth_after_else;
         } else if else_halts && !then_halts {
-            // Use then branch's depth (else never reaches end label)
+            // Use then branch's state (else never reaches end label)
             self.stack_depth = depth_after_then;
+            self.stack_vars = stack_vars_after_then;
+            self.let_bindings = let_bindings_after_then;
+            self.free_slots = free_slots_after_then;
         } else if !then_halts && !else_halts {
             debug_assert_eq!(
                 depth_after_else, depth_after_then,
                 "If branches produce different stack depths"
             );
         }
-        // else: both halt — depth is irrelevant, keep current
+        // else: both halt — state is irrelevant, keep current
 
         self.asm.emit(AsmInstruction::Label(end_label));
     }
@@ -906,30 +941,21 @@ impl<'a> ExprCompiler<'a> {
     }
 
     /// Compile a LOG instruction.
-    fn compile_log(&mut self, topic_count: usize, topics: &[RcExpr], data: &RcExpr) {
+    fn compile_log(
+        &mut self,
+        topic_count: usize,
+        topics: &[RcExpr],
+        data_offset: &RcExpr,
+        data_size: &RcExpr,
+    ) {
         // Push topics in reverse order
         for topic in topics.iter().rev() {
             self.compile_expr(topic);
         }
 
-        // Push data offset and size
-        match data.as_ref() {
-            EvmExpr::Concat(offset, size) => {
-                self.compile_expr(size);
-                self.compile_expr(offset);
-            }
-            _ => {
-                self.compile_expr(data);
-                self.asm.emit_op(Opcode::Push0);
-                self.stack_depth += 1;
-                self.asm.emit_op(Opcode::MStore);
-                self.stack_depth -= 2;
-                self.asm.emit_push_usize(32);
-                self.stack_depth += 1;
-                self.asm.emit_op(Opcode::Push0);
-                self.stack_depth += 1;
-            }
-        }
+        // Push data size then offset (EVM stack order: offset on top, size below)
+        self.compile_expr(data_size);
+        self.compile_expr(data_offset);
 
         self.asm.emit_op(Opcode::log_n(topic_count as u8));
         // LOGn pops: offset + size + n topics = 2 + topic_count
@@ -947,7 +973,7 @@ impl<'a> ExprCompiler<'a> {
             | EvmExpr::Drop(_)
             | EvmExpr::Revert(_, _, _)
             | EvmExpr::ReturnOp(_, _, _)
-            | EvmExpr::Log(_, _, _, _)
+            | EvmExpr::Log(_, _, _, _, _)
             | EvmExpr::Function(_, _, _, _)
             | EvmExpr::StorageField(_, _, _) => 0,
             EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
@@ -956,7 +982,8 @@ impl<'a> ExprCompiler<'a> {
                 EvmTernaryOp::SStore
                 | EvmTernaryOp::TStore
                 | EvmTernaryOp::MStore
-                | EvmTernaryOp::MStore8 => 0,
+                | EvmTernaryOp::MStore8
+                | EvmTernaryOp::CalldataCopy => 0,
                 EvmTernaryOp::Keccak256 | EvmTernaryOp::Select => 1,
             },
             // If: both branches should push the same count

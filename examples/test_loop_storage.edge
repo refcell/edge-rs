@@ -1,0 +1,50 @@
+// test_loop_storage.edge — Execution tests for for-loops with storage mutation
+
+contract TestLoopStorage {
+    let total: &s u256;
+    let count: &s u256;
+    let last_val: &s u256;
+
+    // Accumulate into storage in a loop
+    pub fn accumulate(n: u256) {
+        for (let i: u256 = 0; i < n; i = i + 1) {
+            total = total + i;
+        }
+    }
+
+    pub fn get_total() -> (u256) {
+        return total;
+    }
+
+    // Increment count N times
+    pub fn count_up(n: u256) {
+        for (let i: u256 = 0; i < n; i = i + 1) {
+            count = count + 1;
+        }
+    }
+
+    pub fn get_count() -> (u256) {
+        return count;
+    }
+
+    // Read+write storage in same loop iteration
+    pub fn read_write_loop(n: u256) {
+        for (let i: u256 = 0; i < n; i = i + 1) {
+            let prev: u256;
+            prev = total;
+            total = prev + i + 1;
+            last_val = prev;
+        }
+    }
+
+    pub fn get_last_val() -> (u256) {
+        return last_val;
+    }
+
+    // Reset for clean test state
+    pub fn reset() {
+        total = 0;
+        count = 0;
+        last_val = 0;
+    }
+}

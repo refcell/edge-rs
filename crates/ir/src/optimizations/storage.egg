@@ -79,7 +79,7 @@
 
 ;; ---- SLoad through Log ----
 ;; LOG instructions don't modify storage.
-(rewrite (Bop (OpSLoad) slot (Log n topics data state))
+(rewrite (Bop (OpSLoad) slot (Log n topics doff dsz state))
          (Bop (OpSLoad) slot state)
          :subsume :ruleset storage-opt)
 
@@ -100,6 +100,6 @@
          :subsume :ruleset storage-opt)
 
 ;; ---- TLoad through Log ----
-(rewrite (Bop (OpTLoad) slot (Log n topics data state))
+(rewrite (Bop (OpTLoad) slot (Log n topics doff dsz state))
          (Bop (OpTLoad) slot state)
          :subsume :ruleset storage-opt)

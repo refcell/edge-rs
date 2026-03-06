@@ -1,0 +1,74 @@
+// test_inline.edge — Execution tests for inlined function correctness
+//
+// Tests that internal function calls (which get inlined) produce
+// correct return values, especially when the inlined function has
+// local variables.
+
+contract TestInline {
+    // Simple inline: no locals
+    fn _double(x: u256) -> (u256) {
+        return x + x;
+    }
+
+    // Inline with a local variable
+    fn _add_offset(x: u256, y: u256) -> (u256) {
+        let result: u256;
+        result = x + y + 10;
+        return result;
+    }
+
+    // Inline with multiple locals
+    fn _weighted_sum(a: u256, b: u256) -> (u256) {
+        let wa: u256;
+        wa = a * 3;
+        let wb: u256;
+        wb = b * 5;
+        let total: u256;
+        total = wa + wb;
+        return total;
+    }
+
+    // Chain of inlines
+    fn _triple(x: u256) -> (u256) {
+        let tmp: u256;
+        tmp = _double(x);
+        return tmp + x;
+    }
+
+    pub fn double_val() -> (u256) {
+        return _double(21);
+    }
+
+    pub fn add_offset_val() -> (u256) {
+        return _add_offset(5, 7);
+    }
+
+    pub fn weighted_sum_val() -> (u256) {
+        return _weighted_sum(4, 6);
+    }
+
+    pub fn triple_val() -> (u256) {
+        return _triple(10);
+    }
+
+    // Inline inside a conditional
+    pub fn inline_in_branch(x: u256) -> (u256) {
+        let result: u256;
+        if (x > 10) {
+            result = _double(x);
+        } else {
+            result = _add_offset(x, 1);
+        }
+        return result;
+    }
+
+    // Inline inside a loop
+    pub fn inline_in_loop() -> (u256) {
+        let total: u256;
+        total = 0;
+        for (let i: u256 = 1; i < 5; i = i + 1) {
+            total = total + _double(i);
+        }
+        return total;
+    }
+}

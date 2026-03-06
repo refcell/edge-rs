@@ -16,7 +16,9 @@ use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
     // Analyze variable allocations to decide stack vs memory
     let allocations = var_opt::analyze_allocations(&contract.runtime);
-    let mut compiler = ExprCompiler::with_allocations(asm, allocations);
+    // Start LetBind slots after IR-allocated memory regions (arrays, structs)
+    let mut compiler =
+        ExprCompiler::with_allocations_and_base(asm, allocations, contract.memory_high_water);
     compiler.compile_expr(&contract.runtime);
     compiler.emit_overflow_revert_trampoline();
 }

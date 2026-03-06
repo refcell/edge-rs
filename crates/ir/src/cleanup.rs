@@ -76,11 +76,12 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::Revert(off2, sz2, state_sentinel()))
         }
 
-        // Log(count, topics, data, state)
-        EvmExpr::Log(count, topics, data, _state) => {
+        // Log(count, topics, data_offset, data_size, state)
+        EvmExpr::Log(count, topics, data_offset, data_size, _state) => {
             let topics2: Vec<_> = topics.iter().map(cleanup_expr).collect();
-            let data2 = cleanup_expr(data);
-            Rc::new(EvmExpr::Log(*count, topics2, data2, state_sentinel()))
+            let off2 = cleanup_expr(data_offset);
+            let sz2 = cleanup_expr(data_size);
+            Rc::new(EvmExpr::Log(*count, topics2, off2, sz2, state_sentinel()))
         }
 
         // ExtCall(target, value, args_off, args_len, ret_off, ret_len, state)

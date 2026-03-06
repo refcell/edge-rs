@@ -130,7 +130,9 @@
   ;; Keccak256 hash: (Keccak256 offset size state) -> hash (reads from memory state)
   (OpKeccak256)
   ;; Select: (Select cond true_val false_val) -> val
-  (OpSelect))
+  (OpSelect)
+  ;; Calldata copy: (CalldataCopy dest_offset cd_offset size) -> state
+  (OpCalldataCopy))
 
 ;; Operator constructors
 (constructor Bop (EvmBinaryOp EvmExpr EvmExpr) EvmExpr)
@@ -191,8 +193,8 @@
 ;; EVM-Specific Operations
 ;; ============================================================
 
-;; Log event: (Log topic_count topics data state) -> state
-(constructor Log (i64 ListExpr EvmExpr EvmExpr) EvmExpr)
+;; Log event: (Log topic_count topics data_offset data_size state) -> state
+(constructor Log (i64 ListExpr EvmExpr EvmExpr EvmExpr) EvmExpr)
 
 ;; Revert: (Revert offset size state) -> !
 (constructor Revert (EvmExpr EvmExpr EvmExpr) EvmExpr)

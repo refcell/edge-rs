@@ -151,6 +151,11 @@ pub fn mstore(offset: RcExpr, val: RcExpr, state: RcExpr) -> RcExpr {
     top(EvmTernaryOp::MStore, offset, val, state)
 }
 
+/// Memory load at offset.
+pub fn mload(offset: RcExpr, state: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::MLoad, offset, state)
+}
+
 // ---- Tuple operations ----
 
 /// Get element at index from a tuple.
@@ -225,6 +230,12 @@ pub fn drop_var(name: String) -> RcExpr {
 /// Storage field definition.
 pub fn storage_field(name: String, slot: usize, ty: EvmType) -> RcExpr {
     Rc::new(EvmExpr::StorageField(name, slot, ty))
+}
+
+/// Calldata copy: (`dest_offset`, `cd_offset`, `size`) -> state effect.
+/// Copies `size` bytes from calldata at `cd_offset` to memory at `dest_offset`.
+pub fn calldatacopy(dest: RcExpr, cd_offset: RcExpr, size: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::CalldataCopy, dest, cd_offset, size)
 }
 
 /// Keccak256 hash: (offset, size, state) -> hash.

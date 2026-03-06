@@ -147,7 +147,6 @@ fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 // =============================================================================
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_safe_add() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -160,7 +159,6 @@ fn test_math_safe_add() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_safe_sub() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -173,7 +171,6 @@ fn test_math_safe_sub() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_saturating_sub_underflow() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -191,7 +188,6 @@ fn test_math_saturating_sub_underflow() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_saturating_sub_no_underflow() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -208,7 +204,6 @@ fn test_math_saturating_sub_no_underflow() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_max() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -221,7 +216,6 @@ fn test_math_max() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_max_equal() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -234,7 +228,6 @@ fn test_math_max_equal() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_min() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -247,7 +240,6 @@ fn test_math_min() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_clamp_within_range() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -260,7 +252,6 @@ fn test_math_clamp_within_range() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_clamp_below_lo() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -277,7 +268,6 @@ fn test_math_clamp_below_lo() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_clamp_above_hi() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -294,7 +284,6 @@ fn test_math_clamp_above_hi() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_mul_div_down_exact() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -312,7 +301,6 @@ fn test_math_mul_div_down_exact() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_mul_div_down_truncates() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -330,7 +318,6 @@ fn test_math_mul_div_down_truncates() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_mul_div_up_exact() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -344,7 +331,6 @@ fn test_math_mul_div_up_exact() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_mul_div_up_rounds_up() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -362,7 +348,6 @@ fn test_math_mul_div_up_rounds_up() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_math_unknown_selector_reverts() {
     let bc = compile_contract("examples/lib/math.edge");
     let mut evm = EvmHandle::new(bc);
@@ -375,7 +360,6 @@ fn test_math_unknown_selector_reverts() {
 // =============================================================================
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_most_significant_bit_zero() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -388,7 +372,6 @@ fn test_bits_most_significant_bit_zero() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_most_significant_bit_one() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -401,7 +384,6 @@ fn test_bits_most_significant_bit_one() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_most_significant_bit_powers_of_two() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -422,7 +404,6 @@ fn test_bits_most_significant_bit_powers_of_two() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_popcount_zero() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -432,7 +413,6 @@ fn test_bits_popcount_zero() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_popcount_values() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -452,7 +432,6 @@ fn test_bits_popcount_values() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_is_power_of_two_true() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -468,7 +447,6 @@ fn test_bits_is_power_of_two_true() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_is_power_of_two_false() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -487,7 +465,6 @@ fn test_bits_is_power_of_two_false() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_extract_bit() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -508,7 +485,6 @@ fn test_bits_extract_bit() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_set_bit() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -523,7 +499,6 @@ fn test_bits_set_bit() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_clear_bit() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -538,7 +513,6 @@ fn test_bits_clear_bit() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_toggle_bit() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -553,7 +527,6 @@ fn test_bits_toggle_bit() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_least_significant_bit_zero() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -572,7 +545,6 @@ fn test_bits_least_significant_bit_zero() {
 }
 
 #[test]
-#[ignore = "module-only file, no contract to compile"]
 fn test_bits_unknown_selector_reverts() {
     let bc = compile_contract("examples/utils/bits.edge");
     let mut evm = EvmHandle::new(bc);
@@ -587,7 +559,6 @@ fn test_bits_unknown_selector_reverts() {
 // =============================================================================
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_bytes_is_zero_true() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
@@ -597,7 +568,6 @@ fn test_bytes_is_zero_true() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_bytes_is_zero_false() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
@@ -607,7 +577,6 @@ fn test_bytes_is_zero_false() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_bytes_left_pad_zero_shift() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
@@ -625,7 +594,6 @@ fn test_bytes_left_pad_zero_shift() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_bytes_left_pad_one_byte() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);
@@ -643,7 +611,6 @@ fn test_bytes_left_pad_one_byte() {
 }
 
 #[test]
-#[ignore = "requires top-level const scoping in egglog IR"]
 fn test_bytes_unknown_selector_reverts() {
     let bc = compile_contract("examples/utils/bytes.edge");
     let mut evm = EvmHandle::new(bc);

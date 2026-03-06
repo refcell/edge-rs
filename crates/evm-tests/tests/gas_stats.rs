@@ -186,6 +186,7 @@ fn print_table(title: &str, col_labels: &[&str], datasets: &[&Stats]) {
 }
 
 #[test]
+#[ignore = "slow"]
 fn gas_statistics() {
     // Collect all data first
     let c_g0 = counter_stats(EvmTestHost::deploy_edge_measured(COUNTER_PATH, 0));

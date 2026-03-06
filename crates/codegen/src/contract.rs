@@ -45,7 +45,8 @@ fn generate_constructor(
 
     // Execute constructor body (storage initializations, etc.)
     let allocations = var_opt::analyze_allocations(&contract.constructor);
-    let mut compiler = ExprCompiler::with_allocations(&mut asm, allocations);
+    let mut compiler =
+        ExprCompiler::with_allocations_and_base(&mut asm, allocations, contract.memory_high_water);
     compiler.compile_expr(&contract.constructor);
     compiler.emit_overflow_revert_trampoline();
 
@@ -156,7 +157,8 @@ pub fn generate_contract_asm(
     // Constructor body
     let mut asm = Assembler::new();
     let allocations = var_opt::analyze_allocations(&contract.constructor);
-    let mut compiler = ExprCompiler::with_allocations(&mut asm, allocations);
+    let mut compiler =
+        ExprCompiler::with_allocations_and_base(&mut asm, allocations, contract.memory_high_water);
     compiler.compile_expr(&contract.constructor);
     compiler.emit_overflow_revert_trampoline();
     let instructions = asm.take_instructions();
