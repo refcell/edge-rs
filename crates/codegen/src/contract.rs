@@ -47,6 +47,7 @@ fn generate_constructor(
     let allocations = var_opt::analyze_allocations(&contract.constructor);
     let mut compiler =
         ExprCompiler::with_allocations_and_base(&mut asm, allocations, contract.memory_high_water);
+    compiler.collect_fn_info(&contract.constructor);
     compiler.compile_expr(&contract.constructor);
     compiler.emit_overflow_revert_trampoline();
 
@@ -159,6 +160,7 @@ pub fn generate_contract_asm(
     let allocations = var_opt::analyze_allocations(&contract.constructor);
     let mut compiler =
         ExprCompiler::with_allocations_and_base(&mut asm, allocations, contract.memory_high_water);
+    compiler.collect_fn_info(&contract.constructor);
     compiler.compile_expr(&contract.constructor);
     compiler.emit_overflow_revert_trampoline();
     let instructions = asm.take_instructions();

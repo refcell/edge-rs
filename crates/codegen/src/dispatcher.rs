@@ -15,11 +15,36 @@ use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 /// executes the matching function body (which terminates with RETURN/STOP).
 pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
     // Analyze variable allocations to decide stack vs memory
-    let allocations = var_opt::analyze_allocations(&contract.runtime);
+    let mut allocations = var_opt::analyze_allocations(&contract.runtime);
+    // Also analyze internal function bodies
+    for func in &contract.internal_functions {
+        let func_allocs = var_opt::analyze_allocations(func);
+        // Merge conservatively: Memory beats Stack for same-named vars
+        for (name, alloc) in func_allocs {
+            allocations
+                .entry(name)
+                .and_modify(|existing| {
+                    if alloc.mode == var_opt::AllocationMode::Memory {
+                        existing.mode = var_opt::AllocationMode::Memory;
+                    }
+                    existing.read_count = existing.read_count.max(alloc.read_count);
+                })
+                .or_insert(alloc);
+        }
+    }
     // Start LetBind slots after IR-allocated memory regions (arrays, structs)
     let mut compiler =
         ExprCompiler::with_allocations_and_base(asm, allocations, contract.memory_high_water);
+    // Collect fn_info from both runtime and internal functions
+    compiler.collect_fn_info(&contract.runtime);
+    for func in &contract.internal_functions {
+        compiler.collect_fn_info(func);
+    }
     compiler.compile_expr(&contract.runtime);
+    // Compile internal function subroutines
+    for func in &contract.internal_functions {
+        compiler.compile_expr(func);
+    }
     compiler.emit_overflow_revert_trampoline();
 }
 

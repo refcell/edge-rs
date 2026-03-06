@@ -12,7 +12,7 @@
 
 use std::{collections::HashMap, rc::Rc};
 
-use crate::schema::{EvmExpr, EvmTernaryOp, RcExpr};
+use crate::schema::{EvmExpr, EvmTernaryOp, EvmType, RcExpr};
 
 /// How a variable should be allocated at codegen time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,11 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
                 collect_allocations(x, result);
             }
         }
-        EvmExpr::Call(_, args) => collect_allocations(args, result),
+        EvmExpr::Call(_, args) => {
+            for arg in args {
+                collect_allocations(arg, result);
+            }
+        }
         EvmExpr::VarStore(_, val) => collect_allocations(val, result),
         EvmExpr::Function(_, _, _, body) => collect_allocations(body, result),
         EvmExpr::Const(..)
@@ -139,12 +143,31 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
 }
 
 /// Optimize an entire program's contract runtimes.
-pub fn optimize_program(program: &mut crate::schema::EvmProgram) {
+///
+/// At O1+, inline all Call nodes by substituting arguments and renaming
+/// locals for uniqueness. At O0, keep original calls (codegen handles
+/// arg passing via the stack as JUMP subroutines).
+pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_level: u8) {
     for contract in &mut program.contracts {
         contract.runtime = optimize_expr(&contract.runtime);
+        if optimization_level >= 1 {
+            // Inline: substitute args, rename locals, splice body at call site.
+            // Include both internal and free functions.
+            let all_functions: Vec<_> = contract
+                .internal_functions
+                .iter()
+                .chain(program.free_functions.iter())
+                .cloned()
+                .collect();
+            inline_calls(&mut contract.runtime, &all_functions);
+        }
         // Insert early Drops in halting branches for better dead-var-elim
         contract.runtime = insert_early_drops(&contract.runtime);
         contract.constructor = insert_early_drops(&contract.constructor);
+        // Optimize internal function bodies
+        for func in &mut contract.internal_functions {
+            *func = optimize_expr(func);
+        }
     }
 }
 
@@ -270,11 +293,15 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::Call(name, args) => {
-            let a = optimize_expr(args);
-            if Rc::ptr_eq(&a, args) {
+            let new_args: Vec<_> = args.iter().map(optimize_expr).collect();
+            if new_args
+                .iter()
+                .zip(args.iter())
+                .all(|(n, o)| Rc::ptr_eq(n, o))
+            {
                 return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Call(name.clone(), a))
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::LetBind(name, value, body) => {
             let v = optimize_expr(value);
@@ -455,7 +482,9 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
             }
         }
         EvmExpr::Call(_, args) => {
-            analyze_var_inner(name, args, in_loop, info);
+            for arg in args {
+                analyze_var_inner(name, arg, in_loop, info);
+            }
         }
         EvmExpr::Function(_, _, _, body) => {
             analyze_var_inner(name, body, in_loop, info);
@@ -609,7 +638,9 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
             collect_immutable_vars_rec(val, out);
         }
         EvmExpr::Call(_, args) => {
-            collect_immutable_vars_rec(args, out);
+            for arg in args {
+                collect_immutable_vars_rec(arg, out);
+            }
         }
         EvmExpr::Function(_, _, _, body) => {
             collect_immutable_vars_rec(body, out);
@@ -755,7 +786,7 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
             .iter()
             .any(|x| references_var(x, name)),
-        EvmExpr::Call(_, args) => references_var(args, name),
+        EvmExpr::Call(_, args) => args.iter().any(|a| references_var(a, name)),
         EvmExpr::Function(_, _, _, body) => references_var(body, name),
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
@@ -892,8 +923,11 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::Call(n, args) => {
-            let a2 = substitute_var(name, replacement, args);
-            Rc::new(EvmExpr::Call(n.clone(), a2))
+            let new_args: Vec<_> = args
+                .iter()
+                .map(|a| substitute_var(name, replacement, a))
+                .collect();
+            Rc::new(EvmExpr::Call(n.clone(), new_args))
         }
         EvmExpr::Function(n, in_ty, out_ty, body) => {
             let b2 = substitute_var(name, replacement, body);
@@ -904,6 +938,461 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
                 b2,
             ))
         }
+    }
+}
+
+// ============================================================
+// Call-site monomorphization
+// ============================================================
+//
+// For each `Call("f", [a, b, c])`, create a specialized nullary function
+// `Function("f__site_N", UnitT, out_ty, body_with_args_substituted)`
+// and replace the call with `Call("f__site_N", [])`.
+//
+// This lets egglog control the inlining decision via the existing
+// nullary inline rule: `Call(name, Nil) + Function(name, ..., body) → body`.
+// At O0 (no egglog), the specialized functions remain as JUMP subroutines.
+
+/// Monomorphize call sites: specialize each Call into a nullary Call + specialized Function.
+/// Returns the new specialized functions to add to `internal_functions`.
+///
+/// Recursively monomorphizes calls within specialized function bodies too
+/// (e.g. if `_triple` calls `_double`, the specialized `_triple__site_N` body
+/// will also have its `_double(...)` call monomorphized).
+/// Inline all Call nodes in `runtime` by substituting function arguments
+/// and renaming local variables for uniqueness. Recursive calls within
+/// inlined bodies are also resolved.
+pub fn inline_calls(runtime: &mut RcExpr, functions: &[RcExpr]) {
+    // Build map: name → (in_ty, out_ty, body)
+    let mut func_map: HashMap<String, (EvmType, EvmType, RcExpr)> = HashMap::new();
+    for func in functions {
+        if let EvmExpr::Function(name, in_ty, out_ty, body) = func.as_ref() {
+            func_map.insert(
+                name.clone(),
+                (in_ty.clone(), out_ty.clone(), Rc::clone(body)),
+            );
+        }
+    }
+    if func_map.is_empty() {
+        return;
+    }
+    let mut site_counter: usize = 0;
+    let mut new_functions: Vec<RcExpr> = Vec::new();
+    *runtime = monomorphize_rec(runtime, &func_map, &mut site_counter, &mut new_functions);
+}
+
+#[allow(clippy::only_used_in_recursion)]
+fn monomorphize_rec(
+    expr: &RcExpr,
+    funcs: &HashMap<String, (EvmType, EvmType, RcExpr)>,
+    site_counter: &mut usize,
+    new_functions: &mut Vec<RcExpr>,
+) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::Call(name, args) => {
+            // Recursively monomorphize within the args first
+            let new_args: Vec<RcExpr> = args
+                .iter()
+                .map(|a| monomorphize_rec(a, funcs, site_counter, new_functions))
+                .collect();
+            if let Some((in_ty, _out_ty, body)) = funcs.get(name) {
+                // Inline the function body directly at the call site,
+                // substituting arguments and renaming locals for uniqueness.
+                let site_id = *site_counter;
+                *site_counter += 1;
+                let substituted = substitute_args(body, in_ty, &new_args);
+                let inlined = rename_locals(&substituted, &format!("_s{site_id}"));
+                // Recursively process the inlined body (it may contain more calls)
+                monomorphize_rec(&inlined, funcs, site_counter, new_functions)
+            } else {
+                Rc::new(EvmExpr::Call(name.clone(), new_args))
+            }
+        }
+        // Recurse into all children
+        EvmExpr::Concat(a, b) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Concat(a2, b2))
+        }
+        EvmExpr::Bop(op, a, b) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Bop(*op, a2, b2))
+        }
+        EvmExpr::Uop(op, a) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Uop(*op, a2))
+        }
+        EvmExpr::Get(a, idx) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Get(a2, *idx))
+        }
+        EvmExpr::If(c, i, t, e) => {
+            let c2 = monomorphize_rec(c, funcs, site_counter, new_functions);
+            let i2 = monomorphize_rec(i, funcs, site_counter, new_functions);
+            let t2 = monomorphize_rec(t, funcs, site_counter, new_functions);
+            let e2 = monomorphize_rec(e, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::If(c2, i2, t2, e2))
+        }
+        EvmExpr::LetBind(name, init, body) => {
+            let i2 = monomorphize_rec(init, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(body, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::LetBind(name.clone(), i2, b2))
+        }
+        EvmExpr::VarStore(name, val) => {
+            let v2 = monomorphize_rec(val, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&v2, val) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::VarStore(name.clone(), v2))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            let c2 = monomorphize_rec(c, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::Top(*op, a2, b2, c2))
+        }
+        EvmExpr::Revert(a, b, c) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            let c2 = monomorphize_rec(c, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::Revert(a2, b2, c2))
+        }
+        EvmExpr::ReturnOp(a, b, c) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            let c2 = monomorphize_rec(c, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let i2 = monomorphize_rec(inputs, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(body, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::DoWhile(i2, b2))
+        }
+        EvmExpr::Log(count, topics, data_off, data_sz, state) => {
+            let topics2: Vec<_> = topics
+                .iter()
+                .map(|t| monomorphize_rec(t, funcs, site_counter, new_functions))
+                .collect();
+            let d2 = monomorphize_rec(data_off, funcs, site_counter, new_functions);
+            let s2 = monomorphize_rec(data_sz, funcs, site_counter, new_functions);
+            let st2 = monomorphize_rec(state, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::Log(*count, topics2, d2, s2, st2))
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            let a2 = monomorphize_rec(a, funcs, site_counter, new_functions);
+            let b2 = monomorphize_rec(b, funcs, site_counter, new_functions);
+            let c2 = monomorphize_rec(c, funcs, site_counter, new_functions);
+            let d2 = monomorphize_rec(d, funcs, site_counter, new_functions);
+            let e2 = monomorphize_rec(e, funcs, site_counter, new_functions);
+            let f2 = monomorphize_rec(f, funcs, site_counter, new_functions);
+            let g2 = monomorphize_rec(g, funcs, site_counter, new_functions);
+            Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
+        }
+        // Leaves (EnvRead, EnvRead1, Function, Const, Var, Arg, etc.)
+        _ => Rc::clone(expr),
+    }
+}
+
+/// Substitute `Arg(in_ty, _)` and `Get(Arg(in_ty, _), i)` in `body`
+/// with the corresponding actual arguments.
+fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
+    match body.as_ref() {
+        // Single-arg function: Arg(ty, ctx) → args[0]
+        EvmExpr::Arg(ty, _ctx) if ty == in_ty && args.len() == 1 => Rc::clone(&args[0]),
+        // Multi-arg function: Get(Arg(ty, ctx), i) → args[i]
+        EvmExpr::Get(inner, idx) => {
+            if let EvmExpr::Arg(ty, _ctx) = inner.as_ref() {
+                if ty == in_ty {
+                    if let Some(arg) = args.get(*idx) {
+                        return Rc::clone(arg);
+                    }
+                }
+            }
+            // Not an arg get — recurse
+            let i2 = substitute_args(inner, in_ty, args);
+            if Rc::ptr_eq(&i2, inner) {
+                return Rc::clone(body);
+            }
+            Rc::new(EvmExpr::Get(i2, *idx))
+        }
+        // Recurse into children
+        EvmExpr::Concat(a, b) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            Rc::new(EvmExpr::Concat(a2, b2))
+        }
+        EvmExpr::Bop(op, a, b) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            Rc::new(EvmExpr::Bop(*op, a2, b2))
+        }
+        EvmExpr::Uop(op, a) => {
+            let a2 = substitute_args(a, in_ty, args);
+            Rc::new(EvmExpr::Uop(*op, a2))
+        }
+        EvmExpr::If(c, i, t, e) => {
+            let c2 = substitute_args(c, in_ty, args);
+            let i2 = substitute_args(i, in_ty, args);
+            let t2 = substitute_args(t, in_ty, args);
+            let e2 = substitute_args(e, in_ty, args);
+            Rc::new(EvmExpr::If(c2, i2, t2, e2))
+        }
+        EvmExpr::LetBind(name, init, body_inner) => {
+            let i2 = substitute_args(init, in_ty, args);
+            let b2 = substitute_args(body_inner, in_ty, args);
+            Rc::new(EvmExpr::LetBind(name.clone(), i2, b2))
+        }
+        EvmExpr::VarStore(name, val) => {
+            let v2 = substitute_args(val, in_ty, args);
+            Rc::new(EvmExpr::VarStore(name.clone(), v2))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            let c2 = substitute_args(c, in_ty, args);
+            Rc::new(EvmExpr::Top(*op, a2, b2, c2))
+        }
+        EvmExpr::DoWhile(inputs, body_inner) => {
+            let i2 = substitute_args(inputs, in_ty, args);
+            let b2 = substitute_args(body_inner, in_ty, args);
+            Rc::new(EvmExpr::DoWhile(i2, b2))
+        }
+        EvmExpr::Revert(a, b, c) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            let c2 = substitute_args(c, in_ty, args);
+            Rc::new(EvmExpr::Revert(a2, b2, c2))
+        }
+        EvmExpr::ReturnOp(a, b, c) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            let c2 = substitute_args(c, in_ty, args);
+            Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
+        }
+        EvmExpr::Call(name, call_args) => {
+            let new_args: Vec<_> = call_args
+                .iter()
+                .map(|a| substitute_args(a, in_ty, args))
+                .collect();
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
+        }
+        EvmExpr::Log(count, topics, data_off, data_sz, state) => {
+            let topics2: Vec<_> = topics
+                .iter()
+                .map(|t| substitute_args(t, in_ty, args))
+                .collect();
+            let d2 = substitute_args(data_off, in_ty, args);
+            let s2 = substitute_args(data_sz, in_ty, args);
+            let st2 = substitute_args(state, in_ty, args);
+            Rc::new(EvmExpr::Log(*count, topics2, d2, s2, st2))
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            let a2 = substitute_args(a, in_ty, args);
+            let b2 = substitute_args(b, in_ty, args);
+            let c2 = substitute_args(c, in_ty, args);
+            let d2 = substitute_args(d, in_ty, args);
+            let e2 = substitute_args(e, in_ty, args);
+            let f2 = substitute_args(f, in_ty, args);
+            let g2 = substitute_args(g, in_ty, args);
+            Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
+        }
+        // Leaves
+        _ => Rc::clone(body),
+    }
+}
+
+/// Rename local variables defined by `LetBind` in an expression.
+/// Only renames variables that are defined within this expression tree
+/// (have a `LetBind`), not variables from outer scopes.
+fn rename_locals(expr: &RcExpr, suffix: &str) -> RcExpr {
+    // First, collect all variable names defined by LetBind in this tree.
+    let mut defined = std::collections::HashSet::new();
+    collect_letbind_names(expr, &mut defined);
+    if defined.is_empty() {
+        return Rc::clone(expr);
+    }
+    rename_locals_rec(expr, suffix, &defined)
+}
+
+/// Collect all variable names defined by `LetBind` nodes in the tree.
+fn collect_letbind_names(expr: &RcExpr, names: &mut std::collections::HashSet<String>) {
+    match expr.as_ref() {
+        EvmExpr::LetBind(name, init, body) => {
+            names.insert(name.clone());
+            collect_letbind_names(init, names);
+            collect_letbind_names(body, names);
+        }
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
+            collect_letbind_names(a, names);
+            collect_letbind_names(b, names);
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::VarStore(_, a) | EvmExpr::Get(a, _) => {
+            collect_letbind_names(a, names);
+        }
+        EvmExpr::If(c, i, t, e) => {
+            collect_letbind_names(c, names);
+            collect_letbind_names(i, names);
+            collect_letbind_names(t, names);
+            collect_letbind_names(e, names);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            collect_letbind_names(a, names);
+            collect_letbind_names(b, names);
+            collect_letbind_names(c, names);
+        }
+        EvmExpr::Log(_, topics, d, s, st) => {
+            for t in topics {
+                collect_letbind_names(t, names);
+            }
+            collect_letbind_names(d, names);
+            collect_letbind_names(s, names);
+            collect_letbind_names(st, names);
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            collect_letbind_names(a, names);
+            collect_letbind_names(b, names);
+            collect_letbind_names(c, names);
+            collect_letbind_names(d, names);
+            collect_letbind_names(e, names);
+            collect_letbind_names(f, names);
+            collect_letbind_names(g, names);
+        }
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                collect_letbind_names(a, names);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rename_locals_rec(
+    expr: &RcExpr,
+    suffix: &str,
+    defined: &std::collections::HashSet<String>,
+) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::LetBind(name, init, body) => {
+            let new_name = if defined.contains(name) {
+                format!("{name}{suffix}")
+            } else {
+                name.clone()
+            };
+            let i2 = rename_locals_rec(init, suffix, defined);
+            let b2 = rename_locals_rec(body, suffix, defined);
+            Rc::new(EvmExpr::LetBind(new_name, i2, b2))
+        }
+        EvmExpr::Var(name) => {
+            if defined.contains(name) {
+                Rc::new(EvmExpr::Var(format!("{name}{suffix}")))
+            } else {
+                Rc::clone(expr)
+            }
+        }
+        EvmExpr::VarStore(name, val) => {
+            let v2 = rename_locals_rec(val, suffix, defined);
+            if defined.contains(name) {
+                Rc::new(EvmExpr::VarStore(format!("{name}{suffix}"), v2))
+            } else {
+                Rc::new(EvmExpr::VarStore(name.clone(), v2))
+            }
+        }
+        EvmExpr::Drop(name) => {
+            if defined.contains(name) {
+                Rc::new(EvmExpr::Drop(format!("{name}{suffix}")))
+            } else {
+                Rc::clone(expr)
+            }
+        }
+        EvmExpr::Concat(a, b) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            Rc::new(EvmExpr::Concat(a2, b2))
+        }
+        EvmExpr::Bop(op, a, b) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            Rc::new(EvmExpr::Bop(*op, a2, b2))
+        }
+        EvmExpr::Uop(op, a) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            Rc::new(EvmExpr::Uop(*op, a2))
+        }
+        EvmExpr::If(c, i, t, e) => {
+            let c2 = rename_locals_rec(c, suffix, defined);
+            let i2 = rename_locals_rec(i, suffix, defined);
+            let t2 = rename_locals_rec(t, suffix, defined);
+            let e2 = rename_locals_rec(e, suffix, defined);
+            Rc::new(EvmExpr::If(c2, i2, t2, e2))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            let c2 = rename_locals_rec(c, suffix, defined);
+            Rc::new(EvmExpr::Top(*op, a2, b2, c2))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let i2 = rename_locals_rec(inputs, suffix, defined);
+            let b2 = rename_locals_rec(body, suffix, defined);
+            Rc::new(EvmExpr::DoWhile(i2, b2))
+        }
+        EvmExpr::Revert(a, b, c) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            let c2 = rename_locals_rec(c, suffix, defined);
+            Rc::new(EvmExpr::Revert(a2, b2, c2))
+        }
+        EvmExpr::ReturnOp(a, b, c) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            let c2 = rename_locals_rec(c, suffix, defined);
+            Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
+        }
+        EvmExpr::Get(a, idx) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            Rc::new(EvmExpr::Get(a2, *idx))
+        }
+        EvmExpr::Call(name, call_args) => {
+            let new_args: Vec<_> = call_args
+                .iter()
+                .map(|a| rename_locals_rec(a, suffix, defined))
+                .collect();
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
+        }
+        EvmExpr::Log(count, topics, data_off, data_sz, state) => {
+            let topics2: Vec<_> = topics
+                .iter()
+                .map(|t| rename_locals_rec(t, suffix, defined))
+                .collect();
+            let d2 = rename_locals_rec(data_off, suffix, defined);
+            let s2 = rename_locals_rec(data_sz, suffix, defined);
+            let st2 = rename_locals_rec(state, suffix, defined);
+            Rc::new(EvmExpr::Log(*count, topics2, d2, s2, st2))
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            let a2 = rename_locals_rec(a, suffix, defined);
+            let b2 = rename_locals_rec(b, suffix, defined);
+            let c2 = rename_locals_rec(c, suffix, defined);
+            let d2 = rename_locals_rec(d, suffix, defined);
+            let e2 = rename_locals_rec(e, suffix, defined);
+            let f2 = rename_locals_rec(f, suffix, defined);
+            let g2 = rename_locals_rec(g, suffix, defined);
+            Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
+        }
+        _ => Rc::clone(expr),
     }
 }
 

@@ -1,0 +1,109 @@
+// test_generics.edge — Execution tests for generics and monomorphization
+//
+// Tests generic functions, generic structs, and generic enums with
+// concrete type arguments, verifying correct monomorphization.
+
+// Generic identity function
+fn identity<T>(x: T) -> (T) {
+    return x;
+}
+
+// Generic max
+fn max<T>(a: T, b: T) -> (T) {
+    if (a >= b) {
+        return a;
+    }
+    return b;
+}
+
+// Generic min
+fn min<T>(a: T, b: T) -> (T) {
+    if (a <= b) {
+        return a;
+    }
+    return b;
+}
+
+// Generic struct: key-value entry
+type Entry<K, V> = {
+    key: K,
+    value: V,
+};
+
+// Generic enum: Result
+type Result<T> = Ok(T) | Err(u256);
+
+// Generic enum: Option
+type Option<T> = None | Some(T);
+
+contract TestGenerics {
+    // Test identity with u256
+    pub fn test_identity() -> (u256) {
+        let x: u256;
+        x = identity(42);
+        return x;
+    }
+
+    // Test max
+    pub fn test_max() -> (u256) {
+        return max(10, 20);
+    }
+
+    // Test min
+    pub fn test_min() -> (u256) {
+        return min(10, 20);
+    }
+
+    // Test generic struct instantiation and field access
+    pub fn test_entry_value() -> (u256) {
+        let e: Entry<u256, u256>;
+        e = Entry { key: 100, value: 42 };
+        return e.value;
+    }
+
+    pub fn test_entry_key() -> (u256) {
+        let e: Entry<u256, u256>;
+        e = Entry { key: 100, value: 42 };
+        return e.key;
+    }
+
+    // Test generic Result enum — Ok path
+    pub fn test_result_ok() -> (u256) {
+        let r: Result<u256>;
+        r = Result::Ok(77);
+        match r {
+            Result::Ok(val) => { return val; },
+            Result::Err(code) => { return code; },
+        };
+    }
+
+    // Test generic Result enum — Err path
+    pub fn test_result_err() -> (u256) {
+        let r: Result<u256>;
+        r = Result::Err(99);
+        match r {
+            Result::Ok(val) => { return val; },
+            Result::Err(code) => { return code; },
+        };
+    }
+
+    // Test generic Option — Some path via match
+    pub fn test_option_some() -> (u256) {
+        let o: Option<u256>;
+        o = Option::Some(55);
+        match o {
+            Option::Some(inner) => { return inner; },
+            Option::None => { return 0; },
+        };
+    }
+
+    // Test generic Option — None path via match
+    pub fn test_option_none() -> (u256) {
+        let o: Option<u256>;
+        o = Option::None();
+        match o {
+            Option::Some(inner) => { return inner; },
+            Option::None => { return 0; },
+        };
+    }
+}

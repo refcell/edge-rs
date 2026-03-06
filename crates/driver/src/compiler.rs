@@ -1,7 +1,7 @@
 //! The main compiler struct that orchestrates the compilation pipeline
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
@@ -127,7 +127,7 @@ impl Compiler {
         let _checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
             self.session
                 .emit_error(Diagnostic::error(format!("type error: {e}")));
-            self.session.diagnostics.report_all(&self.session.source);
+            self.session.report_diagnostics();
             CompileError::TypeCheckErrors
         })?;
 
@@ -138,9 +138,15 @@ impl Compiler {
             self.session.config.optimize_for,
         )
         .map_err(|e| {
-            let diag = Diagnostic::error(format!("IR lowering error: {e}"));
+            let diag = match &e {
+                edge_ir::IrError::LoweringSpanned { message, span } => {
+                    Diagnostic::error(message.clone())
+                        .with_label(span.clone(), "error occurred here")
+                }
+                _ => Diagnostic::error(format!("IR lowering error: {e}")),
+            };
             self.session.emit_error(diag);
-            self.session.diagnostics.report_all(&self.session.source);
+            self.session.report_diagnostics();
             CompileError::Aborted
         })?;
 
@@ -272,7 +278,7 @@ impl Compiler {
                         .with_label(e.span, "invalid token here"),
                 );
             }
-            self.session.diagnostics.report_all(&self.session.source);
+            self.session.report_diagnostics();
             return Err(CompileError::LexErrors);
         }
 
@@ -292,7 +298,7 @@ impl Compiler {
             Err(e) => {
                 self.session
                     .emit_error(Diagnostic::error(format!("parse error: {e}")));
-                self.session.diagnostics.report_all(&self.session.source);
+                self.session.report_diagnostics();
                 Err(CompileError::ParseErrors)
             }
         }
@@ -359,43 +365,77 @@ impl Compiler {
                 }
             });
 
-        let mut already_parsed: HashSet<String> = HashSet::new();
+        // Cache parsed module stmts so we don't re-parse the same module multiple times.
+        let mut parsed_modules: HashMap<String, Vec<edge_ast::Stmt>> = HashMap::new();
         let mut new_stmts: Vec<edge_ast::Stmt> = Vec::new();
+        // Track which modules were fully imported (no symbol filter) to avoid duplicates.
+        let mut fully_imported: HashSet<String> = HashSet::new();
 
         for file_segments in &imports_to_resolve {
-            // Resolve to a module key ("tokens/erc20") and source text.
-            let (module_key, source) =
+            // Resolve to a module key ("tokens/erc20"), source text, and optional symbol filter.
+            let (module_key, source, symbol_filter) =
                 self.resolve_module_source(&explicit_std_path, file_segments)?;
 
-            if already_parsed.contains(&module_key) {
+            // If this module was already fully imported, skip.
+            if fully_imported.contains(&module_key) {
                 continue;
             }
-            already_parsed.insert(module_key.clone());
 
-            let mut parser = Parser::new(&source).map_err(|e| {
-                self.session.emit_error(Diagnostic::error(format!(
-                    "parse error in std module `{module_key}`: {e}"
-                )));
-                CompileError::ParseErrors
-            })?;
+            if symbol_filter.is_none() {
+                fully_imported.insert(module_key.clone());
+            }
 
-            let imported_program = parser.parse().map_err(|e| {
-                self.session.emit_error(Diagnostic::error(format!(
-                    "parse error in std module `{module_key}`: {e}"
-                )));
-                self.session.diagnostics.report_all(&self.session.source);
-                CompileError::ParseErrors
-            })?;
+            // Parse the module if not already cached.
+            if !parsed_modules.contains_key(&module_key) {
+                let mut parser = Parser::new(&source).map_err(|e| {
+                    self.session.emit_error(Diagnostic::error(format!(
+                        "parse error in std module `{module_key}`: {e}"
+                    )));
+                    CompileError::ParseErrors
+                })?;
 
-            // Collect all top-level items from the imported module, skipping its own imports.
-            for stmt in imported_program.stmts {
-                if matches!(
-                    &stmt,
-                    edge_ast::Stmt::ModuleImport(_) | edge_ast::Stmt::ModuleDecl(_)
-                ) {
-                    continue;
+                let imported_program = parser.parse().map_err(|e| {
+                    self.session.emit_error(Diagnostic::error(format!(
+                        "parse error in std module `{module_key}`: {e}"
+                    )));
+                    self.session.report_diagnostics();
+                    CompileError::ParseErrors
+                })?;
+
+                // Filter out module imports/decls from the parsed stmts.
+                let stmts: Vec<_> = imported_program
+                    .stmts
+                    .into_iter()
+                    .filter(|s| {
+                        !matches!(
+                            s,
+                            edge_ast::Stmt::ModuleImport(_) | edge_ast::Stmt::ModuleDecl(_)
+                        )
+                    })
+                    .collect();
+                parsed_modules.insert(module_key.clone(), stmts);
+            }
+
+            let module_stmts = &parsed_modules[&module_key];
+
+            // Collect items, filtering to the specific symbol if requested.
+            for stmt in module_stmts {
+                if let Some(ref symbol) = symbol_filter {
+                    let name = match stmt {
+                        edge_ast::Stmt::FnAssign(fn_decl, _)
+                        | edge_ast::Stmt::ComptimeFn(fn_decl, _) => Some(&fn_decl.name.name),
+                        edge_ast::Stmt::ConstAssign(decl, _, _) => Some(&decl.name.name),
+                        edge_ast::Stmt::AbiDecl(abi) => Some(&abi.name.name),
+                        edge_ast::Stmt::TraitDecl(tr, _) => Some(&tr.name.name),
+                        edge_ast::Stmt::TypeAssign(td, _, _) => Some(&td.name.name),
+                        edge_ast::Stmt::EventDecl(ev) => Some(&ev.name.name),
+                        _ => None,
+                    };
+                    if name != Some(symbol) {
+                        continue;
+                    }
                 }
-                new_stmts.push(stmt);
+                new_stmts.push(stmt.clone());
             }
         }
 
@@ -417,42 +457,66 @@ impl Compiler {
     /// Supports symbol-level imports: if `segments = ["auth", "IOwned"]` and no file
     /// exists at `std/auth/IOwned.edge`, retries with `["auth"]` treating `IOwned` as
     /// a symbol name within `std/auth.edge`.
+    /// Returns `(module_key, source, symbol_filter)` where `symbol_filter` is
+    /// `Some(name)` when the last segment was a symbol inside a file (not a file itself).
     fn resolve_module_source(
         &mut self,
         explicit_std_path: &Option<PathBuf>,
         segments: &[String],
-    ) -> Result<(String, String), CompileError> {
+    ) -> Result<(String, String, Option<String>), CompileError> {
         if segments.is_empty() {
             self.session.emit_error(Diagnostic::error(
                 "`use std;` is not a valid import — specify a module path like `use std::math;`"
                     .to_string(),
             ));
-            self.session.diagnostics.report_all(&self.session.source);
+            self.session.report_diagnostics();
             return Err(CompileError::Aborted);
         }
 
-        // Try the full segments, then fall back to stripping the last one (symbol-level import).
-        let candidates: &[&[String]] = if segments.len() > 1 {
-            &[segments, &segments[..segments.len() - 1]]
-        } else {
-            &[segments]
-        };
-
-        for &segs in candidates {
-            let key = segs.join("/");
+        // Try the full segments first. If that fails and there are 2+ segments,
+        // fall back to stripping the last one (it's a symbol inside the file).
+        {
+            let key = segments.join("/");
 
             // 1. Explicit filesystem override.
             if let Some(ref std_path) = explicit_std_path {
-                if let Some(source) = Self::try_read_from_fs(std_path, segs) {
+                if let Some(source) = Self::try_read_from_fs(std_path, segments) {
                     tracing::debug!("resolved std::{} from filesystem override", key);
-                    return Ok((key, source));
+                    return Ok((key, source, None));
                 }
             }
 
             // 2. Embedded binary sources.
-            if let Some(source) = Self::try_read_from_embedded(segs) {
+            if let Some(source) = Self::try_read_from_embedded(segments) {
                 tracing::debug!("resolved std::{} from embedded stdlib", key);
-                return Ok((key, source.to_string()));
+                return Ok((key, source.to_string(), None));
+            }
+        }
+
+        // Symbol-level fallback: strip last segment as a symbol name.
+        if segments.len() > 1 {
+            let file_segs = &segments[..segments.len() - 1];
+            let symbol = segments.last().unwrap().clone();
+            let key = file_segs.join("/");
+
+            if let Some(ref std_path) = explicit_std_path {
+                if let Some(source) = Self::try_read_from_fs(std_path, file_segs) {
+                    tracing::debug!(
+                        "resolved std::{} (symbol `{}`) from filesystem override",
+                        key,
+                        symbol
+                    );
+                    return Ok((key, source, Some(symbol)));
+                }
+            }
+
+            if let Some(source) = Self::try_read_from_embedded(file_segs) {
+                tracing::debug!(
+                    "resolved std::{} (symbol `{}`) from embedded stdlib",
+                    key,
+                    symbol
+                );
+                return Ok((key, source.to_string(), Some(symbol)));
             }
         }
 
@@ -463,7 +527,7 @@ impl Compiler {
              provided --std-path directory.\n\
              hint: available modules include `std::math`, `std::auth`, `std::tokens::erc20`, etc."
         )));
-        self.session.diagnostics.report_all(&self.session.source);
+        self.session.report_diagnostics();
         Err(CompileError::Aborted)
     }
 

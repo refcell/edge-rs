@@ -299,8 +299,8 @@ pub enum EvmExpr {
     ReturnOp(RcExpr, RcExpr, RcExpr),
     /// External call: (target, value, `args_offset`, `args_len`, `ret_offset`, `ret_len`, state)
     ExtCall(RcExpr, RcExpr, RcExpr, RcExpr, RcExpr, RcExpr, RcExpr),
-    /// Internal function call: (name, args) -> result
-    Call(String, RcExpr),
+    /// Internal function call: (name, args...) -> result
+    Call(String, Vec<RcExpr>),
     /// Function selector constant (4-byte keccak256 of signature)
     Selector(String),
 
@@ -335,6 +335,10 @@ pub struct EvmContract {
     pub constructor: RcExpr,
     /// Runtime body (dispatcher + function bodies)
     pub runtime: RcExpr,
+    /// Internal function definitions (Function nodes).
+    /// Kept separate from `runtime` so they survive halting-DCE in cleanup.
+    /// Compiled as labeled subroutines after the dispatcher.
+    pub internal_functions: Vec<RcExpr>,
     /// First free memory offset after IR-allocated regions (arrays, structs, etc.)
     /// Codegen should start `LetBind` variable slots at or above this address.
     pub memory_high_water: usize,

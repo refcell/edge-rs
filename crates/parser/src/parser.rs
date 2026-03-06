@@ -2004,6 +2004,16 @@ impl Parser {
                 let ast_loc = self.convert_location(loc);
                 Ok(TypeSig::Pointer(ast_loc, Box::new(inner)))
             }
+            TokenKind::Keyword(edge_types::tokens::Keyword::Self_) => {
+                let token = self.advance();
+                Ok(TypeSig::Named(
+                    Ident {
+                        name: "Self".to_string(),
+                        span: token.span,
+                    },
+                    Vec::new(),
+                ))
+            }
             TokenKind::Ident(name) => {
                 let token = self.advance();
                 let ident = Ident {

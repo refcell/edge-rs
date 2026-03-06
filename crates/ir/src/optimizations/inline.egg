@@ -1,0 +1,16 @@
+;; ============================================================
+;; Internal Function Inlining
+;; ============================================================
+;; Call sites are monomorphized by a Rust pre-pass (var_opt::monomorphize_calls):
+;; each Call("f", [a, b, c]) becomes Call("f__site_N", []) with a specialized
+;; Function("f__site_N", UnitT, out_ty, body_with_args_substituted).
+;;
+;; This rule unions the nullary call with the function body, letting the
+;; cost model decide whether inlining is profitable.
+;; At O0 (no egglog), specialized functions remain as JUMP subroutines.
+
+(rule ((= call (Call name args))
+       (= def (Function name in_ty out_ty body))
+       (= args (Nil)))
+      ((union call body))
+      :ruleset peepholes)

@@ -197,7 +197,10 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("Revert", 0);
     m.insert("ReturnOp", 0);
     m.insert("ExtCall", 100);
-    m.insert("Call", 0);
+    // Call should always lose to the inlined body during extraction.
+    // The inline rule unions Call with the function body; a low Call cost
+    // would make the extractor prefer the Call form over the body.
+    m.insert("Call", 1_000_000);
     m.insert("LetBind", 3); // MSTORE cost
     m.insert("Var", 3); // MLOAD cost
     m.insert("VarStore", 6); // PUSH offset + MSTORE

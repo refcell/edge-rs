@@ -9,7 +9,7 @@
 // so other contracts can call it in a type-safe way.
 //
 // Import graph:
-//   erc4626 → std::math          (mul_div_down, mul_div_up, WAD)
+//   erc4626 → std::math          (mul_div_down, mul_div_up)
 //   erc4626 → std::tokens::safe_transfer (safe_transfer, safe_transfer_from)
 //   erc4626 → std::auth           (IOwned, for owner-gated emergency functions)
 //   erc4626 → std::tokens::erc20  (IERC20, for calling the underlying asset)
@@ -21,6 +21,7 @@
 mod tokens;
 
 use std::math::mul_div_down;
+use std::math::mul_div_up;
 use std::tokens::safe_transfer::SafeTransfer;
 use std::auth::IOwned;
 use std::tokens::erc20::IERC20;
@@ -134,7 +135,7 @@ contract ERC4626 {
         if (supply == 0) {
             return assets;
         }
-        return math::mul_div_down(assets, supply, total_assets);
+        return mul_div_down(assets, supply, total_assets);
     }
 
     // Convert shares → assets rounding down.
@@ -145,7 +146,7 @@ contract ERC4626 {
         if (supply == 0) {
             return shares;
         }
-        return math::mul_div_down(shares, total_assets, supply);
+        return mul_div_down(shares, total_assets, supply);
     }
 
     // ── Preview Functions ─────────────────────────────────────────────────────
@@ -162,7 +163,7 @@ contract ERC4626 {
         if (supply == 0) {
             return assets;
         }
-        return math::mul_div_up(assets, supply, total_assets);
+        return mul_div_up(assets, supply, total_assets);
     }
 
     // Assets returned for a given share redemption (same as convertToAssets).
