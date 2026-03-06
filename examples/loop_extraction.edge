@@ -1,0 +1,26 @@
+
+
+contract LoopOptimize {
+    let accumulator: &s u256;
+    let counter: &s u256;
+
+    pub fn storage_while_sum(n: u256) -> (u256) {
+        accumulator = 0;
+        counter = 1;
+        while (counter <= n) {
+            accumulator = accumulator + counter;
+            counter = counter + 1;
+        }
+        return accumulator;
+    }
+
+    pub fn storage_no_loop(n: u256) -> (u256) {
+        accumulator = 0;
+        counter = 1;
+        accumulator = accumulator + counter;
+        counter = counter + 1;
+        accumulator = accumulator + n;
+        counter = counter + n;
+        return accumulator;
+    }
+}

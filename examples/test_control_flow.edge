@@ -1,0 +1,94 @@
+// test_control_flow.edge — branches and loops using STORAGE variables
+// (Stack variable mutation is broken; storage works because it uses SLOAD/SSTORE)
+
+abi ITestControlFlow {
+    fn if_else_return(x: u256) -> (u256);
+    fn nested_if(x: u256) -> (u256);
+    fn storage_while_sum(n: u256) -> (u256);
+    fn storage_for_factorial(n: u256) -> (u256);
+    fn early_return_loop(n: u256) -> (u256);
+    fn multi_branch_return(x: u256) -> (u256);
+}
+
+contract TestControlFlow {
+    let counter: &s u256;
+    let accumulator: &s u256;
+    let temp: &s u256;
+
+    // Test: if-else with return in BOTH branches
+    pub fn if_else_return(x: u256) -> (u256) {
+        if (x > 100) {
+            return x * 2;
+        } else {
+            return x + 10;
+        }
+    }
+
+    // Test: nested if-else (3 levels)
+    pub fn nested_if(x: u256) -> (u256) {
+        if (x > 1000) {
+            if (x > 2000) {
+                return 3;
+            } else {
+                return 2;
+            }
+        } else {
+            if (x > 500) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+    }
+
+    // Test: while loop using storage variable as accumulator
+    // sum(1..n)
+    pub fn storage_while_sum(n: u256) -> (u256) {
+        accumulator = 0;
+        counter = 1;
+        while (counter <= n) {
+            accumulator = accumulator + counter;
+            counter = counter + 1;
+        }
+        return accumulator;
+    }
+
+    // Test: for-style loop using storage for factorial
+    // n! computed iteratively
+    pub fn storage_for_factorial(n: u256) -> (u256) {
+        accumulator = 1;
+        counter = 1;
+        while (counter <= n) {
+            accumulator = accumulator * counter;
+            counter = counter + 1;
+        }
+        return accumulator;
+    }
+
+    // Test: loop with early return — find first power of 2 >= n
+    pub fn early_return_loop(n: u256) -> (u256) {
+        counter = 1;
+        while (counter < 1000000) {
+            if (counter >= n) {
+                return counter;
+            }
+            counter = counter * 2;
+        }
+        return counter;
+    }
+
+    // Test: multiple branches each returning different values
+    pub fn multi_branch_return(x: u256) -> (u256) {
+        if (x == 0) {
+            return 100;
+        } else if (x == 1) {
+            return 200;
+        } else if (x == 2) {
+            return 300;
+        } else if (x == 3) {
+            return 400;
+        } else {
+            return 999;
+        }
+    }
+}

@@ -1,0 +1,77 @@
+// stress_loops.edge — loops with accumulators and multiple variables
+//
+// Tests: LetBind inside loops (repeated MSTORE/MLOAD per iteration),
+//        loop variable liveness, accumulator patterns.
+
+abi IStressLoops {
+    fn sum_to(n: u256) -> (u256);
+    fn sum_storage() -> (u256);
+    fn factorial(n: u256) -> (u256);
+    fn collatz_steps(n: u256) -> (u256);
+}
+
+contract StressLoops {
+    let values: &s u256;
+    let count: &s u256;
+
+    // Simple accumulator loop: sum 1..n.
+    // Tests: 'i' and 'acc' as loop variables, read+write each iteration.
+    pub fn sum_to(n: u256) -> (u256) {
+        let acc: u256;
+        let i: u256;
+        acc = 0;
+        i = 1;
+        while (i < n + 1) {
+            acc = acc + i;
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    // Read from storage in a loop.
+    // Tests: mapping access inside loop body, slot computation per iteration.
+    pub fn sum_storage() -> (u256) {
+        let acc: u256;
+        let i: u256;
+        let n: u256;
+        acc = 0;
+        i = 0;
+        n = count;
+        while (i < n) {
+            acc = acc + values[i];
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    // Factorial via loop: acc = acc * i for i in 1..n+1.
+    pub fn factorial(n: u256) -> (u256) {
+        let acc: u256;
+        let i: u256;
+        acc = 1;
+        i = 1;
+        while (i < n + 1) {
+            acc = acc * i;
+            i = i + 1;
+        }
+        return acc;
+    }
+
+    // Collatz conjecture: count steps until n reaches 1.
+    // Tests: conditional inside loop, variable updated differently per branch.
+    pub fn collatz_steps(n: u256) -> (u256) {
+        let steps: u256;
+        let current: u256;
+        steps = 0;
+        current = n;
+        while (current > 1) {
+            if (current % 2 == 0) {
+                current = current / 2;
+            } else {
+                current = current * 3 + 1;
+            }
+            steps = steps + 1;
+        }
+        return steps;
+    }
+}

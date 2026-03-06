@@ -1,0 +1,51 @@
+// test_mappings.edge — Execution tests for simple and nested mappings
+
+contract TestMappings {
+    let balances: &s u256;
+    let allowances: &s u256;
+    let counters: &s u256;
+
+    // Simple mapping: set and get
+    pub fn map_set(key: addr, value: u256) {
+        balances[key] = value;
+    }
+
+    pub fn map_get(key: addr) -> (u256) {
+        return balances[key];
+    }
+
+    // Read-modify-write on mapping
+    pub fn map_add(key: addr, amount: u256) {
+        balances[key] = balances[key] + amount;
+    }
+
+    // Nested mapping: set and get
+    pub fn nested_set(k1: addr, k2: addr, val: u256) {
+        allowances[k1][k2] = val;
+    }
+
+    pub fn nested_get(k1: addr, k2: addr) -> (u256) {
+        return allowances[k1][k2];
+    }
+
+    // Two independent keys in same mapping
+    pub fn two_keys(a: addr, b: addr, va: u256, vb: u256) {
+        balances[a] = va;
+        balances[b] = vb;
+    }
+
+    // Nested mapping: two spenders for same owner
+    pub fn nested_two_spenders(owner: addr, s1: addr, s2: addr, v1: u256, v2: u256) {
+        allowances[owner][s1] = v1;
+        allowances[owner][s2] = v2;
+    }
+
+    // Counter increment per key
+    pub fn counter_inc(key: addr) {
+        counters[key] = counters[key] + 1;
+    }
+
+    pub fn counter_get(key: addr) -> (u256) {
+        return counters[key];
+    }
+}

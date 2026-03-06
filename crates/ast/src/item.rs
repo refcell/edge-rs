@@ -171,8 +171,8 @@ pub struct ContractFnDecl {
     pub is_ext: bool,
     /// Whether function is mutable
     pub is_mut: bool,
-    /// Function body
-    pub body: crate::stmt::CodeBlock,
+    /// Function body (if defined inline in the contract)
+    pub body: Option<crate::stmt::CodeBlock>,
     /// Source span
     pub span: Span,
 }

@@ -1,0 +1,173 @@
+;; ============================================================
+;; Checked Arithmetic: Elision & Peephole Rules
+;; ============================================================
+;; CheckedAdd/CheckedSub/CheckedMul revert on overflow/underflow.
+;; When range analysis proves safety, we union with the unchecked
+;; variant (lower cost), so the extractor picks the cheaper form.
+
+;; ============================================================
+;; Range-Analysis Elision (fires during analysis saturation)
+;; ============================================================
+
+;; CheckedAdd → Add when upper bounds sum without overflow
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= ha (u256-upper-bound a)) (= hb (u256-upper-bound b))
+       (u256-add-no-overflow ha hb))
+      ((union e (Bop (OpAdd) a b)))
+      :ruleset range-analysis)
+
+;; CheckedSub → Sub when lower(a) >= upper(b)
+(rule ((= e (Bop (OpCheckedSub) a b))
+       (= la (u256-lower-bound a)) (= hb (u256-upper-bound b))
+       (u256-sub-no-underflow la hb))
+      ((union e (Bop (OpSub) a b)))
+      :ruleset range-analysis)
+
+;; CheckedMul → Mul when upper bounds multiply without overflow
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= ha (u256-upper-bound a)) (= hb (u256-upper-bound b))
+       (u256-mul-no-overflow ha hb))
+      ((union e (Bop (OpMul) a b)))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Bound Propagation Through Checked Ops
+;; ============================================================
+;; Checked ops GUARANTEE no overflow — so bound arithmetic is sound.
+;; This enables cascading elision: (x & 0xff) + 1 + 2 can elide
+;; both additions because each result has a tight upper bound.
+
+;; CheckedAdd: result = a + b, no overflow guaranteed
+;; Upper: upper(a) + upper(b) (safe because checked)
+;; Lower: lower(a) + lower(b)
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= ha (u256-upper-bound a)) (= hb (u256-upper-bound b))
+       (u256-add-no-overflow ha hb))
+      ((set (u256-upper-bound e) (u256-add ha hb)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= la (u256-lower-bound a)) (= lb (u256-lower-bound b))
+       (u256-add-no-overflow la lb))
+      ((set (u256-lower-bound e) (u256-add la lb)))
+      :ruleset range-analysis)
+
+;; i64 bounds for CheckedAdd (enables i64-based rules too)
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= ha (upper-bound a)) (= hb (upper-bound b))
+       (>= ha 0) (>= hb 0)
+       (< ha 4611686018427387903) (< hb 4611686018427387903))
+      ((set (upper-bound e) (+ ha hb)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= la (lower-bound a)) (= lb (lower-bound b))
+       (>= la 0) (>= lb 0))
+      ((set (lower-bound e) (+ la lb)))
+      :ruleset range-analysis)
+
+;; CheckedSub: result = a - b, a >= b guaranteed
+;; Upper: upper(a) (result can't exceed a)
+;; Lower: 0 (result is non-negative)
+(rule ((= e (Bop (OpCheckedSub) a b))
+       (= ha (u256-upper-bound a)))
+      ((set (u256-upper-bound e) ha))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedSub) a b)))
+      ((set (u256-lower-bound e) (u256-from-i64 0)))
+      :ruleset range-analysis)
+
+;; Tighter upper: upper(a) - lower(b) when lower(b) is known
+(rule ((= e (Bop (OpCheckedSub) a b))
+       (= ha (u256-upper-bound a)) (= lb (u256-lower-bound b))
+       (u256-sub-no-underflow ha lb))
+      ((set (u256-upper-bound e) (u256-sub ha lb)))
+      :ruleset range-analysis)
+
+;; i64 bounds for CheckedSub
+(rule ((= e (Bop (OpCheckedSub) a b))
+       (= ha (upper-bound a)) (>= ha 0))
+      ((set (upper-bound e) ha))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedSub) a b)))
+      ((set (lower-bound e) 0))
+      :ruleset range-analysis)
+
+;; CheckedMul: result = a * b, no overflow guaranteed
+;; Upper: upper(a) * upper(b) (safe because checked)
+;; Lower: lower(a) * lower(b)
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= ha (u256-upper-bound a)) (= hb (u256-upper-bound b))
+       (u256-mul-no-overflow ha hb))
+      ((set (u256-upper-bound e) (u256-mul ha hb)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= la (u256-lower-bound a)) (= lb (u256-lower-bound b))
+       (u256-mul-no-overflow la lb))
+      ((set (u256-lower-bound e) (u256-mul la lb)))
+      :ruleset range-analysis)
+
+;; i64 bounds for CheckedMul
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= ha (upper-bound a)) (= hb (upper-bound b))
+       (>= ha 0) (>= hb 0)
+       (< ha 3037000499) (< hb 3037000499))
+      ((set (upper-bound e) (* ha hb)))
+      :ruleset range-analysis)
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= la (lower-bound a)) (= lb (lower-bound b))
+       (>= la 0) (>= lb 0))
+      ((set (lower-bound e) (* la lb)))
+      :ruleset range-analysis)
+
+;; ============================================================
+;; Peephole Identities (trivially safe, no bounds needed)
+;; ============================================================
+
+;; x + 0 = x, 0 + x = x
+(rewrite (Bop (OpCheckedAdd) x (Const (SmallInt 0) ty ctx)) x :subsume :ruleset peepholes)
+(rewrite (Bop (OpCheckedAdd) (Const (SmallInt 0) ty ctx) x) x :subsume :ruleset peepholes)
+
+;; x - 0 = x
+(rewrite (Bop (OpCheckedSub) x (Const (SmallInt 0) ty ctx)) x :subsume :ruleset peepholes)
+
+;; x * 1 = x, 1 * x = x
+(rewrite (Bop (OpCheckedMul) x (Const (SmallInt 1) ty ctx)) x :subsume :ruleset peepholes)
+(rewrite (Bop (OpCheckedMul) (Const (SmallInt 1) ty ctx) x) x :subsume :ruleset peepholes)
+
+;; x * 0 = 0, 0 * x = 0
+(rewrite (Bop (OpCheckedMul) x (Const (SmallInt 0) ty ctx))
+         (Const (SmallInt 0) ty ctx) :subsume :ruleset peepholes)
+(rewrite (Bop (OpCheckedMul) (Const (SmallInt 0) ty ctx) x)
+         (Const (SmallInt 0) ty ctx) :subsume :ruleset peepholes)
+
+;; x - x = 0
+(rewrite (Bop (OpCheckedSub) x x)
+         (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))
+         :subsume :ruleset peepholes)
+
+;; ============================================================
+;; Constant Folding (in u256-const-fold ruleset)
+;; ============================================================
+
+;; CheckedAdd of two constants → constant (guarded by no-overflow)
+(rule ((= e (Bop (OpCheckedAdd) a b))
+       (= va (const-u256-val a)) (= vb (const-u256-val b))
+       (u256-add-no-overflow va vb))
+      ((union e (Const (LargeInt (u256-to-hex (u256-add va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; CheckedSub of two constants → constant (guarded by no-underflow)
+(rule ((= e (Bop (OpCheckedSub) a b))
+       (= va (const-u256-val a)) (= vb (const-u256-val b))
+       (u256-sub-no-underflow va vb))
+      ((union e (Const (LargeInt (u256-to-hex (u256-sub va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; CheckedMul of two constants → constant (guarded by no-overflow)
+(rule ((= e (Bop (OpCheckedMul) a b))
+       (= va (const-u256-val a)) (= vb (const-u256-val b))
+       (u256-mul-no-overflow va vb))
+      ((union e (Const (LargeInt (u256-to-hex (u256-mul va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)

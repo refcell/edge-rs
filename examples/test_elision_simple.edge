@@ -1,0 +1,14 @@
+// test_elision_simple.edge — Minimal contract for testing checked arithmetic elision
+
+abi IElisionSimple {
+    fn bounded_add(x: u256) -> (u256);
+}
+
+contract ElisionSimple {
+    // (x & 0xff) + 1 — max input 255, max result 256, never overflows
+    pub fn bounded_add(x: u256) -> (u256) {
+        let masked: u256;
+        masked = x & 255;
+        return masked + 1;
+    }
+}

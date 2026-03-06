@@ -1,0 +1,303 @@
+;; ============================================================
+;; Edge EVM IR Schema
+;; ============================================================
+;; Every term is an EvmExpr or a ListExpr.
+(datatype EvmExpr)
+(datatype ListExpr (Cons EvmExpr ListExpr) (Nil))
+
+;; ============================================================
+;; Types
+;; ============================================================
+
+(sort EvmTypeList)
+
+(datatype EvmBaseType
+  ;; Unsigned integer with bit width (8, 16, ..., 256)
+  (UIntT i64)
+  ;; Signed integer with bit width
+  (IntT i64)
+  ;; Fixed bytes with byte count (1..32)
+  (BytesT i64)
+  ;; Address (160-bit)
+  (AddrT)
+  ;; Boolean
+  (BoolT)
+  ;; Unit/void (for side-effecting operations that return nothing)
+  (UnitT)
+  ;; State token (for ordering side effects)
+  (StateT))
+
+(datatype EvmType
+  ;; A primitive type
+  (Base EvmBaseType)
+  ;; A typed tuple
+  (TupleT EvmTypeList))
+
+(constructor TLNil () EvmTypeList)
+(constructor TLCons (EvmBaseType EvmTypeList) EvmTypeList)
+
+;; ============================================================
+;; Data Locations
+;; ============================================================
+
+(datatype DataLocation
+  (LocStorage)
+  (LocTransient)
+  (LocMemory)
+  (LocCalldata)
+  (LocReturndata)
+  (LocStack))
+
+;; ============================================================
+;; Constants
+;; ============================================================
+
+(datatype EvmConstant
+  ;; Small integers that fit in i64
+  (SmallInt i64)
+  ;; Large integers as hex strings (for full u256 range)
+  (LargeInt String)
+  ;; Booleans
+  (ConstBool bool)
+  ;; Addresses as hex strings
+  (ConstAddr String))
+
+;; ============================================================
+;; Context / Assumptions
+;; ============================================================
+
+(datatype EvmContext
+  ;; Inside a named function
+  (InFunction String)
+  ;; Inside a conditional branch (true or false branch)
+  (InBranch bool EvmExpr EvmExpr)
+  ;; Inside a loop
+  (InLoop EvmExpr EvmExpr))
+
+;; ============================================================
+;; Leaf Nodes
+;; ============================================================
+
+;; The current function's argument (tupled if multiple params)
+(constructor Arg (EvmType EvmContext) EvmExpr)
+
+;; A constant value
+(constructor Const (EvmConstant EvmType EvmContext) EvmExpr)
+
+;; An empty tuple
+(constructor Empty (EvmType EvmContext) EvmExpr)
+
+;; ============================================================
+;; Arithmetic & Logic Operators
+;; ============================================================
+
+(datatype EvmBinaryOp
+  ;; Arithmetic (all 256-bit on EVM)
+  (OpAdd) (OpSub) (OpMul) (OpDiv) (OpSDiv) (OpMod) (OpSMod) (OpExp)
+  ;; Checked arithmetic (revert on overflow/underflow)
+  (OpCheckedAdd) (OpCheckedSub) (OpCheckedMul)
+  ;; Comparison
+  (OpLt) (OpGt) (OpSLt) (OpSGt) (OpEq)
+  ;; Bitwise
+  (OpAnd) (OpOr) (OpXor) (OpShl) (OpShr) (OpSar) (OpByte)
+  ;; Logical (high-level, lowered to IsZero chains)
+  (OpLogAnd) (OpLogOr)
+  ;; Storage read: (SLoad slot state) -> (value, state)
+  (OpSLoad)
+  ;; Transient storage read
+  (OpTLoad)
+  ;; Memory read: (MLoad offset state) -> (value, state)
+  (OpMLoad)
+  ;; Calldata read: (CalldataLoad offset state) -> value
+  (OpCalldataLoad)
+  )
+
+(datatype EvmUnaryOp
+  (OpIsZero)
+  (OpNot)
+  (OpNeg)
+  (OpSignExtend))
+
+(datatype EvmTernaryOp
+  ;; Storage write: (SStore slot value state) -> state
+  (OpSStore)
+  ;; Transient storage write
+  (OpTStore)
+  ;; Memory write: (MStore offset value state) -> state
+  (OpMStore)
+  ;; Memory write byte: (MStore8 offset value state) -> state
+  (OpMStore8)
+  ;; Keccak256 hash: (Keccak256 offset size state) -> hash (reads from memory state)
+  (OpKeccak256)
+  ;; Select: (Select cond true_val false_val) -> val
+  (OpSelect)
+  ;; Calldata copy: (CalldataCopy dest_offset cd_offset size) -> state
+  (OpCalldataCopy))
+
+;; Operator constructors
+(constructor Bop (EvmBinaryOp EvmExpr EvmExpr) EvmExpr)
+(constructor Uop (EvmUnaryOp EvmExpr) EvmExpr)
+(constructor Top (EvmTernaryOp EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; ============================================================
+;; Tuple Operations
+;; ============================================================
+
+;; Get element from tuple at static index
+(constructor Get (EvmExpr i64) EvmExpr)
+;; Sequence two expressions (evaluate both, return second)
+(constructor Concat (EvmExpr EvmExpr) EvmExpr)
+
+;; ============================================================
+;; Control Flow
+;; ============================================================
+
+;; If-then-else: (If pred inputs then_body else_body)
+(constructor If (EvmExpr EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; Do-while loop: (DoWhile inputs pred_and_body)
+;; pred_and_body evaluates to (pred, outputs...)
+;; loops while pred is true
+(constructor DoWhile (EvmExpr EvmExpr) EvmExpr)
+
+;; ============================================================
+;; EVM Environment Operations
+;; ============================================================
+
+(datatype EvmEnvOp
+  (EnvCaller)
+  (EnvCallValue)
+  (EnvCallDataSize)
+  (EnvOrigin)
+  (EnvGasPrice)
+  (EnvBlockHash)
+  (EnvCoinbase)
+  (EnvTimestamp)
+  (EnvNumber)
+  (EnvGasLimit)
+  (EnvChainId)
+  (EnvSelfBalance)
+  (EnvBaseFee)
+  (EnvGas)
+  (EnvAddress)
+  (EnvBalance)
+  (EnvCodeSize)
+  (EnvReturnDataSize))
+
+;; Nullary environment reads: (EnvRead op state) -> (value, state)
+(constructor EnvRead (EvmEnvOp EvmExpr) EvmExpr)
+;; Unary environment reads: (EnvRead1 op arg state) -> (value, state)
+(constructor EnvRead1 (EvmEnvOp EvmExpr EvmExpr) EvmExpr)
+
+;; ============================================================
+;; EVM-Specific Operations
+;; ============================================================
+
+;; Log event: (Log topic_count topics data_offset data_size state) -> state
+(constructor Log (i64 ListExpr EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; Revert: (Revert offset size state) -> !
+(constructor Revert (EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; Return: (ReturnOp offset size state) -> !
+(constructor ReturnOp (EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; External call: (ExtCall target value argsOffset argsLen retOffset retLen state) -> (success, state)
+(constructor ExtCall (EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr EvmExpr) EvmExpr)
+
+;; Internal function call: (Call name args) -> result
+(constructor Call (String EvmExpr) EvmExpr)
+
+;; Function selector constant (keccak256 of signature, top 4 bytes)
+(constructor Selector (String) EvmExpr)
+
+;; Let binding: compute value once, reference via Var(name) in body
+(constructor LetBind (String EvmExpr EvmExpr) EvmExpr)
+;; Variable reference to a LetBind
+(constructor Var (String) EvmExpr)
+;; Write to a LetBind variable's memory slot (mutates in place)
+(constructor VarStore (String EvmExpr) EvmExpr)
+;; Drop a variable (marks end of lifetime for slot reclamation)
+(constructor Drop (String) EvmExpr)
+
+;; ============================================================
+;; Top-Level Structures
+;; ============================================================
+
+(sort EvmProgramType)
+
+;; A contract: (Contract name storage_fields constructor runtime)
+(constructor Contract (String ListExpr EvmExpr EvmExpr) EvmProgramType)
+
+;; A function definition: (Function name input_type output_type body)
+(constructor Function (String EvmType EvmType EvmExpr) EvmExpr)
+
+;; A storage field: (StorageField name slot_index type)
+(constructor StorageField (String i64 EvmType) EvmExpr)
+
+;; ============================================================
+;; Rulesets
+;; ============================================================
+
+(ruleset always-run)
+(ruleset error-checking)
+(ruleset peepholes)
+(ruleset arithmetic-opt)
+(ruleset storage-opt)
+(ruleset memory-opt)
+(ruleset dead-code)
+(ruleset cse-rules)
+(ruleset range-analysis)
+(ruleset u256-const-fold)
+(ruleset type-propagation)
+
+;; ============================================================
+;; Helper Relations
+;; ============================================================
+
+;; Type of an expression
+(relation HasType (EvmExpr EvmType))
+;; Argument type in scope
+(relation HasArgType (EvmExpr EvmType))
+;; Context of an expression
+(relation ContextOf (EvmExpr EvmContext))
+;; Function type info
+(relation FunctionHasType (String EvmType EvmType))
+
+;; Immutable variable: Var(name) has the same value as LetBind init.
+;; Populated by the lowering/var_opt pass for variables with no VarStore.
+(relation ImmutableVar (String))
+
+;; Operator name mapping for debugging
+(relation bop->string (EvmBinaryOp String))
+(bop->string (OpAdd) "ADD")
+(bop->string (OpSub) "SUB")
+(bop->string (OpMul) "MUL")
+(bop->string (OpDiv) "DIV")
+(bop->string (OpSDiv) "SDIV")
+(bop->string (OpMod) "MOD")
+(bop->string (OpSMod) "SMOD")
+(bop->string (OpExp) "EXP")
+(bop->string (OpLt) "LT")
+(bop->string (OpGt) "GT")
+(bop->string (OpSLt) "SLT")
+(bop->string (OpSGt) "SGT")
+(bop->string (OpEq) "EQ")
+(bop->string (OpAnd) "AND")
+(bop->string (OpOr) "OR")
+(bop->string (OpXor) "XOR")
+(bop->string (OpShl) "SHL")
+(bop->string (OpShr) "SHR")
+(bop->string (OpSar) "SAR")
+(bop->string (OpByte) "BYTE")
+(bop->string (OpLogAnd) "LOGAND")
+(bop->string (OpLogOr) "LOGOR")
+(bop->string (OpSLoad) "SLOAD")
+(bop->string (OpTLoad) "TLOAD")
+(bop->string (OpMLoad) "MLOAD")
+(bop->string (OpCalldataLoad) "CALLDATALOAD")
+(bop->string (OpCheckedAdd) "CHECKED_ADD")
+(bop->string (OpCheckedSub) "CHECKED_SUB")
+(bop->string (OpCheckedMul) "CHECKED_MUL")
+
+

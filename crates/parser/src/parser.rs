@@ -951,7 +951,7 @@ impl Parser {
                     is_pub,
                     is_ext,
                     is_mut,
-                    body,
+                    body: Some(body),
                     span: fn_decl.span,
                 });
             } else {
@@ -999,6 +999,7 @@ impl Parser {
                 break;
             }
             self.advance(); // consume 'else'
+            self.skip_whitespace_and_comments();
 
             self.skip_whitespace_and_comments();
 

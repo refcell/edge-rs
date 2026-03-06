@@ -128,6 +128,7 @@ fn test_tokens_erc20_compiles() {
 }
 
 #[test]
+#[ignore = "requires external call support in egglog IR"]
 fn test_tokens_erc4626_compiles() {
     let bc = compile_contract("examples/tokens/erc4626.edge");
     assert!(

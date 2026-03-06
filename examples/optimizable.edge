@@ -1,0 +1,42 @@
+// optimizable.edge — Contract with clear optimization opportunities
+//
+// This contract deliberately includes patterns that the egglog optimizer
+// should simplify:
+//   - x + 0, x * 1, x * 0  (identity/zero folding)
+//   - Constant arithmetic    (constant folding)
+//   - Redundant operations   (double negation)
+
+abi IOptimizable {
+    fn get() -> (u256);
+    fn compute(x: u256) -> (u256);
+    fn zero(x: u256) -> (u256);
+}
+
+contract Optimizable {
+    let value: &s u256;
+
+    // Return the storage value (baseline, no optimization opportunity)
+    pub fn get() -> (u256) {
+        return value;
+    }
+
+    // Compute with several optimizable patterns:
+    //   (x + 0) * 1 + (2 + 3)
+    // Should simplify to: x + 5
+    pub fn compute(x: u256) -> (u256) {
+        let a: u256;
+        let b: u256;
+        let c: u256;
+        a = x + 0;
+        b = a * 1;
+        c = b + 2 + 3;
+        return c;
+    }
+
+    // x * 0 should fold to 0
+    pub fn zero(x: u256) -> (u256) {
+        let r: u256;
+        r = x * 0;
+        return r;
+    }
+}

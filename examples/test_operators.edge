@@ -1,0 +1,136 @@
+// test_operators.edge — comprehensive operator testing
+// Tests: arithmetic, bitwise, comparison, unary, precedence
+
+abi ITestOperators {
+    fn test_add(a: u256, b: u256) -> (u256);
+    fn test_sub(a: u256, b: u256) -> (u256);
+    fn test_mul(a: u256, b: u256) -> (u256);
+    fn test_div(a: u256, b: u256) -> (u256);
+    fn test_mod(a: u256, b: u256) -> (u256);
+    fn test_exp(a: u256, b: u256) -> (u256);
+    fn test_and(a: u256, b: u256) -> (u256);
+    fn test_or(a: u256, b: u256) -> (u256);
+    fn test_xor(a: u256, b: u256) -> (u256);
+    fn test_shl(a: u256, b: u256) -> (u256);
+    fn test_shr(a: u256, b: u256) -> (u256);
+    fn test_not(a: u256) -> (u256);
+    fn test_eq(a: u256, b: u256) -> (u256);
+    fn test_neq(a: u256, b: u256) -> (u256);
+    fn test_lt(a: u256, b: u256) -> (u256);
+    fn test_gt(a: u256, b: u256) -> (u256);
+    fn test_lte(a: u256, b: u256) -> (u256);
+    fn test_gte(a: u256, b: u256) -> (u256);
+    fn test_precedence(a: u256, b: u256, c: u256) -> (u256);
+    fn test_complex_expr(a: u256, b: u256) -> (u256);
+}
+
+contract TestOperators {
+
+    pub fn test_add(a: u256, b: u256) -> (u256) {
+        return a + b;
+    }
+
+    pub fn test_sub(a: u256, b: u256) -> (u256) {
+        return a - b;
+    }
+
+    pub fn test_mul(a: u256, b: u256) -> (u256) {
+        return a * b;
+    }
+
+    pub fn test_div(a: u256, b: u256) -> (u256) {
+        return a / b;
+    }
+
+    pub fn test_mod(a: u256, b: u256) -> (u256) {
+        return a % b;
+    }
+
+    pub fn test_exp(a: u256, b: u256) -> (u256) {
+        return a ** b;
+    }
+
+    pub fn test_and(a: u256, b: u256) -> (u256) {
+        return a & b;
+    }
+
+    pub fn test_or(a: u256, b: u256) -> (u256) {
+        return a | b;
+    }
+
+    pub fn test_xor(a: u256, b: u256) -> (u256) {
+        return a ^ b;
+    }
+
+    pub fn test_shl(a: u256, b: u256) -> (u256) {
+        return a << b;
+    }
+
+    pub fn test_shr(a: u256, b: u256) -> (u256) {
+        return a >> b;
+    }
+
+    pub fn test_not(a: u256) -> (u256) {
+        return ~a;
+    }
+
+    // Returns 1 for true, 0 for false
+    pub fn test_eq(a: u256, b: u256) -> (u256) {
+        if (a == b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn test_neq(a: u256, b: u256) -> (u256) {
+        if (a != b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn test_lt(a: u256, b: u256) -> (u256) {
+        if (a < b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn test_gt(a: u256, b: u256) -> (u256) {
+        if (a > b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn test_lte(a: u256, b: u256) -> (u256) {
+        if (a <= b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    pub fn test_gte(a: u256, b: u256) -> (u256) {
+        if (a >= b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    }
+
+    // Tests: a + b * c should be a + (b * c) due to precedence
+    pub fn test_precedence(a: u256, b: u256, c: u256) -> (u256) {
+        return a + b * c;
+    }
+
+    // Tests: complex nested expression
+    // (a * a + b * b) / (a + b)
+    pub fn test_complex_expr(a: u256, b: u256) -> (u256) {
+        return (a * a + b * b) / (a + b);
+    }
+}

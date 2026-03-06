@@ -1,0 +1,56 @@
+// test_enums2.edge — Execution tests for enum/union features
+//
+// A contract with public functions that exercise enum matching
+// and data-carrying union extraction, returning verifiable values.
+
+type Direction = North | South | East | West;
+type Result = Ok(u256) | Err(u256);
+
+contract TestEnums {
+    pub fn direction_north() -> (u256) {
+        let d: Direction;
+        d = Direction::North;
+        match d {
+            Direction::North => { return 1; },
+            Direction::South => { return 2; },
+            Direction::East => { return 3; },
+            Direction::West => { return 4; },
+        };
+    }
+
+    pub fn direction_west() -> (u256) {
+        let d: Direction;
+        d = Direction::West;
+        match d {
+            Direction::North => { return 1; },
+            Direction::South => { return 2; },
+            Direction::East => { return 3; },
+            Direction::West => { return 4; },
+        };
+    }
+
+    pub fn result_ok_value() -> (u256) {
+        let r: Result;
+        r = Result::Ok(42);
+        match r {
+            Result::Ok(val) => { return val; },
+            Result::Err(code) => { return code; },
+        };
+    }
+
+    pub fn result_err_value() -> (u256) {
+        let r: Result;
+        r = Result::Err(99);
+        match r {
+            Result::Ok(val) => { return val; },
+            Result::Err(code) => { return code; },
+        };
+    }
+
+    pub fn is_north_check(d_raw: u256) -> (u256) {
+        if (d_raw == 0) {
+            return 1;
+        }
+        return 0;
+    }
+}

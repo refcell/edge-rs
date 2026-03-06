@@ -50,6 +50,56 @@ pub fn bytes32_to_string(bytes: &B256, prefixed: bool) -> String {
     format!("{}{s}", if prefixed { "0x" } else { "" })
 }
 
+/// Convert a decimal string to a `[u8; 32]`.
+/// Unlike `str_to_bytes32` (which treats input as hex), this parses
+/// the string as a base-10 integer.
+pub fn decimal_to_bytes32(s: &str) -> [u8; 32] {
+    // Parse as u128 first (handles up to ~39 decimal digits)
+    if let Ok(val) = s.parse::<u128>() {
+        let mut padded = [0u8; 32];
+        let bytes = val.to_be_bytes();
+        padded[16..32].copy_from_slice(&bytes);
+        return padded;
+    }
+    // Fallback for very large decimals: convert to hex string, then use str_to_bytes32
+    let hex = decimal_str_to_hex(s);
+    // This is called from the lexer for decimal literals which should always be valid
+    str_to_bytes32(&hex)
+        .expect("decimal_to_bytes32: invalid decimal string")
+        .into()
+}
+
+/// Convert a decimal digit string to a hex string (no prefix).
+fn decimal_str_to_hex(s: &str) -> String {
+    // Manual big-number conversion: multiply-and-add
+    let mut result: Vec<u8> = vec![0]; // big-endian bytes
+    for ch in s.chars() {
+        let digit = ch as u8 - b'0';
+        // Multiply result by 10
+        let mut carry: u16 = 0;
+        for byte in result.iter_mut().rev() {
+            let prod = (*byte as u16) * 10 + carry;
+            *byte = (prod & 0xff) as u8;
+            carry = prod >> 8;
+        }
+        if carry > 0 {
+            result.insert(0, carry as u8);
+        }
+        // Add digit
+        let mut carry: u16 = digit as u16;
+        for byte in result.iter_mut().rev() {
+            let sum = (*byte as u16) + carry;
+            *byte = (sum & 0xff) as u8;
+            carry = sum >> 8;
+        }
+        if carry > 0 {
+            result.insert(0, carry as u8);
+        }
+    }
+    // Convert to hex string
+    result.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Wrapper to convert a hex string to a usize.
 pub fn hex_to_usize(s: &str) -> Result<usize, ParseIntError> {
     usize::from_str_radix(s, 16)

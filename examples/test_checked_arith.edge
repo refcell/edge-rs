@@ -1,0 +1,34 @@
+// test_checked_arith.edge — Execution tests for checked arithmetic
+
+contract TestCheckedArith {
+    // Safe addition (no overflow): returns a + b
+    pub fn safe_add(a: u256, b: u256) -> (u256) {
+        return a + b;
+    }
+
+    // Safe subtraction: returns a - b
+    pub fn safe_sub(a: u256, b: u256) -> (u256) {
+        return a - b;
+    }
+
+    // Safe multiplication: returns a * b
+    pub fn safe_mul(a: u256, b: u256) -> (u256) {
+        return a * b;
+    }
+
+    // Masked add — optimizer should elide check
+    pub fn masked_add(x: u256) -> (u256) {
+        let a: u256;
+        a = x & 255;
+        return a + 1;
+    }
+
+    // Chain of safe ops
+    pub fn chain_safe(a: u256, b: u256) -> (u256) {
+        let sum: u256;
+        sum = a + b;
+        let doubled: u256;
+        doubled = sum * 2;
+        return doubled - a;
+    }
+}

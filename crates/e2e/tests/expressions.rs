@@ -1,17 +1,12 @@
 #![allow(missing_docs)]
 
-use std::path::PathBuf;
-
-use edge_driver::{
-    compiler::Compiler,
-    config::{CompilerConfig, EmitKind},
-};
+use edge_driver::compiler::Compiler;
 use revm::{
-    context::{Context, TxEnv},
+    context::TxEnv,
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -20,15 +15,8 @@ use tiny_keccak::{Hasher, Keccak};
 // Helpers: Compile
 // =============================================================================
 
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn compile_contract(relative_path: &str) -> Vec<u8> {
-    let path = workspace_root().join(relative_path);
-    let mut config = CompilerConfig::new(path);
-    config.emit = EmitKind::Bytecode;
-    let mut compiler = Compiler::new(config).expect("compiler init failed");
+fn compile_contract_source(source: &str) -> Vec<u8> {
+    let mut compiler = Compiler::from_source(source);
     let output = compiler.compile().expect("compile failed");
     output.bytecode.expect("no bytecode produced")
 }
@@ -62,15 +50,12 @@ fn encode_call_with_args(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
 }
 
 /// Decode a 32-byte ABI-encoded uint256 return value into a u64.
-///
-/// Panics if `output` is shorter than 32 bytes or if the value exceeds `u64::MAX`.
 fn decode_u256(output: &[u8]) -> u64 {
     assert!(
         output.len() >= 32,
         "return value too short: {} bytes",
         output.len()
     );
-    // Value is big-endian; the high 24 bytes must be zero for a u64 to fit.
     assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
@@ -79,44 +64,59 @@ fn decode_u256(output: &[u8]) -> u64 {
 // EVM test harness
 // =============================================================================
 
-/// Fixed address where the contract is deployed for tests.
-///
-/// Must be > 0x09 to avoid Ethereum precompile addresses (0x01–0x09).
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
-]);
+const CALLER: Address = Address::new([0x01; 20]);
 
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-/// In-memory EVM with a single contract deployed at [`CONTRACT_ADDR`].
-///
-/// Storage changes are committed after each [`call`][EvmHandle::call], so
-/// calls are stateful.
 struct EvmHandle {
     evm: TestEvm,
-    /// Tracks caller nonce; `transact_commit` increments it in the DB each call.
+    contract: Address,
     nonce: u64,
 }
 
 impl EvmHandle {
-    /// Deploy `bytecode` at [`CONTRACT_ADDR`] and return a ready handle.
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(CALLER, caller_info);
+
+        let mut evm = revm::context::Context::mainnet()
+            .with_db(db)
+            .build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
-    /// Call the contract with `calldata`. Returns `(success, return_data)`.
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
 
@@ -129,22 +129,59 @@ impl EvmHandle {
 }
 
 // =============================================================================
+// Inline contract sources for testing
+// =============================================================================
+
+const EXPRESSIONS_CONTRACT: &str = r#"
+abi IExpr {
+    fn arithmetic(a: u256, b: u256) -> (u256);
+    fn comparisons(x: u256, y: u256) -> (u256);
+    fn bitwise(x: u256, y: u256) -> (u256);
+    fn complex(a: u256, b: u256, c: u256) -> (u256);
+}
+
+contract Expressions {
+    pub fn arithmetic(a: u256, b: u256) -> (u256) {
+        return a + b;
+    }
+
+    pub fn comparisons(x: u256, y: u256) -> (u256) {
+        let result: u256;
+        if (x == y) {
+            result = 1;
+        } else {
+            result = 0;
+        }
+        return result;
+    }
+
+    pub fn bitwise(x: u256, y: u256) -> (u256) {
+        return x & y;
+    }
+
+    pub fn complex(a: u256, b: u256, c: u256) -> (u256) {
+        return a + b * c;
+    }
+}
+"#;
+
+// =============================================================================
 // Tests
 // =============================================================================
 
 #[test]
 fn test_expressions_compiles() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     assert!(
         !bytecode.is_empty(),
-        "expressions.edge produced empty bytecode"
+        "expressions contract produced empty bytecode"
     );
     assert!(bytecode.len() > 10, "bytecode too short to be valid");
 }
 
 #[test]
 fn test_arithmetic_add() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     let mut evm = EvmHandle::new(bytecode);
 
     let sel = selector("arithmetic(uint256,uint256)");
@@ -159,7 +196,7 @@ fn test_arithmetic_add() {
 
 #[test]
 fn test_comparisons_eq() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     let mut evm = EvmHandle::new(bytecode);
 
     let sel = selector("comparisons(uint256,uint256)");
@@ -169,7 +206,6 @@ fn test_comparisons_eq() {
 
     let (ok, out) = evm.call(calldata);
     assert!(ok, "comparisons(5, 5) reverted");
-    // In Edge/Solidity, boolean true is represented as 1
     assert_eq!(
         decode_u256(&out),
         1,
@@ -179,7 +215,7 @@ fn test_comparisons_eq() {
 
 #[test]
 fn test_comparisons_neq() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     let mut evm = EvmHandle::new(bytecode);
 
     let sel = selector("comparisons(uint256,uint256)");
@@ -189,7 +225,6 @@ fn test_comparisons_neq() {
 
     let (ok, out) = evm.call(calldata);
     assert!(ok, "comparisons(5, 6) reverted");
-    // In Edge/Solidity, boolean false is represented as 0
     assert_eq!(
         decode_u256(&out),
         0,
@@ -199,10 +234,9 @@ fn test_comparisons_neq() {
 
 #[test]
 fn test_bitwise() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     let mut evm = EvmHandle::new(bytecode);
 
-    // bitwise(0b1100, 0b1010) should return 0b1000 (AND result)
     let sel = selector("bitwise(uint256,uint256)");
     let x = encode_u256(0b1100);
     let y = encode_u256(0b1010);
@@ -219,10 +253,9 @@ fn test_bitwise() {
 
 #[test]
 fn test_complex() {
-    let bytecode = compile_contract("examples/expressions.edge");
+    let bytecode = compile_contract_source(EXPRESSIONS_CONTRACT);
     let mut evm = EvmHandle::new(bytecode);
 
-    // complex(2, 3, 4) should return 2 + 3*4 = 14
     let sel = selector("complex(uint256,uint256,uint256)");
     let a = encode_u256(2);
     let b = encode_u256(3);

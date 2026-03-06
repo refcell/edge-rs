@@ -1,0 +1,67 @@
+// test_checked_elision.edge — Tests that range analysis elides checked arithmetic
+//
+// Functions where the optimizer CAN prove no overflow (bounds are tight):
+//   - add_small_constants: (x & 0xff) + 1  →  max 256, no overflow
+//   - add_masked: (x & 0xff) + (y & 0xff)  →  max 510, no overflow
+//   - sub_safe: x - (x & 0xff)  →  always safe since (x & 0xff) <= x
+//   - mul_small: (x & 0xf) * (y & 0xf)  →  max 225, no overflow
+//   - cascade_add: (x & 0xff) + 1 + 2  →  cascading elision
+//
+// Functions where the optimizer CANNOT prove no overflow (should keep checks):
+//   - add_unconstrained: x + y  →  could overflow
+//   - mul_unconstrained: x * y  →  could overflow
+
+abi ICheckedElision {
+    fn add_small_constants(x: u256) -> (u256);
+    fn add_masked(x: u256, y: u256) -> (u256);
+    fn mul_small(x: u256, y: u256) -> (u256);
+    fn cascade_add(x: u256) -> (u256);
+    fn add_unconstrained(x: u256, y: u256) -> (u256);
+    fn mul_unconstrained(x: u256, y: u256) -> (u256);
+}
+
+contract CheckedElision {
+    // (x & 0xff) + 1 — max input 255, max result 256, never overflows
+    pub fn add_small_constants(x: u256) -> (u256) {
+        let masked: u256;
+        masked = x & 255;
+        return masked + 1;
+    }
+
+    // (x & 0xff) + (y & 0xff) — max 510, never overflows
+    pub fn add_masked(x: u256, y: u256) -> (u256) {
+        let a: u256;
+        let b: u256;
+        a = x & 255;
+        b = y & 255;
+        return a + b;
+    }
+
+    // (x & 0xf) * (y & 0xf) — max 15*15=225, never overflows
+    pub fn mul_small(x: u256, y: u256) -> (u256) {
+        let a: u256;
+        let b: u256;
+        a = x & 15;
+        b = y & 15;
+        return a * b;
+    }
+
+    // (x & 0xff) + 1 + 2 — cascading: first add max=256, second add max=258
+    pub fn cascade_add(x: u256) -> (u256) {
+        let a: u256;
+        let b: u256;
+        a = x & 255;
+        b = a + 1;
+        return b + 2;
+    }
+
+    // x + y — no bounds known, must keep overflow check
+    pub fn add_unconstrained(x: u256, y: u256) -> (u256) {
+        return x + y;
+    }
+
+    // x * y — no bounds known, must keep overflow check
+    pub fn mul_unconstrained(x: u256, y: u256) -> (u256) {
+        return x * y;
+    }
+}

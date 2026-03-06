@@ -1,0 +1,89 @@
+// test_storage_heavy.edge — heavy storage field + mapping stress testing
+
+event ValueSet(indexed slot: u256, value: u256);
+
+abi ITestStorageHeavy {
+    fn set_all(a: u256, b: u256, c: u256, d: u256, e: u256);
+    fn get_sum() -> (u256);
+    fn swap_first_two();
+    fn get_field(idx: u256) -> (u256);
+    fn map_set(key: addr, value: u256);
+    fn map_get(key: addr) -> (u256);
+    fn map_add(key: addr, amount: u256);
+    fn nested_map_set(k1: addr, k2: addr, val: u256);
+    fn nested_map_get(k1: addr, k2: addr) -> (u256);
+    fn complex_storage_op(key: addr, amount: u256) -> (u256);
+}
+
+contract TestStorageHeavy {
+    let field_a: &s u256;
+    let field_b: &s u256;
+    let field_c: &s u256;
+    let field_d: &s u256;
+    let field_e: &s u256;
+    let balances: &s u256;
+    let allowances: &s u256;
+
+    pub fn set_all(a: u256, b: u256, c: u256, d: u256, e: u256) {
+        field_a = a;
+        field_b = b;
+        field_c = c;
+        field_d = d;
+        field_e = e;
+    }
+
+    pub fn get_sum() -> (u256) {
+        return field_a + field_b + field_c + field_d + field_e;
+    }
+
+    pub fn swap_first_two() {
+        let tmp: u256;
+        tmp = field_a;
+        field_a = field_b;
+        field_b = tmp;
+    }
+
+    // Select field by index (tests multiple if-else branches with storage reads)
+    pub fn get_field(idx: u256) -> (u256) {
+        if (idx == 0) {
+            return field_a;
+        } else if (idx == 1) {
+            return field_b;
+        } else if (idx == 2) {
+            return field_c;
+        } else if (idx == 3) {
+            return field_d;
+        } else {
+            return field_e;
+        }
+    }
+
+    // Mapping operations
+    pub fn map_set(key: addr, value: u256) {
+        balances[key] = value;
+    }
+
+    pub fn map_get(key: addr) -> (u256) {
+        return balances[key];
+    }
+
+    pub fn map_add(key: addr, amount: u256) {
+        balances[key] = balances[key] + amount;
+    }
+
+    // Nested mapping
+    pub fn nested_map_set(k1: addr, k2: addr, val: u256) {
+        allowances[k1][k2] = val;
+    }
+
+    pub fn nested_map_get(k1: addr, k2: addr) -> (u256) {
+        return allowances[k1][k2];
+    }
+
+    // Complex: read mapping, do arithmetic with storage field, write back
+    pub fn complex_storage_op(key: addr, amount: u256) -> (u256) {
+        balances[key] = balances[key] + amount + field_a;
+        field_e = field_e + 1;
+        return balances[key];
+    }
+}

@@ -1,0 +1,36 @@
+// test_merkle.edge — Execution tests for array parameter + inlined hash
+//
+// Simplified merkle verifier with a small proof array (4 elements)
+// for fast execution testing. Exercises: array params via CALLDATACOPY,
+// internal function inlining with locals, loops over array elements.
+
+contract TestMerkle {
+    fn _hash_pair(a: b32, b: b32) -> (b32) {
+        let result: b32;
+        result = a ^ b;
+        return result;
+    }
+
+    pub fn verify(root: b32, leaf: b32, proof: [b32; 4], proof_len: u256) -> (bool) {
+        let computed: b32;
+        computed = leaf;
+
+        for (let i: u256 = 0; i < proof_len; i = i + 1) {
+            let proof_element: b32;
+            proof_element = proof[i];
+
+            if (computed < proof_element) {
+                computed = _hash_pair(computed, proof_element);
+            } else {
+                computed = _hash_pair(proof_element, computed);
+            }
+        }
+
+        return computed == root;
+    }
+
+    // Simple test: hash two values
+    pub fn hash_two(a: b32, b: b32) -> (b32) {
+        return _hash_pair(a, b);
+    }
+}

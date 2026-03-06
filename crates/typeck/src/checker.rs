@@ -228,7 +228,7 @@ impl TypeChecker {
 
         let returns = fn_decl.returns.clone();
 
-        let body = Some(fn_decl.body.clone());
+        let body = fn_decl.body.clone();
         let is_pub = fn_decl.is_pub;
 
         FnInfo {

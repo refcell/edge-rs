@@ -1,0 +1,76 @@
+// test_functions.edge — internal function calls, multi-param, chaining
+
+abi ITestFunctions {
+    fn call_double(x: u256) -> (u256);
+    fn call_add_three(a: u256, b: u256, c: u256) -> (u256);
+    fn call_chain(x: u256) -> (u256);
+    fn call_fibonacci(n: u256) -> (u256);
+    fn call_max(a: u256, b: u256) -> (u256);
+    fn call_clamp(x: u256, lo: u256, hi: u256) -> (u256);
+}
+
+contract TestFunctions {
+
+    fn double(x: u256) -> (u256) {
+        return x * 2;
+    }
+
+    fn add_three(a: u256, b: u256, c: u256) -> (u256) {
+        return a + b + c;
+    }
+
+    fn square(x: u256) -> (u256) {
+        return x * x;
+    }
+
+    // double(x) → calls internal fn
+    pub fn call_double(x: u256) -> (u256) {
+        return double(x);
+    }
+
+    // add_three(a, b, c) → 3-param internal fn
+    pub fn call_add_three(a: u256, b: u256, c: u256) -> (u256) {
+        return add_three(a, b, c);
+    }
+
+    // square(double(x)) → chained internal calls
+    pub fn call_chain(x: u256) -> (u256) {
+        return square(double(x));
+    }
+
+    // Inline fibonacci via function calls
+    fn fib_step(a: u256, b: u256) -> (u256) {
+        return a + b;
+    }
+
+    pub fn call_fibonacci(n: u256) -> (u256) {
+        // Hardcoded fib(7) = 13 via chained calls
+        // fib: 0, 1, 1, 2, 3, 5, 8, 13
+        return fib_step(fib_step(fib_step(fib_step(fib_step(1, 1), fib_step(1, 1) + 1), fib_step(1, 1) + 1 + fib_step(fib_step(1, 1), fib_step(1, 1) + 1)), fib_step(fib_step(1, 1) + 1, fib_step(fib_step(1, 1), fib_step(1, 1) + 1)) + fib_step(fib_step(fib_step(1, 1), fib_step(1, 1) + 1), fib_step(1, 1) + 1 + fib_step(fib_step(1, 1), fib_step(1, 1) + 1))), n * 0);
+    }
+
+    fn max_of(a: u256, b: u256) -> (u256) {
+        if (a > b) {
+            return a;
+        } else {
+            return b;
+        }
+    }
+
+    fn min_of(a: u256, b: u256) -> (u256) {
+        if (a < b) {
+            return a;
+        } else {
+            return b;
+        }
+    }
+
+    pub fn call_max(a: u256, b: u256) -> (u256) {
+        return max_of(a, b);
+    }
+
+    // clamp(x, lo, hi) using max_of and min_of
+    pub fn call_clamp(x: u256, lo: u256, hi: u256) -> (u256) {
+        return min_of(max_of(x, lo), hi);
+    }
+}

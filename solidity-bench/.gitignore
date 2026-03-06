@@ -1,0 +1,7 @@
+*
+!.gitignore
+!foundry.toml
+!src/
+!src/**
+!test/
+!test/**

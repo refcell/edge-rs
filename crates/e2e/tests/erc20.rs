@@ -7,11 +7,11 @@ use edge_driver::{
     config::{CompilerConfig, EmitKind},
 };
 use revm::{
-    context::{Context, TxEnv},
+    context::TxEnv,
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -86,43 +86,66 @@ fn decode_u256(output: &[u8]) -> u64 {
 // EVM test harness
 // =============================================================================
 
-/// Fixed address where the ERC20 contract is deployed for tests.
-/// Using 0x1001 to avoid collisions with other contracts (counter.edge uses 0x1000).
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x01,
-]);
+const CALLER: Address = Address::new([0x01; 20]);
 
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-/// In-memory EVM with a single contract deployed at [`CONTRACT_ADDR`].
+/// In-memory EVM with a single contract deployed via CREATE.
 ///
 /// Storage changes are committed after each [`call`][EvmHandle::call], so
 /// calls are stateful: calls to `_mint` followed by `balanceOf` reflect the minted amount.
 struct EvmHandle {
     evm: TestEvm,
+    contract: Address,
     /// Tracks caller nonce; `transact_commit` increments it in the DB each call.
     nonce: u64,
 }
 
 impl EvmHandle {
-    /// Deploy `bytecode` at [`CONTRACT_ADDR`] and return a ready handle.
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    /// Deploy `bytecode` via CREATE and return a ready handle.
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        let caller_info = AccountInfo {
+            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+            nonce: 0,
+            ..Default::default()
+        };
+        db.insert_account_info(CALLER, caller_info);
+
+        let mut evm = revm::context::Context::mainnet()
+            .with_db(db)
+            .build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
     /// Call the contract with `calldata`. Returns `(success, return_data)`.
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
 
@@ -157,7 +180,6 @@ fn test_erc20_compiles() {
 }
 
 #[test]
-#[ignore = "requires mapping support (task #2) and calldata args (task #1)"]
 fn test_erc20_initial_supply() {
     let bytecode = compile_contract("examples/erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
@@ -171,23 +193,19 @@ fn test_erc20_initial_supply() {
 }
 
 #[test]
-#[ignore = "requires mapping support (task #2) and calldata args (task #1)"]
 fn test_erc20_mint_and_balance() {
-    let bytecode = compile_contract("examples/erc20.edge");
+    let bytecode = compile_contract("examples/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
-    let alice = test_address(0x01);
+    let alice = test_address(0x02);
 
-    // Mint 1000 tokens to alice.
-    // Note: This test assumes the contract provides a _mint function that can be
-    // called. Depending on the implementation, this might require an internal call
-    // or a public mint function. For now, we assume _mint exists as a public function.
-    let mint_sel = selector("_mint(address,uint256)");
+    // Mint 1000 tokens to alice via public mint().
+    let mint_sel = selector("mint(address,uint256)");
     let mint_calldata =
         encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
 
     let (ok, _) = evm.call(mint_calldata);
-    assert!(ok, "_mint(alice, 1000) reverted");
+    assert!(ok, "mint(alice, 1000) reverted");
 
     // Query balance of alice
     let bal_sel = selector("balanceOf(address)");
@@ -203,47 +221,41 @@ fn test_erc20_mint_and_balance() {
 }
 
 #[test]
-#[ignore = "requires mapping support (task #2) and calldata args (task #1)"]
 fn test_erc20_transfer() {
-    let bytecode = compile_contract("examples/erc20.edge");
+    let bytecode = compile_contract("examples/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
-    let alice = test_address(0x01);
+    // CALLER is [0x01; 20]. transfer() uses @caller() as `from`.
     let bob = test_address(0x02);
 
-    // Mint 1000 tokens to alice
-    let mint_sel = selector("_mint(address,uint256)");
+    // Mint 1000 tokens to CALLER.
+    let mint_sel = selector("mint(address,uint256)");
+    let caller_addr: [u8; 20] = [0x01; 20];
     let mint_calldata =
-        encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
+        encode_call_with_args(mint_sel, &[encode_address(caller_addr), encode_u256(1000)]);
     let (ok, _) = evm.call(mint_calldata);
-    assert!(ok, "_mint(alice, 1000) reverted");
+    assert!(ok, "mint(caller, 1000) reverted");
 
-    // Transfer 300 from alice to bob.
-    // Note: This assumes transfer can be called with the contract acting as alice.
-    // In a real test, we'd need to set the caller to alice, but EvmHandle uses fixed caller.
-    // For now, we assume _transfer is callable directly for testing.
-    let xfer_sel = selector("_transfer(address,address,uint256)");
-    let xfer_calldata = encode_call_with_args(
-        xfer_sel,
-        &[encode_address(alice), encode_address(bob), encode_u256(300)],
-    );
-    let (ok, _) = evm.call(xfer_calldata);
-    assert!(ok, "_transfer(alice, bob, 300) reverted");
+    // Transfer 300 from CALLER to bob via public transfer(to, amount).
+    let xfer_sel = selector("transfer(address,uint256)");
+    let xfer_calldata = encode_call_with_args(xfer_sel, &[encode_address(bob), encode_u256(300)]);
+    let (ok, out) = evm.call(xfer_calldata);
+    assert!(ok, "transfer(bob, 300) reverted");
+    assert_eq!(decode_u256(&out), 1, "transfer should return true (1)");
 
-    // Check alice balance (should be 700)
-    let alice_sel = selector("balanceOf(address)");
-    let alice_calldata = encode_call_with_args(alice_sel, &[encode_address(alice)]);
-    let (ok, out) = evm.call(alice_calldata);
-    assert!(ok, "balanceOf(alice) reverted");
+    // Check CALLER balance (should be 700)
+    let bal_sel = selector("balanceOf(address)");
+    let caller_calldata = encode_call_with_args(bal_sel, &[encode_address(caller_addr)]);
+    let (ok, out) = evm.call(caller_calldata);
+    assert!(ok, "balanceOf(caller) reverted");
     assert_eq!(
         decode_u256(&out),
         700,
-        "alice balance should be 700 after transfer"
+        "caller balance should be 700 after transfer"
     );
 
     // Check bob balance (should be 300)
-    let bob_sel = selector("balanceOf(address)");
-    let bob_calldata = encode_call_with_args(bob_sel, &[encode_address(bob)]);
+    let bob_calldata = encode_call_with_args(bal_sel, &[encode_address(bob)]);
     let (ok, out) = evm.call(bob_calldata);
     assert!(ok, "balanceOf(bob) reverted");
     assert_eq!(
@@ -254,74 +266,78 @@ fn test_erc20_transfer() {
 }
 
 #[test]
-#[ignore = "requires mapping support (task #2) and calldata args (task #1)"]
 fn test_erc20_approve_and_transferfrom() {
-    let bytecode = compile_contract("examples/erc20.edge");
+    let bytecode = compile_contract("examples/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
-    let alice = test_address(0x01);
-    let bob = test_address(0x02);
+    // CALLER = [0x01; 20]. approve() uses @caller() as owner,
+    // transferFrom() uses @caller() for allowance lookup.
+    // Single-caller EVM: self-approve then transferFrom from self.
+    let caller_addr: [u8; 20] = [0x01; 20];
     let charlie = test_address(0x03);
 
-    // Mint 1000 tokens to alice
-    let mint_sel = selector("_mint(address,uint256)");
+    // Mint 1000 tokens to CALLER.
+    let mint_sel = selector("mint(address,uint256)");
     let mint_calldata =
-        encode_call_with_args(mint_sel, &[encode_address(alice), encode_u256(1000)]);
+        encode_call_with_args(mint_sel, &[encode_address(caller_addr), encode_u256(1000)]);
     let (ok, _) = evm.call(mint_calldata);
-    assert!(ok, "_mint(alice, 1000) reverted");
+    assert!(ok, "mint(caller, 1000) reverted");
 
-    // Alice approves bob to spend 500 tokens.
-    // Note: In a real test, we'd call approve with caller=alice.
-    // For now, we assume _approve is testable as a public function.
-    let approve_sel = selector("_approve(address,address,uint256)");
+    // CALLER approves itself to spend 500 tokens (self-approval).
+    // approve(spender=CALLER, 500) → allowances[CALLER][CALLER] = 500
+    let approve_sel = selector("approve(address,uint256)");
     let approve_calldata = encode_call_with_args(
         approve_sel,
-        &[encode_address(alice), encode_address(bob), encode_u256(500)],
+        &[encode_address(caller_addr), encode_u256(500)],
     );
-    let (ok, _) = evm.call(approve_calldata);
-    assert!(ok, "_approve(alice, bob, 500) reverted");
+    let (ok, out) = evm.call(approve_calldata);
+    assert!(ok, "approve(caller, 500) reverted");
+    assert_eq!(decode_u256(&out), 1, "approve should return true (1)");
 
-    // Check allowance: bob should be able to spend 500 from alice
+    // Check allowance: CALLER→CALLER should be 500
     let allow_sel = selector("allowance(address,address)");
-    let allow_calldata =
-        encode_call_with_args(allow_sel, &[encode_address(alice), encode_address(bob)]);
+    let allow_calldata = encode_call_with_args(
+        allow_sel,
+        &[encode_address(caller_addr), encode_address(caller_addr)],
+    );
     let (ok, out) = evm.call(allow_calldata);
-    assert!(ok, "allowance(alice, bob) reverted");
+    assert!(ok, "allowance(caller, caller) reverted");
     assert_eq!(
         decode_u256(&out),
         500,
-        "bob should have 500 allowance from alice"
+        "caller should have 500 self-allowance"
     );
 
-    // Bob transfers 300 from alice to charlie using transferFrom.
-    // Note: This assumes transferFrom can be called with bob as spender.
+    // transferFrom(CALLER, charlie, 300) — spender=@caller()=CALLER
     let xfer_sel = selector("transferFrom(address,address,uint256)");
     let xfer_calldata = encode_call_with_args(
         xfer_sel,
         &[
-            encode_address(alice),
+            encode_address(caller_addr),
             encode_address(charlie),
             encode_u256(300),
         ],
     );
-    let (ok, _) = evm.call(xfer_calldata);
-    assert!(ok, "transferFrom(alice, charlie, 300) reverted");
+    let (ok, out) = evm.call(xfer_calldata);
+    assert!(ok, "transferFrom(caller, charlie, 300) reverted");
+    assert_eq!(decode_u256(&out), 1, "transferFrom should return true (1)");
 
-    // Check updated allowance: bob should have 200 left (500 - 300)
-    let allow_sel = selector("allowance(address,address)");
-    let allow_calldata =
-        encode_call_with_args(allow_sel, &[encode_address(alice), encode_address(bob)]);
+    // Check updated allowance: CALLER→CALLER should be 200 (500 - 300)
+    let allow_calldata = encode_call_with_args(
+        allow_sel,
+        &[encode_address(caller_addr), encode_address(caller_addr)],
+    );
     let (ok, out) = evm.call(allow_calldata);
-    assert!(ok, "allowance(alice, bob) after transferFrom reverted");
+    assert!(ok, "allowance after transferFrom reverted");
     assert_eq!(
         decode_u256(&out),
         200,
-        "bob should have 200 allowance left after transferFrom"
+        "self-allowance should be 200 after transferFrom"
     );
 
     // Verify charlie received the tokens
-    let charlie_sel = selector("balanceOf(address)");
-    let charlie_calldata = encode_call_with_args(charlie_sel, &[encode_address(charlie)]);
+    let bal_sel = selector("balanceOf(address)");
+    let charlie_calldata = encode_call_with_args(bal_sel, &[encode_address(charlie)]);
     let (ok, out) = evm.call(charlie_calldata);
     assert!(ok, "balanceOf(charlie) reverted");
     assert_eq!(
@@ -329,4 +345,102 @@ fn test_erc20_approve_and_transferfrom() {
         300,
         "charlie balance should be 300 after transferFrom"
     );
+}
+
+// =============================================================================
+// Additional lifecycle tests (using test_erc20.edge)
+// =============================================================================
+
+#[test]
+fn test_erc20_total_supply_after_mint() {
+    let bytecode = compile_contract("examples/test_erc20.edge");
+    let mut evm = EvmHandle::new(bytecode);
+
+    let alice = test_address(0x02);
+
+    // Mint 1000 tokens
+    let mint_sel = selector("mint(address,uint256)");
+    let (ok, _) = evm.call(encode_call_with_args(
+        mint_sel,
+        &[encode_address(alice), encode_u256(1000)],
+    ));
+    assert!(ok, "mint reverted");
+
+    // totalSupply should be 1000
+    let (ok, out) = evm.call(encode_call_with_args(selector("totalSupply()"), &[]));
+    assert!(ok, "totalSupply() reverted");
+    assert_eq!(
+        decode_u256(&out),
+        1000,
+        "totalSupply should be 1000 after mint"
+    );
+}
+
+#[test]
+fn test_erc20_transfer_updates_both_balances() {
+    let bytecode = compile_contract("examples/test_erc20.edge");
+    let mut evm = EvmHandle::new(bytecode);
+
+    let caller_addr: [u8; 20] = [0x01; 20];
+    let alice = test_address(0x02);
+
+    // Mint 1000 to CALLER
+    let (ok, _) = evm.call(encode_call_with_args(
+        selector("mint(address,uint256)"),
+        &[encode_address(caller_addr), encode_u256(1000)],
+    ));
+    assert!(ok, "mint reverted");
+
+    // Transfer 400 to alice
+    let (ok, _) = evm.call(encode_call_with_args(
+        selector("transfer(address,uint256)"),
+        &[encode_address(alice), encode_u256(400)],
+    ));
+    assert!(ok, "transfer reverted");
+
+    // Caller: 600, Alice: 400
+    let bal_sel = selector("balanceOf(address)");
+    let (ok, out) = evm.call(encode_call_with_args(
+        bal_sel,
+        &[encode_address(caller_addr)],
+    ));
+    assert!(ok, "balanceOf(caller) reverted");
+    assert_eq!(decode_u256(&out), 600);
+
+    let (ok, out) = evm.call(encode_call_with_args(bal_sel, &[encode_address(alice)]));
+    assert!(ok, "balanceOf(alice) reverted");
+    assert_eq!(decode_u256(&out), 400);
+}
+
+#[test]
+fn test_erc20_approve_sets_allowance() {
+    let bytecode = compile_contract("examples/test_erc20.edge");
+    let mut evm = EvmHandle::new(bytecode);
+
+    let caller_addr: [u8; 20] = [0x01; 20];
+    let alice = test_address(0x02);
+
+    // approve(alice, 500) → allowances[CALLER][alice] = 500
+    let (ok, out) = evm.call(encode_call_with_args(
+        selector("approve(address,uint256)"),
+        &[encode_address(alice), encode_u256(500)],
+    ));
+    assert!(ok, "approve reverted");
+    assert_eq!(decode_u256(&out), 1, "approve should return true");
+
+    // Check allowance
+    let (ok, out) = evm.call(encode_call_with_args(
+        selector("allowance(address,address)"),
+        &[encode_address(caller_addr), encode_address(alice)],
+    ));
+    assert!(ok, "allowance reverted");
+    assert_eq!(decode_u256(&out), 500, "allowance should be 500");
+}
+
+#[test]
+fn test_erc20_unknown_selector_reverts() {
+    let bytecode = compile_contract("examples/test_erc20.edge");
+    let mut evm = EvmHandle::new(bytecode);
+    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!ok, "unknown selector should revert");
 }

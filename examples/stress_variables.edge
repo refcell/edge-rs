@@ -1,0 +1,112 @@
+// stress_variables.edge — many local variables, heavy reuse
+//
+// Tests: LetBind memory pressure, variable reuse patterns,
+//        dead value elimination in Concat chains.
+//
+// Each MSTORE/MLOAD pair for a variable costs ~10 gas.
+// With DUP-based stack binding, reads drop to 3 gas each.
+// This contract has functions with 5-8 locals read 2-4x each.
+
+abi IStressVars {
+    fn dot_product() -> (u256);
+    fn polynomial(x: u256) -> (u256);
+    fn multi_swap(a: u256, y: u256, c: u256) -> (u256);
+    fn fibonacci_unrolled() -> (u256);
+    fn weighted_average(a: u256, y: u256, c: u256, d: u256) -> (u256);
+}
+
+contract StressVars {
+    let result: &s u256;
+
+    // 6 locals, each read 2x: once to compute, once to sum.
+    // 12 MLOAD ops with memory mode = ~72 gas overhead.
+    // With DUP: ~36 gas. Savings: 36 gas.
+    pub fn dot_product() -> (u256) {
+        let a1: u256;
+        let a2: u256;
+        let a3: u256;
+        let v1: u256;
+        let v2: u256;
+        let v3: u256;
+        a1 = 3;
+        a2 = 5;
+        a3 = 7;
+        v1 = 2;
+        v2 = 4;
+        v3 = 6;
+        // dot = a1*v1 + a2*v2 + a3*v3
+        return a1 * v1 + a2 * v2 + a3 * v3;
+    }
+
+    // Horner's method: ((a*x + y)*x + c)*x + d
+    // 4 coefficients as locals, x used 3 times.
+    // Stresses: variable live ranges overlapping, x reused across terms.
+    pub fn polynomial(x: u256) -> (u256) {
+        let a: u256;
+        let c: u256;
+        let d: u256;
+        let acc: u256;
+        a = 1;
+        c = 5;
+        d = 7;
+        acc = a;
+        acc = acc * x + 3;
+        acc = acc * x + c;
+        acc = acc * x + d;
+        return acc;
+    }
+
+    // 3 params + 3 locals, circular swap pattern.
+    // Tests: re-assignment of locals with dependencies.
+    pub fn multi_swap(a: u256, y: u256, c: u256) -> (u256) {
+        let t1: u256;
+        let t2: u256;
+        let t3: u256;
+        // Round 1: rotate a -> y -> c -> a
+        t1 = a;
+        t2 = y;
+        t3 = c;
+        // Compute with the rotated values
+        return (t3 + t1) * t2;
+    }
+
+    // Unrolled fibonacci: each step depends on previous two.
+    // 8 locals representing fib(0)..fib(7).
+    // Tests: deep chains of dependent variable reads.
+    pub fn fibonacci_unrolled() -> (u256) {
+        let f0: u256;
+        let f1: u256;
+        let f2: u256;
+        let f3: u256;
+        let f4: u256;
+        let f5: u256;
+        let f6: u256;
+        let f7: u256;
+        f0 = 0;
+        f1 = 1;
+        f2 = f0 + f1;
+        f3 = f1 + f2;
+        f4 = f2 + f3;
+        f5 = f3 + f4;
+        f6 = f4 + f5;
+        f7 = f5 + f6;
+        return f7;
+    }
+
+    // 4 params, 5 locals: weights, partial sums, final result.
+    // Tests: many simultaneous live variables (params + locals).
+    pub fn weighted_average(a: u256, y: u256, c: u256, d: u256) -> (u256) {
+        let w1: u256;
+        let w2: u256;
+        let w3: u256;
+        let w4: u256;
+        let total: u256;
+        w1 = 4;
+        w2 = 3;
+        w3 = 2;
+        w4 = 1;
+        total = w1 + w2 + w3 + w4;
+        // weighted_sum / total_weight
+        return (a * w1 + y * w2 + c * w3 + d * w4) / total;
+    }
+}

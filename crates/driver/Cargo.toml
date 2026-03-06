@@ -23,5 +23,10 @@ tracing = { workspace = true }
 indexmap = { workspace = true }
 tiny-keccak = { workspace = true }
 
+[dev-dependencies]
+edge-parser = { workspace = true }
+edge-ir = { workspace = true }
+edge-codegen = { workspace = true }
+
 [lints]
 workspace = true

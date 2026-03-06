@@ -1,0 +1,219 @@
+;; ============================================================
+;; U256 Constant Folding
+;; ============================================================
+;; Full 256-bit constant folding for EVM values using the custom U256 sort.
+;; Works for SmallInt+LargeInt, LargeInt+LargeInt, and any pair of constants
+;; with known const-u256-val.
+;;
+;; Results are emitted as LargeInt hex strings. A normalization rule
+;; converts small results back to SmallInt for better extraction cost.
+
+;; ---- Arithmetic constant folding ----
+
+;; ADD
+(rule ((= e (Bop (OpAdd) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-add va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; SUB
+(rule ((= e (Bop (OpSub) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-sub va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; MUL
+(rule ((= e (Bop (OpMul) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-mul va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; DIV (guarded: divisor must be non-zero)
+(rule ((= e (Bop (OpDiv) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-nonzero vb))
+      ((union e (Const (LargeInt (u256-to-hex (u256-div va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; MOD (guarded: divisor must be non-zero)
+(rule ((= e (Bop (OpMod) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-nonzero vb))
+      ((union e (Const (LargeInt (u256-to-hex (u256-mod va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; EXP
+(rule ((= e (Bop (OpExp) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-exp va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; ---- Bitwise constant folding ----
+
+;; AND
+(rule ((= e (Bop (OpAnd) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-and va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; OR
+(rule ((= e (Bop (OpOr) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-or va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; XOR
+(rule ((= e (Bop (OpXor) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-xor va vb)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; SHL
+(rule ((= e (Bop (OpShl) shift val))
+       (= vs (const-u256-val shift))
+       (= vv (const-u256-val val)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-shl vv vs)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; SHR
+(rule ((= e (Bop (OpShr) shift val))
+       (= vs (const-u256-val shift))
+       (= vv (const-u256-val val)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-shr vv vs)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; ---- Comparison constant folding ----
+
+;; EQ
+(rule ((= e (Bop (OpEq) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-eq va vb))
+      ((union e (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpEq) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-ne va vb))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; LT
+(rule ((= e (Bop (OpLt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-lt va vb))
+      ((union e (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpLt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-gt va vb))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpLt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-eq va vb))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; GT
+(rule ((= e (Bop (OpGt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-gt va vb))
+      ((union e (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpGt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-lt va vb))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpGt) a b))
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b))
+       (u256-eq va vb))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; ISZERO
+(rule ((= e (Uop (OpIsZero) x))
+       (= vx (const-u256-val x))
+       (u256-is-zero vx))
+      ((union e (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+(rule ((= e (Uop (OpIsZero) x))
+       (= vx (const-u256-val x))
+       (u256-nonzero vx))
+      ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; ---- Power-of-2 strength reduction ----
+
+;; MUL by power-of-2 → SHL
+(rule ((= e (Bop (OpMul) val c))
+       (= vc (const-u256-val c))
+       (u256-is-power-of-2 vc)
+       (= log (u256-log2 vc))
+       (= shift (u256-to-i64 log)))
+      ((union e (Bop (OpShl)
+          (Const (SmallInt shift) (Base (UIntT 256)) (InFunction "__opt__")) val)))
+      :ruleset u256-const-fold)
+(rule ((= e (Bop (OpMul) c val))
+       (= vc (const-u256-val c))
+       (u256-is-power-of-2 vc)
+       (= log (u256-log2 vc))
+       (= shift (u256-to-i64 log)))
+      ((union e (Bop (OpShl)
+          (Const (SmallInt shift) (Base (UIntT 256)) (InFunction "__opt__")) val)))
+      :ruleset u256-const-fold)
+
+;; DIV by power-of-2 → SHR
+(rule ((= e (Bop (OpDiv) val c))
+       (= vc (const-u256-val c))
+       (u256-is-power-of-2 vc)
+       (= log (u256-log2 vc))
+       (= shift (u256-to-i64 log)))
+      ((union e (Bop (OpShr)
+          (Const (SmallInt shift) (Base (UIntT 256)) (InFunction "__opt__")) val)))
+      :ruleset u256-const-fold)
+
+;; MOD by power-of-2 → AND (mask - 1)
+(rule ((= e (Bop (OpMod) val c))
+       (= vc (const-u256-val c))
+       (u256-is-power-of-2 vc))
+      ((union e (Bop (OpAnd) val
+          (Const (LargeInt (u256-to-hex (u256-sub vc (u256-from-i64 1))))
+                 (Base (UIntT 256)) (InFunction "__opt__")))))
+      :ruleset u256-const-fold)
+
+;; ---- Normalization: small LargeInt → SmallInt ----
+;; When a LargeInt hex result fits in i64, convert back to SmallInt for
+;; better extraction cost and compatibility with existing i64 rules.
+(rule ((= e (Const (LargeInt hex) ty ctx))
+       (= v (u256-from-hex hex))
+       (= i (u256-to-i64 v)))
+      ((union e (Const (SmallInt i) ty ctx)))
+      :ruleset u256-const-fold)

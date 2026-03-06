@@ -22,7 +22,7 @@ use revm::{
     database::{CacheDB, EmptyDB},
     handler::{MainBuilder, MainnetContext},
     primitives::{Address, Bytes, TxKind},
-    state::{AccountInfo, Bytecode},
+    state::AccountInfo,
     ExecuteCommitEvm, MainContext, MainnetEvm,
 };
 use tiny_keccak::{Hasher, Keccak};
@@ -72,34 +72,58 @@ fn decode_bool(output: &[u8]) -> bool {
     decode_u256(output) != 0
 }
 
-const CONTRACT_ADDR: Address = Address::new([
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10, 0x00,
-]);
+const CALLER: Address = Address::ZERO;
 
 type TestDb = CacheDB<EmptyDB>;
 type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
 struct EvmHandle {
     evm: TestEvm,
+    contract: Address,
     nonce: u64,
 }
 
 impl EvmHandle {
-    fn new(bytecode: Vec<u8>) -> Self {
-        let code = Bytecode::new_legacy(Bytes::from(bytecode));
-        let account = AccountInfo::default().with_code(code);
+    fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(CONTRACT_ADDR, account);
-        let evm = Context::mainnet().with_db(db).build_mainnet();
-        Self { evm, nonce: 0 }
+        db.insert_account_info(
+            CALLER,
+            AccountInfo {
+                balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
+                nonce: 0,
+                ..Default::default()
+            },
+        );
+
+        let mut evm = Context::mainnet().with_db(db).build_mainnet();
+
+        let tx = TxEnv::builder()
+            .caller(CALLER)
+            .kind(TxKind::Create)
+            .data(Bytes::from(deploy_bytecode))
+            .gas_limit(10_000_000)
+            .nonce(0)
+            .build()
+            .unwrap();
+
+        let result = evm.transact_commit(tx).unwrap();
+        assert!(result.is_success(), "Deployment failed: {result:#?}");
+
+        let contract = CALLER.create(0);
+        Self {
+            evm,
+            contract,
+            nonce: 1,
+        }
     }
 
     fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
-            .caller(Address::ZERO)
-            .kind(TxKind::Call(CONTRACT_ADDR))
+            .caller(CALLER)
+            .kind(TxKind::Call(self.contract))
             .data(Bytes::from(calldata))
             .nonce(self.nonce)
+            .gas_limit(10_000_000)
             .build()
             .unwrap();
         let result = self.evm.transact_commit(tx).unwrap();

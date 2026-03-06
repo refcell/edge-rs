@@ -1,0 +1,39 @@
+// test_logs.edge — Execution tests for event emission and log correctness
+
+event NoIndexed(value: u256);
+event OneIndexed(indexed key: u256, value: u256);
+event TwoIndexed(indexed from: addr, indexed to: addr, amount: u256);
+event ThreeIndexed(indexed a: u256, indexed b: u256, indexed c: u256);
+
+contract TestLogs {
+    let marker: &s u256;
+
+    // LOG1: topic0 = event sig hash, data = value (32 bytes)
+    pub fn emit_no_indexed(val: u256) {
+        emit NoIndexed(val);
+        marker = 1;
+    }
+
+    // LOG2: topic0 = sig, topic1 = key, data = value
+    pub fn emit_one_indexed(key: u256, val: u256) {
+        emit OneIndexed(key, val);
+        marker = 2;
+    }
+
+    // LOG3: topic0 = sig, topic1 = from, topic2 = to, data = amount
+    pub fn emit_two_indexed(from: addr, to: addr, amount: u256) {
+        emit TwoIndexed(from, to, amount);
+        marker = 3;
+    }
+
+    // LOG4: topic0 = sig, topic1 = a, topic2 = b, topic3 = c, no data
+    pub fn emit_three_indexed(a: u256, b: u256, c: u256) {
+        emit ThreeIndexed(a, b, c);
+        marker = 4;
+    }
+
+    // Verify marker was set (confirms emit didn't revert)
+    pub fn get_marker() -> (u256) {
+        return marker;
+    }
+}
