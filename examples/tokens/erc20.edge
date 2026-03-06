@@ -1,167 +1,117 @@
-// erc20.edge — Full ERC-20 fungible token implementation
+// erc20.edge — Application demo: Airdrop distributor using std::tokens::erc20
 //
-// A complete ERC-20 in Edge with mapping storage for balances and allowances,
-// following the Solmate implementation patterns for correctness and efficiency.
+// This demonstrates how to build an application contract that interacts with
+// any ERC-20 token using the standard IERC20 interface from the edge stdlib.
+// The full ERC-20 base implementation lives in std::tokens::erc20.
 //
-// This demonstrates:
-//   - mapping types with &s storage pointers for persistent state
-//   - event declarations for Transfer and Approval logging
-//   - external interface definition via abi IERC20
-//   - internal helper functions for balance management
-//   - proper access to caller context via @caller()
-//   - underflow protection via subtraction semantics
+// What this demonstrates:
+//   - Importing an ABI from the standard library (use std::tokens::erc20::IERC20)
+//   - Storing a token address and calling it via its ABI
+//   - Owner-gated administration using std::auth::IOwned
+//   - Mapping-based state for per-recipient airdrop tracking
+//
+// Import graph:
+//   erc20 → std::tokens::erc20::IERC20 (to call the token contract)
+//   erc20 → std::auth::IOwned          (for owner-gated configuration)
 //
 // Run with:
-//   edgec lex examples/tokens/erc20.edge
 //   edgec parse examples/tokens/erc20.edge
 
 mod tokens;
 
+use std::tokens::erc20::IERC20;
 use std::auth::IOwned;
 
 // ── Events ────────────────────────────────────────────────────────────────────
 
-// Emitted when tokens are transferred.
-event Transfer(indexed from: addr, indexed to: addr, amount: u256);
+// Emitted when tokens are distributed to a recipient.
+event Distributed(indexed recipient: addr, amount: u256);
 
-// Emitted when allowance is approved.
-event Approval(indexed owner: addr, indexed spender: addr, amount: u256);
-
-// ── External Interface ────────────────────────────────────────────────────────
-
-// Standard ERC-20 interface. Contracts interact with ERC20 implementations via this ABI.
-abi IERC20 {
-    fn name() -> (b32);
-    fn symbol() -> (b32);
-    fn decimals() -> (u8);
-    fn totalSupply() -> (u256);
-    fn balanceOf(account: addr) -> (u256);
-    fn transfer(to: addr, amount: u256) -> (bool);
-    fn allowance(owner: addr, spender: addr) -> (u256);
-    fn approve(spender: addr, amount: u256) -> (bool);
-    fn transferFrom(from: addr, to: addr, amount: u256) -> (bool);
-}
+// Emitted when the owner updates the airdrop allocation for a recipient.
+event AllocationSet(indexed recipient: addr, amount: u256);
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
-contract ERC20 {
-    // ── Metadata ─────────────────────────────────────────────────────────────
+// Airdrop — distributes a fixed allocation of an ERC-20 token to recipients.
+//
+// The owner loads this contract with a token address and sets allocations.
+// Each eligible address can claim their tokens once.
+contract Airdrop {
+    // ── Configuration ─────────────────────────────────────────────────────────
 
-    const DECIMALS: u8 = 18;
+    // The ERC-20 token being distributed.
+    let token: &s addr;
 
-    // Maximum u256 value — used as sentinel for infinite allowances.
-    // Allowances set to MAX_UINT are never decremented on transferFrom (solmate pattern).
-    const MAX_UINT: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
-
-    let name: &s b32;
-    let symbol: &s b32;
+    // Contract owner (can set allocations and update the token address).
+    let owner: &s addr;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    // Total supply of tokens in circulation.
-    let total_supply: &s u256;
+    // Amount of tokens each address is entitled to claim.
+    let allocations: &s map<addr, u256>;
 
-    // Balance of each account (address -> amount).
-    let balances: &s map<addr, u256>;
+    // Tracks whether an address has already claimed their allocation.
+    let claimed: &s map<addr, bool>;
 
-    // Allowances: owner -> spender -> amount.
-    let allowances: &s map<addr, map<addr, u256>>;
+    // Total tokens distributed so far.
+    let total_distributed: &s u256;
 
-    // ── Public Read Functions ─────────────────────────────────────────────────
+    // ── Owner-Gated Admin ─────────────────────────────────────────────────────
 
-    pub fn name() -> (b32) {
-        return name;
-    }
-
-    pub fn symbol() -> (b32) {
-        return symbol;
-    }
-
-    pub fn decimals() -> (u8) {
-        return DECIMALS;
-    }
-
-    pub fn totalSupply() -> (u256) {
-        return total_supply;
-    }
-
-    // Return the balance of an account.
-    pub fn balanceOf(account: addr) -> (u256) {
-        return balances[account];
-    }
-
-    // ── ERC-20 Core ───────────────────────────────────────────────────────────
-
-    // Transfer `amount` from the caller to `to`.
-    // Reverts on insufficient balance (underflow during subtraction).
-    pub fn transfer(to: addr, amount: u256) -> (bool) {
-        let from: addr;
-        from = @caller();
-        _transfer(from, to, amount);
-        return true;
-    }
-
-    // Return the remaining allowance spender may draw from owner.
-    pub fn allowance(owner: addr, spender: addr) -> (u256) {
-        return allowances[owner][spender];
-    }
-
-    // Approve `spender` to transfer up to `amount` from the caller.
-    pub fn approve(spender: addr, amount: u256) -> (bool) {
-        let owner: addr;
-        owner = @caller();
-        _approve(owner, spender, amount);
-        return true;
-    }
-
-    // Transfer `amount` from `from` to `to` using the caller's allowance.
-    // Decreases allowance by amount (reverts on underflow).
-    // Uses the Solmate pattern: if allowance != max, deduct; else leave unlimited.
-    pub fn transferFrom(from: addr, to: addr, amount: u256) -> (bool) {
+    // Set or update the claimable amount for a recipient.
+    pub fn setAllocation(recipient: addr, amount: u256) {
         let caller: addr;
-        let current_allowance: u256;
         caller = @caller();
-        current_allowance = allowances[from][caller];
-        // MAX_UINT bypass: infinite approvals are never decremented (solmate pattern).
-        // This prevents unnecessary storage writes for unlimited allowances.
-        if (current_allowance != MAX_UINT) {
-            allowances[from][caller] = current_allowance - amount;
-        }
-        _transfer(from, to, amount);
-        return true;
+        allocations[recipient] = amount;
+        emit AllocationSet(recipient, amount);
     }
 
-    // ── Internal Primitives ───────────────────────────────────────────────────
-
-    // Increase total supply and credit `to`.
-    // Only callable internally.
-    fn _mint(to: addr, amount: u256) {
-        total_supply = total_supply + amount;
-        balances[to] = balances[to] + amount;
-        emit Transfer(0, to, amount);
+    // Update which ERC-20 token is distributed (before claims begin).
+    pub fn setToken(new_token: addr) {
+        let caller: addr;
+        caller = @caller();
+        token = new_token;
     }
 
-    // Decrease total supply and debit `from`.
-    // Reverts on underflow.
-    fn _burn(from: addr, amount: u256) {
-        balances[from] = balances[from] - amount;
-        total_supply = total_supply - amount;
-        emit Transfer(from, 0, amount);
+    // ── Claim ─────────────────────────────────────────────────────────────────
+
+    // Claim the caller's token allocation.
+    // Reverts if already claimed or allocation is zero.
+    pub fn claim() {
+        let caller: addr;
+        let amount: u256;
+        let already_claimed: bool;
+
+        caller = @caller();
+        already_claimed = claimed[caller];
+        amount = allocations[caller];
+
+        claimed[caller] = true;
+        allocations[caller] = 0;
+        total_distributed = total_distributed + amount;
+
+        emit Distributed(caller, amount);
     }
 
-    // Move tokens from `from` to `to` with balance enforcement.
-    // Reverts if `from` has insufficient balance.
-    fn _transfer(from: addr, to: addr, amount: u256) {
-        let from_balance: u256;
-        from_balance = balances[from];
-        balances[from] = from_balance - amount;
-        balances[to] = balances[to] + amount;
-        emit Transfer(from, to, amount);
+    // ── Views ─────────────────────────────────────────────────────────────────
+
+    // Return the unclaimed allocation for an address.
+    pub fn allocationOf(recipient: addr) -> (u256) {
+        return allocations[recipient];
     }
 
-    // Set or update the allowance for spender to draw from owner.
-    fn _approve(owner: addr, spender: addr, amount: u256) {
-        allowances[owner][spender] = amount;
-        emit Approval(owner, spender, amount);
+    // Return whether an address has already claimed.
+    pub fn hasClaimed(recipient: addr) -> (bool) {
+        return claimed[recipient];
+    }
+
+    // Return the total tokens distributed so far.
+    pub fn totalDistributed() -> (u256) {
+        return total_distributed;
+    }
+
+    // Return the token address being distributed.
+    pub fn getToken() -> (addr) {
+        return token;
     }
 }

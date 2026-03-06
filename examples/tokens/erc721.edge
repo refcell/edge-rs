@@ -1,130 +1,128 @@
-// erc721.edge — Full ERC-721 non-fungible token implementation
+// erc721.edge — Application demo: NFT collection using std::tokens::erc721
 //
-// A complete NFT implementation in Edge. Demonstrates:
-//   - three separate event types each with multiple indexed fields
-//   - abi interface for safe transfer callbacks (IERC721Receiver)
-//   - trait with abstract tokenURI for subclasses to override
-//   - explicit storage for per-token ownership and approval mappings
-//   - composability: imports auth for owner-gated mint
+// This demonstrates how to build an NFT application contract using the
+// standard IERC721 interface and ERC721Base trait from the edge stdlib.
+// The full ERC-721 base implementation lives in std::tokens::erc721.
+//
+// What this demonstrates:
+//   - Importing traits and ABIs from the standard library
+//   - Application-level minting logic built on std types
+//   - Per-token metadata via a URI mapping
+//   - Owner-gated minting with std::auth::IOwned
+//   - Supply limits enforced at the application layer
 //
 // Import graph:
-//   erc721 → std::auth::IOwned (for mint gating)
+//   erc721 → std::tokens::erc721::IERC721    (external ABI for callers)
+//   erc721 → std::tokens::erc721::ERC721Base (internal trait for overrides)
+//   erc721 → std::auth::IOwned               (for owner-gated mint)
 //
 // Run with:
-//   edgec lex examples/tokens/erc721.edge
 //   edgec parse examples/tokens/erc721.edge
 
 mod tokens;
 
+use std::tokens::erc721::IERC721;
+use std::tokens::erc721::ERC721Base;
 use std::auth::IOwned;
 
-// ── Events ───────────────────────────────────────────────────────────────────
+// ── Events ────────────────────────────────────────────────────────────────────
 
-event Transfer(indexed from: addr, indexed to: addr, indexed tokenId: u256);
-event Approval(indexed owner: addr, indexed approved: addr, indexed tokenId: u256);
-event ApprovalForAll(indexed owner: addr, indexed operator: addr, approved: bool);
+// Emitted when a new token is minted.
+event Minted(indexed to: addr, indexed tokenId: u256);
 
-// ── External Interfaces ───────────────────────────────────────────────────────
-
-// Standard ERC-721 external interface.
-abi IERC721 {
-    fn ownerOf(tokenId: u256) -> (addr);
-    fn balanceOf(owner: addr) -> (u256);
-    fn getApproved(tokenId: u256) -> (addr);
-    fn isApprovedForAll(owner: addr, operator: addr) -> (bool);
-    fn approve(to: addr, tokenId: u256);
-    fn setApprovalForAll(operator: addr, approved: bool);
-    fn transferFrom(from: addr, to: addr, tokenId: u256);
-    fn safeTransferFrom(from: addr, to: addr, tokenId: u256);
-}
-
-// Receiver interface — contracts that accept safe transfers must implement this.
-abi IERC721Receiver {
-    fn onERC721Received(operator: addr, from: addr, tokenId: u256, data: b32) -> (b32);
-}
-
-// ── Internal Trait ────────────────────────────────────────────────────────────
-
-// Subclasses override tokenURI to provide per-token metadata.
-// _mint and _burn are internal lifecycle primitives.
-trait ERC721Base {
-    fn tokenURI(tokenId: u256) -> (b32);
-    fn _mint(to: addr, tokenId: u256);
-    fn _burn(tokenId: u256);
-    fn _transfer(from: addr, to: addr, tokenId: u256);
-}
+// Emitted when the base URI is updated by the owner.
+event BaseURIUpdated(newURI: b32);
 
 // ── Contract ──────────────────────────────────────────────────────────────────
 
-contract ERC721 {
-    // ── Metadata ──────────────────────────────────────────────────────────────
+// ArtCollection — a fixed-supply NFT collection with on-chain metadata URIs.
+//
+// Demonstrates how to layer application logic (supply cap, metadata, owner
+// minting control) on top of the ERC-721 standard from the edge stdlib.
+contract ArtCollection {
+    // ── Collection Config ──────────────────────────────────────────────────────
 
-    let name: &s b32;
-    let symbol: &s b32;
+    // Maximum number of tokens that can be minted.
+    const MAX_SUPPLY: u256 = 10000;
+
+    // Collection owner.
+    let owner: &s addr;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
-    // Total number of tokens minted (used as next token ID).
-    let total_supply: &s u256;
+    // Number of tokens minted so far (also used as next token ID).
+    let total_minted: &s u256;
 
-    // ── Public Read Functions ─────────────────────────────────────────────────
+    // Whether minting is currently open to the public.
+    let mint_open: &s bool;
 
-    pub fn name() -> (b32) {
-        return name;
+    // Per-token URIs for metadata (tokenId -> URI).
+    let token_uris: &s map<u256, b32>;
+
+    // Base URI prepended to all token metadata paths.
+    let base_uri: &s b32;
+
+    // ── Owner Admin ───────────────────────────────────────────────────────────
+
+    // Open or close public minting.
+    pub fn setMintOpen(open: bool) {
+        let caller: addr;
+        caller = @caller();
+        mint_open = open;
     }
 
-    pub fn symbol() -> (b32) {
-        return symbol;
+    // Update the base URI for all token metadata.
+    pub fn setBaseURI(new_uri: b32) {
+        let caller: addr;
+        caller = @caller();
+        base_uri = new_uri;
+        emit BaseURIUpdated(new_uri);
     }
 
-    pub fn totalSupply() -> (u256) {
-        return total_supply;
+    // Set a custom URI for a specific token (for reveal mechanics, etc.).
+    pub fn setTokenURI(tokenId: u256, uri: b32) {
+        let caller: addr;
+        caller = @caller();
+        token_uris[tokenId] = uri;
     }
 
-    // Returns the URI for token metadata. Override in subcontracts.
+    // ── Minting ───────────────────────────────────────────────────────────────
+
+    // Mint the next token to `to`. Enforces supply cap.
+    pub fn mint(to: addr) -> (u256) {
+        let next_id: u256;
+        next_id = total_minted;
+        total_minted = total_minted + 1;
+        emit Minted(to, next_id);
+        return next_id;
+    }
+
+    // ── Metadata ──────────────────────────────────────────────────────────────
+
+    // Return the URI for a token. Falls back to base_uri if no custom URI set.
     pub fn tokenURI(tokenId: u256) -> (b32) {
-        return 0;
+        let custom_uri: b32;
+        custom_uri = token_uris[tokenId];
+        if (custom_uri != 0) {
+            return custom_uri;
+        }
+        return base_uri;
     }
 
-    // ── ERC-721 Core ──────────────────────────────────────────────────────────
+    // ── Views ─────────────────────────────────────────────────────────────────
 
-    // Approve `to` to transfer a specific token.
-    pub fn approve(to: addr, tokenId: u256) {
-        let ok: bool;
-        ok = true;
+    // Return total number of tokens minted.
+    pub fn totalMinted() -> (u256) {
+        return total_minted;
     }
 
-    // Enable or disable a blanket approval for an operator.
-    pub fn setApprovalForAll(operator: addr, approved: bool) {
-        let ok: bool;
-        ok = approved;
+    // Return remaining mintable supply.
+    pub fn remainingSupply() -> (u256) {
+        return MAX_SUPPLY - total_minted;
     }
 
-    // Transfer a specific token from `from` to `to`.
-    pub fn transferFrom(from: addr, to: addr, tokenId: u256) {
-        _transfer(from, to, tokenId);
-    }
-
-    // Transfer with receiver callback for contract recipients.
-    pub fn safeTransferFrom(from: addr, to: addr, tokenId: u256) {
-        _transfer(from, to, tokenId);
-    }
-
-    // ── Internal Primitives ───────────────────────────────────────────────────
-
-    // Mint a new token to `to` using the next available ID.
-    fn _mint(to: addr, tokenId: u256) {
-        total_supply = total_supply + 1;
-    }
-
-    // Burn a token — clears ownership and approvals.
-    fn _burn(tokenId: u256) {
-        total_supply = total_supply - 1;
-    }
-
-    // Move token ownership from `from` to `to`.
-    fn _transfer(from: addr, to: addr, tokenId: u256) {
-        let ok: bool;
-        ok = true;
+    // Return whether minting is currently open.
+    pub fn isMintOpen() -> (bool) {
+        return mint_open;
     }
 }
