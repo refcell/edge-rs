@@ -4,11 +4,22 @@ import { defineConfig } from 'vocs'
 
 const cwdBase = path.basename(process.cwd())
 const rootDir = cwdBase === 'docs' ? '.' : 'docs'
+const collapseSidebarItems = (items: any[]): any[] =>
+  items.map((item) =>
+    item.items
+      ? {
+          ...item,
+          collapsed: item.collapsed ?? true,
+          items: collapseSidebarItems(item.items),
+        }
+      : item,
+  )
 
 export default defineConfig({
   aiCta: false,
   rootDir,
   title: 'Edge Language',
+  titleTemplate: '%s · Edge Language',
   description: 'A domain specific language for the Ethereum Virtual Machine',
   iconUrl: '/favicon.ico',
   logoUrl: '/logo.png',
@@ -17,13 +28,16 @@ export default defineConfig({
     text: 'Edit on GitHub',
   },
   topNav: [
+    { text: 'Introduction', link: '/' },
+    { text: 'Specifications', link: '/specs/overview' },
+    { text: 'Compiler', link: '/compiler/overview' },
     { text: 'GitHub', link: 'https://github.com/refcell/edge-rs' },
   ],
   sidebar: {
-    '/': [
+    '/': collapseSidebarItems([
       {
         text: 'Introduction',
-        link: '/intro',
+        link: '/',
       },
       {
         text: 'Specifications',
@@ -103,7 +117,7 @@ export default defineConfig({
         ],
       },
       {
-        text: 'The Compiler',
+        text: 'Compiler',
         items: [
           { text: 'Architecture', link: '/compiler/overview' },
           { text: 'Quickstart', link: '/compiler/quickstart' },
@@ -111,22 +125,16 @@ export default defineConfig({
       },
       {
         text: 'Tooling',
-        items: [
-          { text: 'Overview', link: '/tools/overview' },
-        ],
+        link: '/tools/overview',
       },
       {
         text: 'Contributing',
-        items: [
-          { text: 'Contributing', link: '/contributing/contributing' },
-        ],
+        link: '/contributing/contributing',
       },
       {
         text: 'Contact',
-        items: [
-          { text: 'Contact', link: '/contact/contact' },
-        ],
+        link: '/contact/contact',
       },
-    ],
+    ]),
   },
 })

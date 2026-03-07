@@ -1,19 +1,43 @@
 ---
-layout: landing
+title: Introduction
+description: Language overview, specifications, compiler internals, and tooling for Edge.
 ---
 
-import { HomePage } from 'vocs/components'
+# Introduction
 
-<HomePage.Root>
-  <HomePage.Logo />
-  <HomePage.Tagline>Edge Language</HomePage.Tagline>
-  <HomePage.Description>
-    A domain specific language for the Ethereum Virtual Machine (EVM). High
-    level, strongly statically typed, multi-paradigm.
-  </HomePage.Description>
-  <HomePage.Buttons>
-    <HomePage.Button href="/intro" variant="accent">Get Started</HomePage.Button>
-    <HomePage.Button href="/specs/overview">Specifications</HomePage.Button>
-    <HomePage.Button href="https://github.com/refcell/edge-rs">GitHub ↗</HomePage.Button>
-  </HomePage.Buttons>
-</HomePage.Root>
+<div className="edge-home-subtitle">
+  Language overview, specifications, compiler internals, and tooling for Edge.
+</div>
+
+Edge is a domain-specific language for the Ethereum Virtual Machine (EVM):
+high-level, strongly statically typed, and designed to make smart contract
+development more expressive without giving up control over execution.
+
+The language is the brainchild of
+[jtriley](https://github.com/jtriley-eth), to whom the current specifications
+are attributable.
+
+Start with the language reference, then drill into the compiler and the rest of
+the developer workflow from there.
+
+<div className="edge-home-grid">
+  <a className="edge-home-card" href="/specs/overview">
+    <strong>Specifications</strong>
+    <span>Read the language reference, syntax, semantics, built-ins, and worked examples.</span>
+  </a>
+
+  <a className="edge-home-card" href="/compiler/overview">
+    <strong>Compiler</strong>
+    <span>Understand the compiler architecture and get started with the local toolchain.</span>
+  </a>
+
+  <a className="edge-home-card" href="/tools/overview">
+    <strong>Tooling</strong>
+    <span>Find the supporting tools, workflows, and developer utilities around Edge.</span>
+  </a>
+
+  <a className="edge-home-card" href="/contributing/contributing">
+    <strong>Contributing</strong>
+    <span>See repository conventions, contribution guidance, and how to get involved.</span>
+  </a>
+</div>
