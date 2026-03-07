@@ -1,0 +1,7 @@
+[build]
+  base = "."
+  command = "npm run docs:build"
+  publish = "docs/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
