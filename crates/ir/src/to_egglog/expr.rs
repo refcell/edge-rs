@@ -29,9 +29,11 @@ impl AstToEgglog {
                     if !type_args.is_empty()
                         && self.generic_type_templates.contains_key(&name_ident.name)
                     {
-                        if let Ok(Some(mangled)) =
-                            self.try_monomorphize_named_type(&name_ident.name, type_args)
-                        {
+                        if let Some(mangled) = self.try_monomorphize_named_type(
+                            &name_ident.name,
+                            type_args,
+                            Some(&name_ident.span),
+                        )? {
                             composite_type = Some(mangled);
                         }
                     }
@@ -252,8 +254,8 @@ impl AstToEgglog {
                 )))
             }
 
-            edge_ast::Expr::FunctionCall(callee, args, type_args, _span) => {
-                self.lower_function_call(callee, args, type_args)
+            edge_ast::Expr::FunctionCall(callee, args, type_args, span) => {
+                self.lower_function_call(callee, args, type_args, span)
             }
 
             edge_ast::Expr::At(builtin_name, args, _span) => {

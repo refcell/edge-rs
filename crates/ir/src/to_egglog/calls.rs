@@ -15,6 +15,7 @@ impl AstToEgglog {
         callee: &edge_ast::Expr,
         args: &[edge_ast::Expr],
         explicit_type_args: &[edge_ast::ty::TypeSig],
+        call_span: &edge_types::span::Span,
     ) -> Result<RcExpr, IrError> {
         // Check if this is a union constructor call (e.g., Result::Ok(42))
         if let edge_ast::Expr::Path(components, span) = callee {
@@ -129,7 +130,7 @@ impl AstToEgglog {
 
         // Check generic function templates
         if let Some(template) = self.generic_fn_templates.get(&fn_name).cloned() {
-            return self.lower_generic_function_call(&template, args, explicit_type_args);
+            return self.lower_generic_function_call(&template, args, explicit_type_args, call_span);
         }
 
         // Handle builtin functions
@@ -305,6 +306,7 @@ impl AstToEgglog {
         template: &FreeFnInfo,
         args: &[edge_ast::Expr],
         explicit_type_args: &[edge_ast::ty::TypeSig],
+        call_span: &edge_types::span::Span,
     ) -> Result<RcExpr, IrError> {
         // If explicit type args provided (turbofish), use them directly
         let inferred = if !explicit_type_args.is_empty() {
@@ -315,6 +317,14 @@ impl AstToEgglog {
                         template.type_params.len(),
                         explicit_type_args.len(),
                     ))
+                    .with_label(
+                        call_span.clone(),
+                        format!(
+                            "expected {} type argument{}",
+                            template.type_params.len(),
+                            if template.type_params.len() == 1 { "" } else { "s" },
+                        ),
+                    )
                     .with_note(format!(
                         "function `{}` has {} type parameter(s)",
                         template.name,

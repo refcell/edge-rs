@@ -30,11 +30,12 @@ impl AstToEgglog {
         &mut self,
         name: &str,
         type_args: &[edge_ast::ty::TypeSig],
+        span: Option<&edge_types::span::Span>,
     ) -> Result<Option<String>, IrError> {
         if type_args.is_empty() || !self.generic_type_templates.contains_key(name) {
             return Ok(None);
         }
-        let mangled = self.monomorphize_type(name, type_args)?;
+        let mangled = self.monomorphize_type(name, type_args, span)?;
         Ok(Some(mangled))
     }
 
@@ -313,7 +314,7 @@ impl AstToEgglog {
             }
         }
 
-        let mangled = self.monomorphize_type(generic_name, &type_args)?;
+        let mangled = self.monomorphize_type(generic_name, &type_args, None)?;
         Ok(Some(mangled))
     }
 
@@ -323,6 +324,7 @@ impl AstToEgglog {
         &mut self,
         generic_name: &str,
         type_args: &[edge_ast::ty::TypeSig],
+        span: Option<&edge_types::span::Span>,
     ) -> Result<String, IrError> {
         // Lower type args to EvmType for caching
         let concrete_types: Vec<EvmType> =
@@ -337,21 +339,33 @@ impl AstToEgglog {
         let template = self
             .generic_type_templates
             .get(generic_name)
-            .ok_or_else(|| IrError::Lowering(format!("unknown generic type: {generic_name}")))?
+            .ok_or_else(|| {
+                IrError::Diagnostic(edge_diagnostics::Diagnostic::error(format!(
+                    "unknown generic type: `{generic_name}`",
+                )))
+            })?
             .clone();
 
         if template.type_params.len() != type_args.len() {
-            return Err(IrError::Lowering(format!(
+            let msg = format!(
                 "type `{generic_name}` expects {} type argument{}, but {} {} supplied",
                 template.type_params.len(),
-                if template.type_params.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                },
+                if template.type_params.len() == 1 { "" } else { "s" },
                 type_args.len(),
                 if type_args.len() == 1 { "was" } else { "were" },
-            )));
+            );
+            let mut diag = edge_diagnostics::Diagnostic::error(msg);
+            if let Some(s) = span {
+                diag = diag.with_label(
+                    s.clone(),
+                    format!(
+                        "expected {} type argument{}",
+                        template.type_params.len(),
+                        if template.type_params.len() == 1 { "" } else { "s" },
+                    ),
+                );
+            }
+            return Err(IrError::Diagnostic(diag));
         }
 
         // Build substitution map
@@ -549,7 +563,7 @@ impl AstToEgglog {
         match ts {
             edge_ast::ty::TypeSig::Named(ident, type_args) if !type_args.is_empty() => {
                 if self.generic_type_templates.contains_key(&ident.name) {
-                    self.try_monomorphize_named_type(&ident.name, type_args)?;
+                    self.try_monomorphize_named_type(&ident.name, type_args, Some(&ident.span))?;
                 }
                 // Recurse into type args
                 for arg in type_args {
