@@ -875,8 +875,7 @@ impl AstToEgglog {
         // Constructor: EVM storage is zero-initialized, so no SSTOREs needed.
         // Transient fields are also auto-zeroed per EIP-1153 at the start of each tx.
         let constructor_ctx = EvmContext::InFunction(format!("{contract_name}::constructor"));
-        let constructor =
-            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx);
+        let constructor = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx);
 
         Ok(EvmContract {
             name: contract_name,
