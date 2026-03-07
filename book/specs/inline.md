@@ -6,7 +6,7 @@
 <opcode> ::=
     | "stop" | "add" | "mul" | "sub" | "div" | "sdiv" | "mod" | "smod" | "addmod" | "mulmod" | "exp"
     | "signextend" | "lt" | "gt" | "slt" | "sgt" | "eq" | "iszero" | "and" | "or" | "xor" | "not"
-    | "byte" | "shl" | "shr" | "sar" | "sha3" | "address" | "balance" | "origin" | "caller"
+    | "byte" | "shl" | "shr" | "sar" | "clz" | "sha3" | "address" | "balance" | "origin" | "caller"
     | "callvalue" | "calldataload" | "calldatasize" | "calldatacopy" | "codesize" | "codecopy"
     | "gasprice" | "extcodesize" | "extcodecopy" | "returndatasize" | "returndatacopy"
     | "extcodehash" | "blockhash" | "coinbase" | "timestamp" | "number" | "prevrandao" | "gaslimit"

@@ -904,6 +904,7 @@ impl<'a> ExprCompiler<'a> {
         match op {
             EvmUnaryOp::IsZero => self.asm.emit_op(Opcode::IsZero), // 0 net
             EvmUnaryOp::Not => self.asm.emit_op(Opcode::Not),       // 0 net
+            EvmUnaryOp::Clz => self.asm.emit_op(Opcode::Clz),       // 0 net
             EvmUnaryOp::Neg => {
                 // 0 - x: Push0 (+1), Sub (-1) → net 0
                 self.asm.emit_op(Opcode::Push0);

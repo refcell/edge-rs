@@ -109,6 +109,7 @@
 (rule ((= e (Bop (OpSGt) a b)))    ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
 (rule ((= e (Bop (OpEq) a b)))     ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
 (rule ((= e (Uop (OpIsZero) x)))   ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
+(rule ((= e (Uop (OpClz) x)))     ((set (lower-bound e) 0) (set (upper-bound e) 256) (set (max-bits e) 9)) :ruleset range-analysis)
 (rule ((= e (Bop (OpLogAnd) a b))) ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
 (rule ((= e (Bop (OpLogOr) a b)))  ((IsBool e) (set (lower-bound e) 0) (set (upper-bound e) 1) (set (max-bits e) 1)) :ruleset range-analysis)
 

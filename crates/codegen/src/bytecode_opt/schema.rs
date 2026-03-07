@@ -32,6 +32,7 @@ const NULLARY_INSTS: &[&str] = &[
     "IShl",
     "IShr",
     "ISar",
+    "IClz",
     "IKeccak256",
     "IAddress",
     "IBalance",

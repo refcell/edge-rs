@@ -177,6 +177,13 @@
       ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
       :ruleset u256-const-fold)
 
+;; CLZ
+(rule ((= e (Uop (OpClz) x))
+       (= vx (const-u256-val x))
+       (= result (u256-to-i64 (u256-clz vx))))
+      ((union e (Const (SmallInt result) (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
 ;; ---- Power-of-2 strength reduction ----
 
 ;; MUL by power-of-2 → SHL

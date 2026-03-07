@@ -104,6 +104,7 @@ impl Sort for U256Sort {
             if a.0.is_zero() { None } else { Some(W(U256::from(a.0.bit_len() - 1))) }
         });
         add_primitives!(eg, "u256-bits" = |a: W| -> W { W(U256::from(a.0.bit_len())) });
+        add_primitives!(eg, "u256-clz" = |a: W| -> W { W(U256::from(256 - a.0.bit_len())) });
 
         // ---- Overflow checks (return Option<()> for rule guards) ----
         add_primitives!(eg, "u256-add-no-overflow" = |a: W, b: W| -> Opt {
