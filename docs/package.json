@@ -3,8 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vocs dev",
     "build": "vocs build",
-    "docs:build": "vocs build"
+    "preview": "vocs preview"
   },
   "dependencies": {
     "vocs": "1.4.1"

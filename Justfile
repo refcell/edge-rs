@@ -101,16 +101,17 @@ bench-filter filter:
 
 # Install docs dependencies
 docs-install:
-    npm install
+    npm --prefix docs install
 
 # Serve the Vocs docs site
 docs:
-    npm run docs:dev
+    npm --prefix docs run dev
 
 # Build the Vocs docs site
 docs-build:
-    npm run docs:build
+    npm --prefix docs run build
 
 # Validate docs source and rendered output
 docs-validate:
-    npm run docs:validate
+    npm --prefix docs run build
+    node bin/validate-vocs-docs.mjs

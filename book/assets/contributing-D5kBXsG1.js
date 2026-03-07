@@ -1,0 +1,7 @@
+import{u as s,j as e}from"./index-B0DkJJZv.js";const d={title:"Contributing",description:"undefined"};function t(i){const n={a:"a",div:"div",h1:"h1",h2:"h2",header:"header",p:"p",...s(),...i.components};return e.jsxs(e.Fragment,{children:[e.jsx(n.header,{children:e.jsxs(n.h1,{id:"contributing",children:["Contributing",e.jsx(n.a,{"aria-hidden":"true",tabIndex:"-1",href:"#contributing",children:e.jsx(n.div,{"data-autolink-icon":!0})})]})}),`
+`,e.jsxs(n.p,{children:["This document breaks down ",e.jsx(n.a,{href:"https://github.com/refcell/edge-rs",children:"edge-rs"}),`
+repository contribution guidelines.`]}),`
+`,e.jsxs(n.h2,{id:"issues",children:["Issues",e.jsx(n.a,{"aria-hidden":"true",tabIndex:"-1",href:"#issues",children:e.jsx(n.div,{"data-autolink-icon":!0})})]}),`
+`,e.jsxs(n.h2,{id:"pull-requests",children:["Pull Requests",e.jsx(n.a,{"aria-hidden":"true",tabIndex:"-1",href:"#pull-requests",children:e.jsx(n.div,{"data-autolink-icon":!0})})]}),`
+`,e.jsxs(n.h2,{id:"labels",children:["Labels",e.jsx(n.a,{"aria-hidden":"true",tabIndex:"-1",href:"#labels",children:e.jsx(n.div,{"data-autolink-icon":!0})})]}),`
+`,e.jsxs(n.h2,{id:"assistance",children:["Assistance",e.jsx(n.a,{"aria-hidden":"true",tabIndex:"-1",href:"#assistance",children:e.jsx(n.div,{"data-autolink-icon":!0})})]})]})}function a(i={}){const{wrapper:n}={...s(),...i.components};return n?e.jsx(n,{...i,children:e.jsx(t,{...i})}):t(i)}export{a as default,d as frontmatter};
