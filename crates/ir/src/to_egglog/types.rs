@@ -350,7 +350,11 @@ impl AstToEgglog {
             let msg = format!(
                 "type `{generic_name}` expects {} type argument{}, but {} {} supplied",
                 template.type_params.len(),
-                if template.type_params.len() == 1 { "" } else { "s" },
+                if template.type_params.len() == 1 {
+                    ""
+                } else {
+                    "s"
+                },
                 type_args.len(),
                 if type_args.len() == 1 { "was" } else { "were" },
             );
@@ -361,7 +365,11 @@ impl AstToEgglog {
                     format!(
                         "expected {} type argument{}",
                         template.type_params.len(),
-                        if template.type_params.len() == 1 { "" } else { "s" },
+                        if template.type_params.len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        },
                     ),
                 );
             }

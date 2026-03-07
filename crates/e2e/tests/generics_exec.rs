@@ -239,11 +239,7 @@ fn test_turbofish_max() {
     for_all_opt_levels(GENERICS, |h, o| {
         let (ok, out) = h.call(calldata(selector("test_turbofish_max()"), &[]));
         assert!(ok, "test_turbofish_max() reverted at O{o}");
-        assert_eq!(
-            decode_u256(&out),
-            20,
-            "test_turbofish_max() wrong at O{o}"
-        );
+        assert_eq!(decode_u256(&out), 20, "test_turbofish_max() wrong at O{o}");
     });
 }
 

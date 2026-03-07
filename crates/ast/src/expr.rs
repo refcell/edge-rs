@@ -31,7 +31,7 @@ pub enum Expr {
     Ternary(Box<Self>, Box<Self>, Box<Self>, Span),
 
     /// Function call: `func(args...)` or `func::<T, U>(args...)`
-    /// The Vec<TypeSig> holds explicit type arguments (turbofish), empty if none.
+    /// The `Vec<TypeSig>` holds explicit type arguments (turbofish), empty if none.
     FunctionCall(Box<Self>, Vec<Self>, Vec<crate::ty::TypeSig>, Span),
 
     /// Field access: expr.field

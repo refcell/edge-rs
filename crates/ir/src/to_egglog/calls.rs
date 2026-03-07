@@ -130,7 +130,12 @@ impl AstToEgglog {
 
         // Check generic function templates
         if let Some(template) = self.generic_fn_templates.get(&fn_name).cloned() {
-            return self.lower_generic_function_call(&template, args, explicit_type_args, call_span);
+            return self.lower_generic_function_call(
+                &template,
+                args,
+                explicit_type_args,
+                call_span,
+            );
         }
 
         // Handle builtin functions
@@ -322,7 +327,11 @@ impl AstToEgglog {
                         format!(
                             "expected {} type argument{}",
                             template.type_params.len(),
-                            if template.type_params.len() == 1 { "" } else { "s" },
+                            if template.type_params.len() == 1 {
+                                ""
+                            } else {
+                                "s"
+                            },
                         ),
                     )
                     .with_note(format!(
