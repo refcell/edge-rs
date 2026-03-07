@@ -24,7 +24,7 @@ fn abi_encode_address(addr: Address) -> Vec<u8> {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_stress_vars(opt: u8) -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/stress_variables.edge", opt)
+    EvmTestHost::deploy_edge("../../examples/tests/stress_variables.edge", opt)
 }
 
 #[test]
@@ -90,7 +90,7 @@ fn stress_vars_weighted_average() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_stress_cond(opt: u8) -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/stress_conditionals.edge", opt)
+    EvmTestHost::deploy_edge("../../examples/tests/stress_conditionals.edge", opt)
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn stress_cond_tier_price() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_stress_storage(opt: u8) -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/stress_storage.edge", opt)
+    EvmTestHost::deploy_edge("../../examples/tests/stress_storage.edge", opt)
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn stress_storage_swap_balances() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_stress_loops(opt: u8) -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/stress_loops.edge", opt)
+    EvmTestHost::deploy_edge("../../examples/tests/stress_loops.edge", opt)
 }
 
 #[test]

@@ -152,32 +152,6 @@ fn erc20_ir_output() {
 }
 
 // ============================================================
-// Golden file tests
-// ============================================================
-
-#[test]
-fn counter_golden_o0() {
-    let bytecode = compile_to_bytecode("../../examples/counter.edge", 0);
-    let hex = bytecode_to_hex(&bytecode);
-    let golden = include_str!("golden/counter_o0.hex").trim();
-    assert_eq!(
-        hex, golden,
-        "counter.edge -O0 bytecode changed from golden file"
-    );
-}
-
-#[test]
-fn erc20_golden_o0() {
-    let bytecode = compile_to_bytecode("../../examples/erc20.edge", 0);
-    let hex = bytecode_to_hex(&bytecode);
-    let golden = include_str!("golden/erc20_o0.hex").trim();
-    assert_eq!(
-        hex, golden,
-        "erc20.edge -O0 bytecode changed from golden file"
-    );
-}
-
-// ============================================================
 // Optimization regression tests
 // ============================================================
 

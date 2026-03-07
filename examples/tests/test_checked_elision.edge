@@ -23,8 +23,7 @@ abi ICheckedElision {
 contract CheckedElision {
     // (x & 0xff) + 1 — max input 255, max result 256, never overflows
     pub fn add_small_constants(x: u256) -> (u256) {
-        let masked: u256;
-        masked = x & 255;
+        let masked: u256 = x & 255;
         return masked + 1;
     }
 

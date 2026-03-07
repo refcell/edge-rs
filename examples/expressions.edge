@@ -7,19 +7,12 @@
 // --- Arithmetic ---
 
 fn arithmetic(a: u256, b: u256) -> (u256) {
-    let sum: u256;
-    let diff: u256;
-    let product: u256;
-    let quotient: u256;
-    let remainder: u256;
-    let power: u256;
-
-    sum = a + b;
-    diff = a - b;
-    product = a * b;
-    quotient = a / b;
-    remainder = a % b;
-    power = a ** b;
+    let sum: u256 = a + b;
+    let diff: u256 = a - b;
+    let product: u256 = a * b;
+    let quotient: u256 = a / b;
+    let remainder: u256 = a % b;
+    let power: u256 = a ** b;
 
     return sum;
 }
@@ -27,13 +20,9 @@ fn arithmetic(a: u256, b: u256) -> (u256) {
 // --- Comparison and logic ---
 
 fn comparisons(x: u256, y: u256) -> (bool) {
-    let eq: bool;
-    let lt: bool;
-    let gt: bool;
-
-    eq = x == y;
-    lt = x < y;
-    gt = x > y;
+    let eq: bool = x == y;
+    let lt: bool = x < y;
+    let gt: bool = x > y;
 
     return eq;
 }
@@ -41,15 +30,10 @@ fn comparisons(x: u256, y: u256) -> (bool) {
 // --- Bitwise ---
 
 fn bitwise(x: u256, y: u256) -> (u256) {
-    let and_result: u256;
-    let or_result: u256;
-    let xor_result: u256;
-    let shifted: u256;
-
-    and_result = x & y;
-    or_result = x | y;
-    xor_result = x ^ y;
-    shifted = x << 2;
+    let and_result: u256 = x & y;
+    let or_result: u256 = x | y;
+    let xor_result: u256 = x ^ y;
+    let shifted: u256 = x << 2;
 
     return and_result;
 }

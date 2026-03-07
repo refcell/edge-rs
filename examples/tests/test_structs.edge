@@ -10,28 +10,23 @@ type Point = {
 
 contract TestStructs {
     pub fn point_x() -> (u256) {
-        let p: Point;
-        p = Point { x: 42, y: 99 };
+        let p: Point = Point { x: 42, y: 99 };
         return p.x;
     }
 
     pub fn point_y() -> (u256) {
-        let p: Point;
-        p = Point { x: 42, y: 99 };
+        let p: Point = Point { x: 42, y: 99 };
         return p.y;
     }
 
     pub fn point_sum() -> (u256) {
-        let p: Point;
-        p = Point { x: 10, y: 20 };
+        let p: Point = Point { x: 10, y: 20 };
         return p.x + p.y;
     }
 
     pub fn two_structs() -> (u256) {
-        let a: Point;
-        a = Point { x: 1, y: 2 };
-        let b: Point;
-        b = Point { x: 3, y: 4 };
+        let a: Point = Point { x: 1, y: 2 };
+        let b: Point = Point { x: 3, y: 4 };
         return a.x + b.y;
     }
 }

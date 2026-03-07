@@ -48,7 +48,8 @@ pub(crate) fn instructions_to_sexp(instrs: &[AsmInstruction]) -> String {
             | AsmInstruction::JumpTo(_)
             | AsmInstruction::JumpITo(_)
             | AsmInstruction::PushLabel(_)
-            | AsmInstruction::Comment(_) => {}
+            | AsmInstruction::Comment(_)
+            | AsmInstruction::Raw(_) => {}
         }
     }
     sexp

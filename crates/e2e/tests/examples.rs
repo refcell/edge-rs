@@ -201,19 +201,19 @@ fn test_types_structs_compiles() {
 
 #[test]
 fn test_generics_contract_compiles() {
-    let bc = compile_contract("examples/test_generics.edge");
+    let bc = compile_contract("examples/tests/test_generics.edge");
     assert!(!bc.is_empty(), "test_generics.edge produced empty bytecode");
 }
 
 #[test]
 fn test_impl_contract_compiles() {
-    let bc = compile_contract("examples/test_impl.edge");
+    let bc = compile_contract("examples/tests/test_impl.edge");
     assert!(!bc.is_empty(), "test_impl.edge produced empty bytecode");
 }
 
 #[test]
 fn test_traits_contract_compiles() {
-    let bc = compile_contract("examples/test_traits.edge");
+    let bc = compile_contract("examples/tests/test_traits.edge");
     assert!(!bc.is_empty(), "test_traits.edge produced empty bytecode");
 }
 

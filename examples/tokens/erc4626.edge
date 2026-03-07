@@ -130,8 +130,7 @@ contract ERC4626 {
     // Convert assets → shares rounding down.
     // During deposit the vault wants to give the user as few shares as possible.
     pub fn convertToShares(assets: u256) -> (u256) {
-        let supply: u256;
-        supply = total_shares;
+        let supply: u256 = total_shares;
         if (supply == 0) {
             return assets;
         }
@@ -141,8 +140,7 @@ contract ERC4626 {
     // Convert shares → assets rounding down.
     // During redemption the user receives floor(shares * totalAssets / totalShares).
     pub fn convertToAssets(shares: u256) -> (u256) {
-        let supply: u256;
-        supply = total_shares;
+        let supply: u256 = total_shares;
         if (supply == 0) {
             return shares;
         }
@@ -158,8 +156,7 @@ contract ERC4626 {
 
     // Shares burned to withdraw an exact asset amount (rounds up — user pays more).
     pub fn previewWithdraw(assets: u256) -> (u256) {
-        let supply: u256;
-        supply = total_shares;
+        let supply: u256 = total_shares;
         if (supply == 0) {
             return assets;
         }
@@ -175,8 +172,7 @@ contract ERC4626 {
 
     // No deposit cap by default — override to add limits.
     pub fn maxDeposit(receiver: addr) -> (u256) {
-        let max: u256;
-        max = 0;
+        let max: u256 = 0;
         return max;
     }
 
@@ -195,8 +191,7 @@ contract ERC4626 {
     // Deposit `assets` of the underlying token, mint `shares` to `receiver`.
     // Uses safe_transfer_from to pull tokens from the caller.
     pub fn deposit(assets: u256, receiver: addr) -> (u256) {
-        let shares: u256;
-        shares = previewDeposit(assets);
+        let shares: u256 = previewDeposit(assets);
         total_assets = total_assets + assets;
         total_shares = total_shares + shares;
         return shares;
@@ -205,8 +200,7 @@ contract ERC4626 {
     // Withdraw exactly `assets`, burning the required shares from `owner`.
     // Rounds shares up so the vault never gives out more than deposited.
     pub fn withdraw(assets: u256, receiver: addr, owner: addr) -> (u256) {
-        let shares: u256;
-        shares = previewWithdraw(assets);
+        let shares: u256 = previewWithdraw(assets);
         total_assets = total_assets - assets;
         total_shares = total_shares - shares;
         return shares;
@@ -214,8 +208,7 @@ contract ERC4626 {
 
     // Redeem exactly `shares`, returning the proportional asset amount to `receiver`.
     pub fn redeem(shares: u256, receiver: addr, owner: addr) -> (u256) {
-        let assets: u256;
-        assets = previewRedeem(shares);
+        let assets: u256 = previewRedeem(shares);
         total_shares = total_shares - shares;
         total_assets = total_assets - assets;
         return assets;

@@ -25,13 +25,15 @@ pub fn make_schedule(optimization_level: u8) -> String {
         0 => String::new(),
         1 => {
             // Fast, safe optimizations only
-            // Saturate analysis first, then peepholes + U256 const fold
+            // After peepholes + const-fold, saturate const-prop to propagate
+            // newly-folded constants through immutable variable chains.
             "(run-schedule
                 (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))
                 (repeat 3
                     (seq
                         (run peepholes)
                         (run u256-const-fold)
+                        (saturate (seq (run const-prop) (run u256-const-fold)))
                         (saturate (seq (run dead-code) (run range-analysis) (run type-propagation))))))".to_owned()
         }
         2 => {
@@ -43,6 +45,7 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run peepholes)
                         (run arithmetic-opt)
                         (run u256-const-fold)
+                        (saturate (seq (run const-prop) (run u256-const-fold)))
                         (run storage-opt)
                         (run memory-opt)
                         (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))
@@ -58,6 +61,7 @@ pub fn make_schedule(optimization_level: u8) -> String {
                         (run peepholes)
                         (run arithmetic-opt)
                         (run u256-const-fold)
+                        (saturate (seq (run const-prop) (run u256-const-fold)))
                         (run storage-opt)
                         (run memory-opt)
                         (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))

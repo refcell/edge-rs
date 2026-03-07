@@ -60,16 +60,14 @@ contract Airdrop {
 
     // Set or update the claimable amount for a recipient.
     pub fn setAllocation(recipient: addr, amount: u256) {
-        let caller: addr;
-        caller = @caller();
+        let caller: addr = @caller();
         allocations[recipient] = amount;
         emit AllocationSet(recipient, amount);
     }
 
     // Update which ERC-20 token is distributed (before claims begin).
     pub fn setToken(new_token: addr) {
-        let caller: addr;
-        caller = @caller();
+        let caller: addr = @caller();
         token = new_token;
     }
 

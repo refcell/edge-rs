@@ -313,7 +313,7 @@ impl AstToEgglog {
             .iter()
             .filter_map(|item| match item {
                 edge_ast::BlockItem::Stmt(stmt) => match stmt.as_ref() {
-                    edge_ast::Stmt::VarDecl(ident, _, _) => Some(ident.name.clone()),
+                    edge_ast::Stmt::VarDecl(ident, _, _, _) => Some(ident.name.clone()),
                     _ => None,
                 },
                 _ => None,
@@ -359,10 +359,12 @@ impl AstToEgglog {
                 .position(|s| matches!(s.as_ref(), EvmExpr::VarStore(n, _) if n == &var_name));
             let Some(idx) = idx else { continue };
 
-            // All preceding statements must be Empty (pure VarDecl placeholders).
+            // All preceding statements must be Empty (uninit VarDecl) or VarStore
+            // (init VarDecl / earlier assignment) — no side effects that could depend
+            // on memory state.
             let preceding_ok = stmts[..idx]
                 .iter()
-                .all(|s| matches!(s.as_ref(), EvmExpr::Empty(..)));
+                .all(|s| matches!(s.as_ref(), EvmExpr::Empty(..) | EvmExpr::VarStore(..)));
             if !preceding_ok {
                 continue;
             }

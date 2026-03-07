@@ -39,8 +39,7 @@ type Option<T> = None | Some(T);
 contract TestGenerics {
     // Test identity with u256
     pub fn test_identity() -> (u256) {
-        let x: u256;
-        x = identity(42);
+        let x: u256 = identity(42);
         return x;
     }
 
@@ -56,21 +55,18 @@ contract TestGenerics {
 
     // Test generic struct instantiation and field access
     pub fn test_entry_value() -> (u256) {
-        let e: Entry<u256, u256>;
-        e = Entry { key: 100, value: 42 };
+        let e: Entry<u256, u256> = Entry { key: 100, value: 42 };
         return e.value;
     }
 
     pub fn test_entry_key() -> (u256) {
-        let e: Entry<u256, u256>;
-        e = Entry { key: 100, value: 42 };
+        let e: Entry<u256, u256> = Entry { key: 100, value: 42 };
         return e.key;
     }
 
     // Test generic Result enum — Ok path
     pub fn test_result_ok() -> (u256) {
-        let r: Result<u256>;
-        r = Result::Ok(77);
+        let r: Result<u256> = Result::Ok(77);
         match r {
             Result::Ok(val) => { return val; },
             Result::Err(code) => { return code; },
@@ -79,8 +75,7 @@ contract TestGenerics {
 
     // Test generic Result enum — Err path
     pub fn test_result_err() -> (u256) {
-        let r: Result<u256>;
-        r = Result::Err(99);
+        let r: Result<u256> = Result::Err(99);
         match r {
             Result::Ok(val) => { return val; },
             Result::Err(code) => { return code; },
@@ -89,8 +84,7 @@ contract TestGenerics {
 
     // Test generic Option — Some path via match
     pub fn test_option_some() -> (u256) {
-        let o: Option<u256>;
-        o = Option::Some(55);
+        let o: Option<u256> = Option::Some(55);
         match o {
             Option::Some(inner) => { return inner; },
             Option::None => { return 0; },
@@ -99,8 +93,7 @@ contract TestGenerics {
 
     // Test generic Option — None path via match
     pub fn test_option_none() -> (u256) {
-        let o: Option<u256>;
-        o = Option::None();
+        let o: Option<u256> = Option::None();
         match o {
             Option::Some(inner) => { return inner; },
             Option::None => { return 0; },
@@ -109,8 +102,7 @@ contract TestGenerics {
 
     // Test turbofish: explicit type args at call site
     pub fn test_turbofish_identity() -> (u256) {
-        let x: u256;
-        x = identity::<u256>(42);
+        let x: u256 = identity::<u256>(42);
         return x;
     }
 

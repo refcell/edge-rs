@@ -147,6 +147,13 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         EvmExpr::StorageField(name, slot, ty) => {
             format!("(StorageField \"{}\" {} {})", name, slot, type_sexp(ty))
         }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let mut list = "(Nil)".to_string();
+            for arg in inputs.iter().rev() {
+                list = format!("(Cons {} {})", expr_to_sexp(arg), list);
+            }
+            format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
+        }
     }
 }
 
@@ -526,6 +533,12 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let slot = atom_i64(&items[2])? as usize;
                     let ty = sexp_to_type(&items[3])?;
                     Ok(Rc::new(EvmExpr::StorageField(name, slot, ty)))
+                }
+                "InlineAsm" => {
+                    let inputs = sexp_to_list(&items[1])?;
+                    let hex = atom_string(&items[2])?;
+                    let num_outputs = atom_i64(&items[3])? as i32;
+                    Ok(Rc::new(EvmExpr::InlineAsm(inputs, hex, num_outputs)))
                 }
                 other => Err(IrError::Extraction(format!(
                     "unknown expression constructor: {other}"

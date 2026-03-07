@@ -56,8 +56,13 @@ pub enum LoopItem {
 /// A statement
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
-    /// Variable declaration: let x: T
-    VarDecl(Ident, Option<crate::ty::TypeSig>, Span),
+    /// Variable declaration: let x: T [= expr]
+    VarDecl(
+        Ident,
+        Option<crate::ty::TypeSig>,
+        Option<Box<crate::Expr>>,
+        Span,
+    ),
 
     /// Variable assignment: x = expr
     VarAssign(crate::Expr, crate::Expr, Span),
@@ -151,7 +156,7 @@ impl Stmt {
     #[allow(clippy::match_same_arms)]
     pub fn span(&self) -> Span {
         match self {
-            Self::VarDecl(_, _, span) => span.clone(),
+            Self::VarDecl(_, _, _, span) => span.clone(),
             Self::VarAssign(_, _, span) => span.clone(),
             Self::TypeAssign(_, _, span) => span.clone(),
             Self::TraitDecl(_, span) => span.clone(),

@@ -22,18 +22,12 @@ contract StressVars {
     // 12 MLOAD ops with memory mode = ~72 gas overhead.
     // With DUP: ~36 gas. Savings: 36 gas.
     pub fn dot_product() -> (u256) {
-        let a1: u256;
-        let a2: u256;
-        let a3: u256;
-        let v1: u256;
-        let v2: u256;
-        let v3: u256;
-        a1 = 3;
-        a2 = 5;
-        a3 = 7;
-        v1 = 2;
-        v2 = 4;
-        v3 = 6;
+        let a1: u256 = 3;
+        let a2: u256 = 5;
+        let a3: u256 = 7;
+        let v1: u256 = 2;
+        let v2: u256 = 4;
+        let v3: u256 = 6;
         // dot = a1*v1 + a2*v2 + a3*v3
         return a1 * v1 + a2 * v2 + a3 * v3;
     }
@@ -42,14 +36,10 @@ contract StressVars {
     // 4 coefficients as locals, x used 3 times.
     // Stresses: variable live ranges overlapping, x reused across terms.
     pub fn polynomial(x: u256) -> (u256) {
-        let a: u256;
-        let c: u256;
-        let d: u256;
-        let acc: u256;
-        a = 1;
-        c = 5;
-        d = 7;
-        acc = a;
+        let a: u256 = 1;
+        let c: u256 = 5;
+        let d: u256 = 7;
+        let acc: u256 = a;
         acc = acc * x + 3;
         acc = acc * x + c;
         acc = acc * x + d;
@@ -59,13 +49,10 @@ contract StressVars {
     // 3 params + 3 locals, circular swap pattern.
     // Tests: re-assignment of locals with dependencies.
     pub fn multi_swap(a: u256, y: u256, c: u256) -> (u256) {
-        let t1: u256;
-        let t2: u256;
-        let t3: u256;
         // Round 1: rotate a -> y -> c -> a
-        t1 = a;
-        t2 = y;
-        t3 = c;
+        let t1: u256 = a;
+        let t2: u256 = y;
+        let t3: u256 = c;
         // Compute with the rotated values
         return (t3 + t1) * t2;
     }
@@ -74,38 +61,39 @@ contract StressVars {
     // 8 locals representing fib(0)..fib(7).
     // Tests: deep chains of dependent variable reads.
     pub fn fibonacci_unrolled() -> (u256) {
+        let f0: u256 = 0;
+        let f1: u256 = 1;
+        let f2: u256 = f0 + f1;
+        let f3: u256 = f1 + f2;
+        let f4: u256 = f2 + f3;
+        let f5: u256 = f3 + f4;
+        let f6: u256 = f4 + f5;
+        let f7: u256 = f5 + f6;
+        return f7;
+    }
+
+    pub fn fibonacci_unrolled2() -> (u256) {
         let f0: u256;
         let f1: u256;
-        let f2: u256;
-        let f3: u256;
-        let f4: u256;
-        let f5: u256;
-        let f6: u256;
-        let f7: u256;
         f0 = 0;
         f1 = 1;
-        f2 = f0 + f1;
-        f3 = f1 + f2;
-        f4 = f2 + f3;
-        f5 = f3 + f4;
-        f6 = f4 + f5;
-        f7 = f5 + f6;
+        let f2: u256 = f0 + f1;
+        let f3: u256 = f1 + f2;
+        let f4: u256 = f2 + f3;
+        let f5: u256 = f3 + f4;
+        let f6: u256 = f4 + f5;
+        let f7: u256 = f5 + f6;
         return f7;
     }
 
     // 4 params, 5 locals: weights, partial sums, final result.
     // Tests: many simultaneous live variables (params + locals).
     pub fn weighted_average(a: u256, y: u256, c: u256, d: u256) -> (u256) {
-        let w1: u256;
-        let w2: u256;
-        let w3: u256;
-        let w4: u256;
-        let total: u256;
-        w1 = 4;
-        w2 = 3;
-        w3 = 2;
-        w4 = 1;
-        total = w1 + w2 + w3 + w4;
+        let w1: u256 = 4;
+        let w2: u256 = 3;
+        let w3: u256 = 2;
+        let w4: u256 = 1;
+        let total: u256 = w1 + w2 + w3 + w4;
         // weighted_sum / total_weight
         return (a * w1 + y * w2 + c * w3 + d * w4) / total;
     }

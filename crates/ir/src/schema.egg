@@ -235,6 +235,11 @@
 ;; A storage field: (StorageField name slot_index type)
 (constructor StorageField (String i64 EvmType) EvmExpr)
 
+;; Inline assembly: (InlineAsm inputs hex_bytecode num_outputs)
+;; Input expressions are compiled before the asm body.
+;; Opaque to egglog — no rewrite rules should match this.
+(constructor InlineAsm (ListExpr String i64) EvmExpr)
+
 ;; ============================================================
 ;; Rulesets
 ;; ============================================================
@@ -250,6 +255,7 @@
 (ruleset range-analysis)
 (ruleset u256-const-fold)
 (ruleset type-propagation)
+(ruleset const-prop)
 
 ;; ============================================================
 ;; Helper Relations

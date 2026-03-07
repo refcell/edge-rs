@@ -12,26 +12,21 @@ contract TestInline {
 
     // Inline with a local variable
     fn _add_offset(x: u256, y: u256) -> (u256) {
-        let result: u256;
-        result = x + y + 10;
+        let result: u256 = x + y + 10;
         return result;
     }
 
     // Inline with multiple locals
     fn _weighted_sum(a: u256, b: u256) -> (u256) {
-        let wa: u256;
-        wa = a * 3;
-        let wb: u256;
-        wb = b * 5;
-        let total: u256;
-        total = wa + wb;
+        let wa: u256 = a * 3;
+        let wb: u256 = b * 5;
+        let total: u256 = wa + wb;
         return total;
     }
 
     // Chain of inlines
     fn _triple(x: u256) -> (u256) {
-        let tmp: u256;
-        tmp = _double(x);
+        let tmp: u256 = _double(x);
         return tmp + x;
     }
 
@@ -64,8 +59,7 @@ contract TestInline {
 
     // Inline inside a loop
     pub fn inline_in_loop() -> (u256) {
-        let total: u256;
-        total = 0;
+        let total: u256 = 0;
         for (let i: u256 = 1; i < 5; i = i + 1) {
             total = total + _double(i);
         }

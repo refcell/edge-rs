@@ -30,8 +30,7 @@ contract TestLoopStorage {
     // Read+write storage in same loop iteration
     pub fn read_write_loop(n: u256) {
         for (let i: u256 = 0; i < n; i = i + 1) {
-            let prev: u256;
-            prev = total;
+            let prev: u256 = total;
             total = prev + i + 1;
             last_val = prev;
         }

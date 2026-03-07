@@ -35,8 +35,7 @@ contract Optimizable {
 
     // x * 0 should fold to 0
     pub fn zero(x: u256) -> (u256) {
-        let r: u256;
-        r = x * 0;
+        let r: u256 = x * 0;
         return r;
     }
 }

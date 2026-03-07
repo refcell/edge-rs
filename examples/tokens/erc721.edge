@@ -66,23 +66,20 @@ contract ArtCollection {
 
     // Open or close public minting.
     pub fn setMintOpen(open: bool) {
-        let caller: addr;
-        caller = @caller();
+        let caller: addr = @caller();
         mint_open = open;
     }
 
     // Update the base URI for all token metadata.
     pub fn setBaseURI(new_uri: b32) {
-        let caller: addr;
-        caller = @caller();
+        let caller: addr = @caller();
         base_uri = new_uri;
         emit BaseURIUpdated(new_uri);
     }
 
     // Set a custom URI for a specific token (for reveal mechanics, etc.).
     pub fn setTokenURI(tokenId: u256, uri: b32) {
-        let caller: addr;
-        caller = @caller();
+        let caller: addr = @caller();
         token_uris[tokenId] = uri;
     }
 
@@ -90,8 +87,7 @@ contract ArtCollection {
 
     // Mint the next token to `to`. Enforces supply cap.
     pub fn mint(to: addr) -> (u256) {
-        let next_id: u256;
-        next_id = total_minted;
+        let next_id: u256 = total_minted;
         total_minted = total_minted + 1;
         emit Minted(to, next_id);
         return next_id;
@@ -101,8 +97,7 @@ contract ArtCollection {
 
     // Return the URI for a token. Falls back to base_uri if no custom URI set.
     pub fn tokenURI(tokenId: u256) -> (b32) {
-        let custom_uri: b32;
-        custom_uri = token_uris[tokenId];
+        let custom_uri: b32 = token_uris[tokenId];
         if (custom_uri != 0) {
             return custom_uri;
         }

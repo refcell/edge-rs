@@ -38,7 +38,7 @@ fn encode3(a: u64, b: u64, c: u64) -> Vec<u8> {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_operators() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_operators.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_operators.edge", 0)
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn op_complex_expr() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_functions() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_functions.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_functions.edge", 0)
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn fn_clamp() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_control_flow() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_control_flow.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_control_flow.edge", 0)
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn cf_early_return_loop() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_storage_heavy() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_storage_heavy.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_storage_heavy.edge", 0)
 }
 
 fn encode5(a: u64, b: u64, c: u64, d: u64, e: u64) -> Vec<u8> {
@@ -535,7 +535,7 @@ fn storage_complex_op() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_events() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_events_heavy.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_events_heavy.edge", 0)
 }
 
 #[test]
@@ -609,7 +609,7 @@ fn events_multiple_emits() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_builtins() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_builtins.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_builtins.edge", 0)
 }
 
 #[test]
@@ -660,7 +660,7 @@ fn builtin_check_no_value() {
 // ═══════════════════════════════════════════════════════════════════
 
 fn deploy_constants() -> EvmTestHost {
-    EvmTestHost::deploy_edge("../../examples/test_constants.edge", 0)
+    EvmTestHost::deploy_edge("../../examples/tests/test_constants.edge", 0)
 }
 
 #[test]

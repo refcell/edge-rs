@@ -138,7 +138,7 @@ fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8))
 // Generic function tests (examples/test_generics.edge)
 // =============================================================================
 
-const GENERICS: &str = "examples/test_generics.edge";
+const GENERICS: &str = "examples/tests/test_generics.edge";
 
 #[test]
 fn test_generic_identity() {
@@ -247,7 +247,7 @@ fn test_turbofish_max() {
 // Impl block tests (examples/test_impl.edge)
 // =============================================================================
 
-const IMPL: &str = "examples/test_impl.edge";
+const IMPL: &str = "examples/tests/test_impl.edge";
 
 #[test]
 fn test_impl_point_sum() {
@@ -299,7 +299,7 @@ fn test_impl_counter_add() {
 // Trait impl tests (examples/test_traits.edge)
 // =============================================================================
 
-const TRAITS: &str = "examples/test_traits.edge";
+const TRAITS: &str = "examples/tests/test_traits.edge";
 
 #[test]
 fn test_trait_double() {

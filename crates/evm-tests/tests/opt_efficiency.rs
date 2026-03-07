@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use edge_evm_tests::{abi_encode_address, abi_encode_u256, fn_selector, EvmTestHost};
 
 const COUNTER_PATH: &str = "../../examples/counter.edge";
-const ERC20_PATH: &str = "../../examples/test_erc20.edge";
+const ERC20_PATH: &str = "../../examples/tests/test_erc20.edge";
 const OPTIMIZABLE_PATH: &str = "../../examples/optimizable.edge";
 
 fn addr(n: u8) -> Address {

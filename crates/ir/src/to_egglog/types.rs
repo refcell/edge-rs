@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::AstToEgglog;
+use super::{AstToEgglog, StructTypeInfo};
 use crate::{
     schema::{DataLocation, EvmBaseType, EvmType},
     IrError,
@@ -90,6 +90,36 @@ impl AstToEgglog {
             }
             _ => "uint256".to_owned(), // fallback
         }
+    }
+
+    /// Resolve whether a storage field's type is a packed struct.
+    /// Returns `Some(type_name)` if the field type is a packed struct, `None` otherwise.
+    /// Handles `Named("Rgb")`, `Pointer(_, Named("Rgb"))`, etc.
+    pub(crate) fn resolve_storage_packed_struct_type(
+        &self,
+        ty: &edge_ast::ty::TypeSig,
+    ) -> Option<String> {
+        let inner = match ty {
+            edge_ast::ty::TypeSig::Pointer(_, inner) => inner.as_ref(),
+            _ => ty,
+        };
+        if let edge_ast::ty::TypeSig::Named(ident, _) = inner {
+            // Check if this name resolves to a packed struct in struct_types
+            if let Some(info) = self.struct_types.get(&ident.name) {
+                if info.is_packed {
+                    return Some(ident.name.clone());
+                }
+            }
+            // Also check resolved generic names
+            if let Some(mangled) = self.resolve_generic_type_name(&ident.name) {
+                if let Some(info) = self.struct_types.get(&mangled) {
+                    if info.is_packed {
+                        return Some(mangled);
+                    }
+                }
+            }
+        }
+        None
     }
 
     // ---- Type lowering helpers ----
@@ -390,12 +420,21 @@ impl AstToEgglog {
         let concrete_sig = Self::substitute_type_params(&template.type_sig, &subst);
 
         match &concrete_sig {
-            edge_ast::ty::TypeSig::Struct(fields) | edge_ast::ty::TypeSig::PackedStruct(fields) => {
+            edge_ast::ty::TypeSig::Struct(fields) => {
                 let field_info: Vec<(String, EvmType)> = fields
                     .iter()
                     .map(|f| (f.name.name.clone(), self.lower_type_sig(&f.ty)))
                     .collect();
-                self.struct_types.insert(mangled.clone(), field_info);
+                self.struct_types
+                    .insert(mangled.clone(), StructTypeInfo::unpacked(field_info));
+            }
+            edge_ast::ty::TypeSig::PackedStruct(fields) => {
+                let field_info: Vec<(String, EvmType)> = fields
+                    .iter()
+                    .map(|f| (f.name.name.clone(), self.lower_type_sig(&f.ty)))
+                    .collect();
+                self.struct_types
+                    .insert(mangled.clone(), StructTypeInfo::packed(field_info));
             }
             edge_ast::ty::TypeSig::Union(members) => {
                 let variants: Vec<(String, bool)> = members
@@ -606,7 +645,7 @@ impl AstToEgglog {
                 }
                 Self::collect_type_sigs_from_block(body, out);
             }
-            edge_ast::Stmt::VarDecl(_, Some(ts), _) => {
+            edge_ast::Stmt::VarDecl(_, Some(ts), _, _) => {
                 out.push(ts.clone());
             }
             edge_ast::Stmt::ContractDecl(contract) => {

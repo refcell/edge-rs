@@ -104,6 +104,9 @@ pub enum Keyword {
     /// Emit event
     #[display("emit")]
     Emit,
+    /// Inline assembly block
+    #[display("asm")]
+    Asm,
 }
 
 impl Keyword {
@@ -144,6 +147,7 @@ impl Keyword {
             "matches" => Some(Keyword::Matches),
             "super" => Some(Keyword::Super),
             "emit" => Some(Keyword::Emit),
+            "asm" => Some(Keyword::Asm),
             _ => None,
         }
     }
@@ -184,6 +188,7 @@ impl Keyword {
             Keyword::Matches,
             Keyword::Super,
             Keyword::Emit,
+            Keyword::Asm,
         ]
     }
 }

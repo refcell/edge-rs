@@ -12,6 +12,17 @@ use crate::{
     Ident,
 };
 
+/// A single operation in an inline assembly block.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AsmOp {
+    /// A raw EVM opcode by name (e.g., add, sload, push1)
+    Opcode(String, Span),
+    /// A literal value to push (e.g., 0xff, 42)
+    Literal(String, Span),
+    /// An identifier reference (variable, constant, or ad-hoc opcode)
+    Ident(String, Span),
+}
+
 /// An expression that produces a value
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
@@ -75,6 +86,10 @@ pub enum Expr {
 
     /// Assignment: lhs = rhs
     Assign(Box<Self>, Box<Self>, Span),
+
+    /// Inline assembly block: asm(inputs...) -> (outputs...) { opcodes... }
+    /// Fields: inputs, output names ("_" for discarded), asm ops, span
+    InlineAsm(Vec<Self>, Vec<Option<Ident>>, Vec<AsmOp>, Span),
 }
 
 impl Expr {
@@ -102,6 +117,7 @@ impl Expr {
             Self::Path(_, span) => span.clone(),
             Self::At(_, _, span) => span.clone(),
             Self::Assign(_, _, span) => span.clone(),
+            Self::InlineAsm(_, _, _, span) => span.clone(),
         }
     }
 }

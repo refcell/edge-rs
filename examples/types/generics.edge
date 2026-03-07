@@ -67,8 +67,7 @@ type TypedPair<A, B> = {
 impl Stack<T> {
     // Push a value onto the stack.
     fn push(self: Stack<T>, value: T) -> (Stack<T>) {
-        let idx: u256;
-        idx = self.len;
+        let idx: u256 = self.len;
         self.items[idx] = value;
         self.len = idx + 1;
         return self;
@@ -76,16 +75,14 @@ impl Stack<T> {
 
     // Pop a value from the stack. Returns the value.
     fn pop(self: Stack<T>) -> (T) {
-        let new_len: u256;
-        new_len = self.len - 1;
+        let new_len: u256 = self.len - 1;
         self.len = new_len;
         return self.items[new_len];
     }
 
     // Peek at the top value without removing it.
     fn peek(self: Stack<T>) -> (T) {
-        let idx: u256;
-        idx = self.len - 1;
+        let idx: u256 = self.len - 1;
         return self.items[idx];
     }
 
@@ -130,18 +127,14 @@ impl Comparable<u256> {
 
 fn generic_usage() -> (u256) {
     // Identity with different types.
-    let a: u256;
-    a = identity(42);
+    let a: u256 = identity(42);
 
-    let b: bool;
-    b = identity(true);
+    let b: bool = identity(true);
 
     // Max/min with u256.
-    let bigger: u256;
-    bigger = max(10, 20);
+    let bigger: u256 = max(10, 20);
 
-    let smaller: u256;
-    smaller = min(10, 20);
+    let smaller: u256 = min(10, 20);
 
     // Swap values.
     let x: u256;
@@ -154,12 +147,10 @@ fn generic_usage() -> (u256) {
 
 fn entry_usage() -> (u256) {
     // Create a typed pair.
-    let pair: TypedPair<addr, u256>;
-    pair = TypedPair { first: 0, second: 100 };
+    let pair: TypedPair<addr, u256> = TypedPair { first: 0, second: 100 };
 
     // Create an entry.
-    let entry: Entry<b32, u256>;
-    entry = Entry { key: 0, value: 42 };
+    let entry: Entry<b32, u256> = Entry { key: 0, value: 42 };
 
     return entry.value;
 }

@@ -1,0 +1,29 @@
+;; ============================================================
+;; Constant Propagation for Immutable Variables
+;; ============================================================
+;; When a LetBind has a Const init and the variable is never written
+;; (ImmutableVar), replace all Var references with the constant and
+;; eliminate the LetBind wrapper.
+;;
+;; This ruleset is safe to saturate alongside const-fold rules,
+;; enabling cascading propagation through chains like:
+;;   let f2 = 1; let f3 = f2 + 1; let f4 = f2 + f3; ...
+
+;; Core rule: propagate const into Var refs and eliminate LetBind
+;; Must subsume the Var since Var (cost 3) is cheaper than Const (cost 6)
+;; and the extractor would otherwise prefer to keep the Var reference.
+(rule ((= e (LetBind ?name ?init ?body))
+       (ImmutableVar ?name)
+       (= ?init (Const ?val ?ty ?ctx)))
+      ((union (Var ?name) ?init)
+       (subsume (Var ?name))
+       (union e ?body))
+      :ruleset const-prop)
+
+;; SmallInt const folding (duplicated from peepholes for saturation safety)
+;;(rewrite (Bop (OpAdd) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+;;         (Const (SmallInt (+ i j)) ty ctx) :subsume :ruleset const-prop)
+;;(rewrite (Bop (OpSub) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+;;         (Const (SmallInt (- i j)) ty ctx) :subsume :ruleset const-prop)
+;;(rewrite (Bop (OpMul) (Const (SmallInt i) ty ctx) (Const (SmallInt j) ty2 ctx2))
+;;         (Const (SmallInt (* i j)) ty ctx) :subsume :ruleset const-prop)
