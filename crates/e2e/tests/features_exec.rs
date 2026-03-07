@@ -184,7 +184,7 @@ fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8))
 // Mapping correctness tests (examples/test_mappings.edge)
 // =============================================================================
 
-const MAPPINGS: &str = "examples/test_mappings.edge";
+const MAPPINGS: &str = "examples/tests/test_mappings.edge";
 
 #[test]
 fn test_mapping_set_get() {
@@ -311,7 +311,7 @@ fn test_mapping_counter_increment() {
 // Event/log correctness tests (examples/test_logs.edge)
 // =============================================================================
 
-const LOGS: &str = "examples/test_logs.edge";
+const LOGS: &str = "examples/tests/test_logs.edge";
 
 #[test]
 fn test_log_no_indexed() {
@@ -451,7 +451,7 @@ fn test_log_three_indexed() {
 // Transient storage correctness tests (examples/test_transient.edge)
 // =============================================================================
 
-const TRANSIENT: &str = "examples/test_transient.edge";
+const TRANSIENT: &str = "examples/tests/test_transient.edge";
 
 #[test]
 fn test_transient_set_get_within_tx() {
@@ -537,7 +537,7 @@ fn test_transient_persistent_survives() {
 // For-loop storage mutation tests (examples/test_loop_storage.edge)
 // =============================================================================
 
-const LOOP_STORAGE: &str = "examples/test_loop_storage.edge";
+const LOOP_STORAGE: &str = "examples/tests/test_loop_storage.edge";
 
 #[test]
 fn test_loop_accumulate() {
@@ -621,7 +621,7 @@ fn test_loop_reset_and_reaccumulate() {
 // Checked arithmetic correctness tests (examples/test_checked_arith.edge)
 // =============================================================================
 
-const CHECKED: &str = "examples/test_checked_arith.edge";
+const CHECKED: &str = "examples/tests/test_checked_arith.edge";
 
 #[test]
 fn test_checked_add_safe() {

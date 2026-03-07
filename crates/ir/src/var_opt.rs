@@ -139,6 +139,11 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..) => {}
+        EvmExpr::InlineAsm(inputs, ..) => {
+            for input in inputs {
+                collect_allocations(input, result);
+            }
+        }
     }
 }
 
@@ -336,6 +341,17 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..) => Rc::clone(expr),
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs.iter().map(optimize_expr).collect();
+            if new_inputs
+                .iter()
+                .zip(inputs.iter())
+                .all(|(n, o)| Rc::ptr_eq(n, o))
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
     }
 }
 
@@ -432,6 +448,11 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
         | EvmExpr::Selector(_)
         | EvmExpr::Drop(_)
         | EvmExpr::StorageField(..) => {}
+        EvmExpr::InlineAsm(inputs, ..) => {
+            for input in inputs {
+                analyze_var_inner(name, input, in_loop, info);
+            }
+        }
         // For Bop: skip the state parameter (2nd arg) of stateful ops.
         // Codegen ignores state parameters, so Var refs there are phantom.
         EvmExpr::Bop(op, a, b) => {
@@ -573,7 +594,9 @@ fn is_pure(expr: &RcExpr) -> bool {
         EvmExpr::Concat(a, b) => is_pure(a) && is_pure(b),
         EvmExpr::LetBind(_, init, body) => is_pure(init) && is_pure(body),
         EvmExpr::If(c, i, t, e) => is_pure(c) && is_pure(i) && is_pure(t) && is_pure(e),
-        EvmExpr::VarStore(..)
+        // InlineAsm is opaque — may have side effects
+        EvmExpr::InlineAsm(..)
+        | EvmExpr::VarStore(..)
         | EvmExpr::Log(..)
         | EvmExpr::Revert(..)
         | EvmExpr::ReturnOp(..)
@@ -659,6 +682,11 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..) => {}
+        EvmExpr::InlineAsm(inputs, ..) => {
+            for input in inputs {
+                collect_immutable_vars_rec(input, out);
+            }
+        }
     }
 }
 
@@ -793,6 +821,7 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..) => false,
+        EvmExpr::InlineAsm(inputs, ..) => inputs.iter().any(|i| references_var(i, name)),
     }
 }
 
@@ -828,6 +857,13 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
         | EvmExpr::Selector(_)
         | EvmExpr::Drop(_)
         | EvmExpr::StorageField(..) => Rc::clone(expr),
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| substitute_var(name, replacement, i))
+                .collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
 
         // Stop at shadowing LetBind
         EvmExpr::LetBind(n, init, body) => {

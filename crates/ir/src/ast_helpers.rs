@@ -102,6 +102,26 @@ pub fn checked_mul(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::CheckedMul, lhs, rhs)
 }
 
+/// Shorthand: shift left (`SHL` `shift_amount`, `value` — EVM operand order)
+pub fn shl(shift_amount: RcExpr, value: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Shl, shift_amount, value)
+}
+
+/// Shorthand: logical shift right (`SHR` `shift_amount`, `value` — EVM operand order)
+pub fn shr(shift_amount: RcExpr, value: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Shr, shift_amount, value)
+}
+
+/// Shorthand: bitwise AND
+pub fn bitand(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::And, lhs, rhs)
+}
+
+/// Shorthand: bitwise OR
+pub fn bitor(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Or, lhs, rhs)
+}
+
 /// Shorthand: storage load
 pub fn sload(slot: RcExpr, state: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::SLoad, slot, state)

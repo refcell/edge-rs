@@ -3,8 +3,8 @@
 //! Implements a recursive descent parser with Pratt parsing for expressions.
 
 use edge_ast::{
-    BinOp, BlockItem, CodeBlock, Expr, FnDecl, Ident, Lit, LoopBlock, LoopItem, Program, Stmt,
-    TypeSig, UnaryOp,
+    AsmOp, BinOp, BlockItem, CodeBlock, Expr, FnDecl, Ident, Lit, LoopBlock, LoopItem, Program,
+    Stmt, TypeSig, UnaryOp,
 };
 use edge_lexer::lexer::Lexer;
 use edge_types::{
@@ -301,20 +301,7 @@ impl Parser {
                 file: start_tok.span.file,
             };
 
-            // Return a code block with the declaration and assignment
-            let decl = Stmt::VarDecl(name.clone(), ty, span.clone());
-            let assign = Stmt::Expr(Expr::Assign(
-                Box::new(Expr::Ident(name)),
-                Box::new(init_expr),
-                span.clone(),
-            ));
-            Ok(Stmt::CodeBlock(CodeBlock {
-                stmts: vec![
-                    BlockItem::Stmt(Box::new(decl)),
-                    BlockItem::Stmt(Box::new(assign)),
-                ],
-                span,
-            }))
+            Ok(Stmt::VarDecl(name, ty, Some(Box::new(init_expr)), span))
         } else {
             self.expect(TokenKind::Semicolon)?;
             let span = Span {
@@ -323,7 +310,7 @@ impl Parser {
                 file: start_tok.span.file,
             };
 
-            Ok(Stmt::VarDecl(name, ty, span))
+            Ok(Stmt::VarDecl(name, ty, None, span))
         }
     }
 
@@ -1974,6 +1961,7 @@ impl Parser {
                 };
                 Ok(Expr::ArrayInstantiation(None, elems, span))
             }
+            TokenKind::Keyword(Keyword::Asm) => self.parse_inline_asm(),
             _ => {
                 let token = self.peek().clone();
                 Err(ParseError::InvalidExpr {
@@ -1982,6 +1970,125 @@ impl Parser {
                 })
             }
         }
+    }
+
+    /// Parse an inline assembly block per spec:
+    /// `asm(expr, expr, ...) -> (name, name, ...) { opcode opcode ... }`
+    ///
+    /// Inputs are expressions pushed onto the stack (left = TOS).
+    /// Outputs are names bound to stack values after the block (left = TOS).
+    /// Use `_` to discard an output.
+    fn parse_inline_asm(&mut self) -> ParseResult<Expr> {
+        let start = self.expect(TokenKind::Keyword(Keyword::Asm))?.span;
+
+        // Parse inputs: (expr, expr, ...)
+        self.expect(TokenKind::OpenParen)?;
+        let mut inputs = Vec::new();
+        while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::CloseParen) {
+                break;
+            }
+            inputs.push(self.parse_expr()?);
+            self.skip_whitespace_and_comments();
+            if !self.check(&TokenKind::CloseParen) {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+        self.expect(TokenKind::CloseParen)?;
+
+        // Parse outputs: -> (name, name, ...)
+        self.skip_whitespace_and_comments();
+        let mut outputs: Vec<Option<Ident>> = Vec::new();
+        if self.check(&TokenKind::Arrow) {
+            self.advance(); // consume ->
+            self.expect(TokenKind::OpenParen)?;
+            while !self.check(&TokenKind::CloseParen) && !self.is_at_end() {
+                self.skip_whitespace_and_comments();
+                if self.check(&TokenKind::CloseParen) {
+                    break;
+                }
+                let tok = self.peek().clone();
+                match &tok.kind {
+                    TokenKind::Ident(name) if name == "_" => {
+                        self.advance();
+                        outputs.push(None); // discarded output
+                    }
+                    TokenKind::Ident(_) => {
+                        let ident = self.parse_ident()?;
+                        outputs.push(Some(ident));
+                    }
+                    _ => {
+                        return Err(ParseError::InvalidExpr {
+                            message: "expected identifier or '_' in asm output list".to_string(),
+                            span: tok.span,
+                        });
+                    }
+                }
+                self.skip_whitespace_and_comments();
+                if !self.check(&TokenKind::CloseParen) {
+                    self.expect(TokenKind::Comma)?;
+                }
+            }
+            self.expect(TokenKind::CloseParen)?;
+        }
+
+        // Parse body: { opcode opcode ... }
+        self.skip_whitespace_and_comments();
+        self.expect(TokenKind::OpenBrace)?;
+
+        let mut ops = Vec::new();
+        loop {
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::CloseBrace) || self.is_at_end() {
+                break;
+            }
+
+            let tok = self.peek().clone();
+            match &tok.kind {
+                TokenKind::Ident(name) => {
+                    self.advance();
+                    // Try as opcode first (case-insensitive), otherwise treat as ident
+                    let upper = name.to_uppercase();
+                    if is_evm_opcode(&upper) {
+                        ops.push(AsmOp::Opcode(upper, tok.span));
+                    } else {
+                        ops.push(AsmOp::Ident(name.clone(), tok.span));
+                    }
+                }
+                TokenKind::Literal(_) => {
+                    self.advance();
+                    let hex = match &tok.kind {
+                        TokenKind::Literal(bytes) => {
+                            let mut val: u128 = 0;
+                            for b in bytes {
+                                val = (val << 8) | (*b as u128);
+                            }
+                            format!("{val:#x}")
+                        }
+                        _ => unreachable!(),
+                    };
+                    ops.push(AsmOp::Literal(hex, tok.span));
+                }
+                _ => {
+                    return Err(ParseError::InvalidExpr {
+                        message: format!(
+                            "unexpected token in asm block: {:?}, expected opcode, literal, or identifier",
+                            tok.kind
+                        ),
+                        span: tok.span,
+                    });
+                }
+            }
+        }
+
+        let end = self.expect(TokenKind::CloseBrace)?;
+        let span = Span {
+            start: start.start,
+            end: end.span.end,
+            file: start.file,
+        };
+        Ok(Expr::InlineAsm(inputs, outputs, ops, span))
     }
 
     /// Parse turbofish type arguments: `<Type, Type, ...>`
@@ -2735,4 +2842,162 @@ impl Parser {
             }
         }
     }
+}
+
+/// Check if an uppercase string is a known EVM opcode mnemonic.
+fn is_evm_opcode(name: &str) -> bool {
+    matches!(
+        name,
+        "STOP"
+            | "ADD"
+            | "MUL"
+            | "SUB"
+            | "DIV"
+            | "SDIV"
+            | "MOD"
+            | "SMOD"
+            | "ADDMOD"
+            | "MULMOD"
+            | "EXP"
+            | "SIGNEXTEND"
+            | "LT"
+            | "GT"
+            | "SLT"
+            | "SGT"
+            | "EQ"
+            | "ISZERO"
+            | "AND"
+            | "OR"
+            | "XOR"
+            | "NOT"
+            | "BYTE"
+            | "SHL"
+            | "SHR"
+            | "SAR"
+            | "KECCAK256"
+            | "SHA3"
+            | "ADDRESS"
+            | "BALANCE"
+            | "ORIGIN"
+            | "CALLER"
+            | "CALLVALUE"
+            | "CALLDATALOAD"
+            | "CALLDATASIZE"
+            | "CALLDATACOPY"
+            | "CODESIZE"
+            | "CODECOPY"
+            | "GASPRICE"
+            | "EXTCODESIZE"
+            | "EXTCODECOPY"
+            | "RETURNDATASIZE"
+            | "RETURNDATACOPY"
+            | "EXTCODEHASH"
+            | "BLOCKHASH"
+            | "COINBASE"
+            | "TIMESTAMP"
+            | "NUMBER"
+            | "PREVRANDAO"
+            | "DIFFICULTY"
+            | "GASLIMIT"
+            | "CHAINID"
+            | "SELFBALANCE"
+            | "BASEFEE"
+            | "POP"
+            | "MLOAD"
+            | "MSTORE"
+            | "MSTORE8"
+            | "SLOAD"
+            | "SSTORE"
+            | "JUMP"
+            | "JUMPI"
+            | "PC"
+            | "MSIZE"
+            | "GAS"
+            | "JUMPDEST"
+            | "TLOAD"
+            | "TSTORE"
+            | "MCOPY"
+            | "PUSH0"
+            | "PUSH1"
+            | "PUSH2"
+            | "PUSH3"
+            | "PUSH4"
+            | "PUSH5"
+            | "PUSH6"
+            | "PUSH7"
+            | "PUSH8"
+            | "PUSH9"
+            | "PUSH10"
+            | "PUSH11"
+            | "PUSH12"
+            | "PUSH13"
+            | "PUSH14"
+            | "PUSH15"
+            | "PUSH16"
+            | "PUSH17"
+            | "PUSH18"
+            | "PUSH19"
+            | "PUSH20"
+            | "PUSH21"
+            | "PUSH22"
+            | "PUSH23"
+            | "PUSH24"
+            | "PUSH25"
+            | "PUSH26"
+            | "PUSH27"
+            | "PUSH28"
+            | "PUSH29"
+            | "PUSH30"
+            | "PUSH31"
+            | "PUSH32"
+            | "DUP1"
+            | "DUP2"
+            | "DUP3"
+            | "DUP4"
+            | "DUP5"
+            | "DUP6"
+            | "DUP7"
+            | "DUP8"
+            | "DUP9"
+            | "DUP10"
+            | "DUP11"
+            | "DUP12"
+            | "DUP13"
+            | "DUP14"
+            | "DUP15"
+            | "DUP16"
+            | "SWAP1"
+            | "SWAP2"
+            | "SWAP3"
+            | "SWAP4"
+            | "SWAP5"
+            | "SWAP6"
+            | "SWAP7"
+            | "SWAP8"
+            | "SWAP9"
+            | "SWAP10"
+            | "SWAP11"
+            | "SWAP12"
+            | "SWAP13"
+            | "SWAP14"
+            | "SWAP15"
+            | "SWAP16"
+            | "LOG0"
+            | "LOG1"
+            | "LOG2"
+            | "LOG3"
+            | "LOG4"
+            | "CREATE"
+            | "CALL"
+            | "CALLCODE"
+            | "RETURN"
+            | "DELEGATECALL"
+            | "CREATE2"
+            | "STATICCALL"
+            | "REVERT"
+            | "INVALID"
+            | "SELFDESTRUCT"
+            | "BLOBHASH"
+            | "BLOBBASEFEE"
+    )
 }

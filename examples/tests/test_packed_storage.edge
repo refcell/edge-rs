@@ -1,0 +1,68 @@
+// test_packed_storage.edge — Tests for packed structs in contract storage
+//
+// Packed struct fields in storage occupy a single storage slot.
+// Sub-field reads use SLOAD + SHR + AND.
+// Sub-field writes use read-modify-write: SLOAD + mask + OR + SSTORE.
+
+type Rgb = packed {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+type Pair128 = packed {
+    a: u128,
+    b: u128,
+};
+
+contract TestPackedStorage {
+    let color: &s Rgb;
+    let pair: &s Pair128;
+
+    // --- Whole-struct write + sub-field reads ---
+
+    pub fn store_and_read_r() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        return color.r;
+    }
+
+    pub fn store_and_read_g() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        return color.g;
+    }
+
+    pub fn store_and_read_b() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        return color.b;
+    }
+
+    pub fn store_and_read_sum() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        return color.r + color.g + color.b;
+    }
+
+    pub fn store_pair_read_a() -> (u256) {
+        pair = Pair128 { a: 42, b: 99 };
+        return pair.a;
+    }
+
+    pub fn store_pair_read_b() -> (u256) {
+        pair = Pair128 { a: 42, b: 99 };
+        return pair.b;
+    }
+
+    // --- Sub-field writes ---
+
+    pub fn write_subfield_r() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        color.r = 99;
+        return color.r;
+    }
+
+    pub fn write_subfield_preserves() -> (u256) {
+        color = Rgb { r: 10, g: 20, b: 30 };
+        color.r = 99;
+        // g and b should be unchanged
+        return color.g + color.b;
+    }
+}

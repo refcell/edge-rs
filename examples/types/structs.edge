@@ -92,8 +92,7 @@ type Vec2 = {
 impl Vec2 {
     // Add two vectors.
     fn add(a: Vec2, b: Vec2) -> (Vec2) {
-        let result: Vec2;
-        result = Vec2 { x: a.x + b.x, y: a.y + b.y };
+        let result: Vec2 = Vec2 { x: a.x + b.x, y: a.y + b.y };
         return result;
     }
 
@@ -112,18 +111,14 @@ impl Vec2 {
 
 // Demonstrate field access with dot notation.
 fn create_rectangle() -> (u256) {
-    let origin: Point;
-    origin = Point { x: 10, y: 20 };
+    let origin: Point = Point { x: 10, y: 20 };
 
-    let rect: Rectangle;
-    rect = Rectangle { origin: origin, width: 100, height: 50 };
+    let rect: Rectangle = Rectangle { origin: origin, width: 100, height: 50 };
 
     // Access nested fields.
-    let x: u256;
-    x = rect.origin.x;
+    let x: u256 = rect.origin.x;
 
-    let area: u256;
-    area = rect.width * rect.height;
+    let area: u256 = rect.width * rect.height;
 
     return area;
 }
@@ -131,12 +126,10 @@ fn create_rectangle() -> (u256) {
 // ── Packed Struct Usage ───────────────────────────────────────────────────────
 
 fn create_color() -> (u8) {
-    let color: Rgb;
-    color = Rgb { r: 255, g: 128, b: 0 };
+    let color: Rgb = Rgb { r: 255, g: 128, b: 0 };
 
     // Access individual packed fields.
-    let red: u8;
-    red = color.r;
+    let red: u8 = color.r;
 
     return red;
 }
@@ -144,15 +137,12 @@ fn create_color() -> (u8) {
 // ── Tuple Usage ───────────────────────────────────────────────────────────────
 
 fn create_pair() -> (u256) {
-    let p: Pair;
-    p = (42, 99);
+    let p: Pair = (42, 99);
 
     // Access tuple fields by index.
-    let first: u256;
-    first = p.0;
+    let first: u256 = p.0;
 
-    let second: u256;
-    second = p.1;
+    let second: u256 = p.1;
 
     return first + second;
 }
@@ -164,11 +154,9 @@ fn struct_examples() -> (u256) {
     const ORIGIN: Point = Point { x: 0, y: 0 };
 
     // Packed struct instance.
-    let info: TokenInfo;
-    info = TokenInfo { token: 0, decimals: 18, active: true };
+    let info: TokenInfo = TokenInfo { token: 0, decimals: 18, active: true };
 
-    let dec: u8;
-    dec = info.decimals;
+    let dec: u8 = info.decimals;
 
     return dec;
 }

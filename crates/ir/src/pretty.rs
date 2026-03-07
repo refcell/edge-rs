@@ -8,6 +8,152 @@ use crate::schema::{EvmConstant, EvmContract, EvmExpr, EvmTernaryOp, EvmType, Rc
 /// Max inline width before we break to multi-line.
 const MAX_INLINE: usize = 80;
 
+/// Disassemble a hex-encoded bytecode string into EVM mnemonics.
+/// E.g. "02600101" → "MUL PUSH1(0x01) ADD"
+fn disassemble_hex(hex: &str) -> String {
+    let bytes: Vec<u8> = (0..hex.len())
+        .step_by(2)
+        .filter_map(|i| {
+            hex.get(i..i + 2)
+                .and_then(|s| u8::from_str_radix(s, 16).ok())
+        })
+        .collect();
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let op = bytes[i];
+        let name = opcode_mnemonic(op);
+        if (0x60..=0x7f).contains(&op) {
+            let n = (op - 0x5f) as usize;
+            let data_end = (i + 1 + n).min(bytes.len());
+            let data: String = bytes[i + 1..data_end]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            parts.push(format!("{name}(0x{data})"));
+            i = data_end;
+        } else {
+            parts.push(name.to_string());
+            i += 1;
+        }
+    }
+    parts.join(" ")
+}
+
+const fn opcode_mnemonic(op: u8) -> &'static str {
+    match op {
+        0x00 => "STOP",
+        0x01 => "ADD",
+        0x02 => "MUL",
+        0x03 => "SUB",
+        0x04 => "DIV",
+        0x05 => "SDIV",
+        0x06 => "MOD",
+        0x07 => "SMOD",
+        0x08 => "ADDMOD",
+        0x09 => "MULMOD",
+        0x0a => "EXP",
+        0x0b => "SIGNEXTEND",
+        0x10 => "LT",
+        0x11 => "GT",
+        0x12 => "SLT",
+        0x13 => "SGT",
+        0x14 => "EQ",
+        0x15 => "ISZERO",
+        0x16 => "AND",
+        0x17 => "OR",
+        0x18 => "XOR",
+        0x19 => "NOT",
+        0x1a => "BYTE",
+        0x1b => "SHL",
+        0x1c => "SHR",
+        0x1d => "SAR",
+        0x20 => "KECCAK256",
+        0x30 => "ADDRESS",
+        0x31 => "BALANCE",
+        0x32 => "ORIGIN",
+        0x33 => "CALLER",
+        0x34 => "CALLVALUE",
+        0x35 => "CALLDATALOAD",
+        0x36 => "CALLDATASIZE",
+        0x37 => "CALLDATACOPY",
+        0x38 => "CODESIZE",
+        0x39 => "CODECOPY",
+        0x3a => "GASPRICE",
+        0x3b => "EXTCODESIZE",
+        0x3c => "EXTCODECOPY",
+        0x3d => "RETURNDATASIZE",
+        0x3e => "RETURNDATACOPY",
+        0x3f => "EXTCODEHASH",
+        0x40 => "BLOCKHASH",
+        0x41 => "COINBASE",
+        0x42 => "TIMESTAMP",
+        0x43 => "NUMBER",
+        0x44 => "PREVRANDAO",
+        0x45 => "GASLIMIT",
+        0x46 => "CHAINID",
+        0x47 => "SELFBALANCE",
+        0x48 => "BASEFEE",
+        0x49 => "BLOBHASH",
+        0x4a => "BLOBBASEFEE",
+        0x50 => "POP",
+        0x51 => "MLOAD",
+        0x52 => "MSTORE",
+        0x53 => "MSTORE8",
+        0x54 => "SLOAD",
+        0x55 => "SSTORE",
+        0x56 => "JUMP",
+        0x57 => "JUMPI",
+        0x58 => "PC",
+        0x59 => "MSIZE",
+        0x5a => "GAS",
+        0x5b => "JUMPDEST",
+        0x5c => "TLOAD",
+        0x5d => "TSTORE",
+        0x5e => "MCOPY",
+        0x5f => "PUSH0",
+        0x60..=0x7f => {
+            const PUSH_NAMES: [&str; 32] = [
+                "PUSH1", "PUSH2", "PUSH3", "PUSH4", "PUSH5", "PUSH6", "PUSH7", "PUSH8", "PUSH9",
+                "PUSH10", "PUSH11", "PUSH12", "PUSH13", "PUSH14", "PUSH15", "PUSH16", "PUSH17",
+                "PUSH18", "PUSH19", "PUSH20", "PUSH21", "PUSH22", "PUSH23", "PUSH24", "PUSH25",
+                "PUSH26", "PUSH27", "PUSH28", "PUSH29", "PUSH30", "PUSH31", "PUSH32",
+            ];
+            PUSH_NAMES[(op - 0x60) as usize]
+        }
+        0x80..=0x8f => {
+            const DUP_NAMES: [&str; 16] = [
+                "DUP1", "DUP2", "DUP3", "DUP4", "DUP5", "DUP6", "DUP7", "DUP8", "DUP9", "DUP10",
+                "DUP11", "DUP12", "DUP13", "DUP14", "DUP15", "DUP16",
+            ];
+            DUP_NAMES[(op - 0x80) as usize]
+        }
+        0x90..=0x9f => {
+            const SWAP_NAMES: [&str; 16] = [
+                "SWAP1", "SWAP2", "SWAP3", "SWAP4", "SWAP5", "SWAP6", "SWAP7", "SWAP8", "SWAP9",
+                "SWAP10", "SWAP11", "SWAP12", "SWAP13", "SWAP14", "SWAP15", "SWAP16",
+            ];
+            SWAP_NAMES[(op - 0x90) as usize]
+        }
+        0xa0 => "LOG0",
+        0xa1 => "LOG1",
+        0xa2 => "LOG2",
+        0xa3 => "LOG3",
+        0xa4 => "LOG4",
+        0xf0 => "CREATE",
+        0xf1 => "CALL",
+        0xf2 => "CALLCODE",
+        0xf3 => "RETURN",
+        0xf4 => "DELEGATECALL",
+        0xf5 => "CREATE2",
+        0xfa => "STATICCALL",
+        0xfd => "REVERT",
+        0xfe => "INVALID",
+        0xff => "SELFDESTRUCT",
+        _ => "UNKNOWN",
+    }
+}
+
 /// Pretty-print an `EvmExpr` tree.
 pub fn pretty_print(expr: &RcExpr) -> String {
     let mut buf = String::new();
@@ -131,7 +277,8 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
         | EvmExpr::Revert(..)
         | EvmExpr::ReturnOp(..)
         | EvmExpr::Call(..)
-        | EvmExpr::VarStore(..) => None,
+        | EvmExpr::VarStore(..)
+        | EvmExpr::InlineAsm(..) => None,
     }
 }
 
@@ -468,6 +615,26 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             indent(depth, buf);
             buf.push_str(&format!("storage {name} @ slot {slot} : {}", fmt_type(ty)));
         }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            indent(depth, buf);
+            let disasm = disassemble_hex(hex);
+            if inputs.is_empty() {
+                buf.push_str(&format!("asm() -> ({num_outputs}) {{ {disasm} }}"));
+            } else {
+                let args: Vec<String> = inputs
+                    .iter()
+                    .map(|e| {
+                        let mut s = String::new();
+                        pp_oneline(e, &mut s);
+                        s
+                    })
+                    .collect();
+                buf.push_str(&format!(
+                    "asm({}) -> ({num_outputs}) {{ {disasm} }}",
+                    args.join(", ")
+                ));
+            }
+        }
     }
 }
 
@@ -587,6 +754,10 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
         EvmExpr::StorageField(name, slot, ty) => {
             buf.push_str(&format!("storage {name} @ slot {slot} : {}", fmt_type(ty)));
         }
+        EvmExpr::InlineAsm(_inputs, hex, num_outputs) => {
+            let disasm = disassemble_hex(hex);
+            buf.push_str(&format!("asm({num_outputs}){{ {disasm} }}"));
+        }
     }
 }
 
@@ -682,6 +853,10 @@ pub fn pretty_summary(expr: &EvmExpr) -> Option<String> {
             }
             _ => return None,
         },
+        EvmExpr::InlineAsm(_inputs, hex, num_outputs) => {
+            let disasm = disassemble_hex(hex);
+            buf.push_str(&format!("asm({num_outputs}) {{ {disasm} }}"));
+        }
         // Non-statement nodes: no comment
         _ => return None,
     }

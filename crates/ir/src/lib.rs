@@ -90,6 +90,7 @@ pub fn prologue(optimize_for: OptimizeFor) -> String {
         include_str!("optimizations/checked_arithmetic.egg"),
         include_str!("optimizations/cse.egg"),
         include_str!("optimizations/inline.egg"),
+        include_str!("optimizations/const_prop.egg"),
         &schedule::rulesets(),
     ]
     .join("\n")
@@ -481,6 +482,46 @@ mod tests {
         assert!(
             !extracted.contains("OpCheckedAdd"),
             "Both CheckedAdds should be elided via cascading bounds, got: {extracted}"
+        );
+    }
+
+    #[test]
+    fn test_const_prop_simple() {
+        // LetBind("x", Const(1), LetBind("y", Var("x"), Var("y")))
+        // Should flatten to just Const(1)
+        let program = format!(
+            "{}\n\n{}\n{}\n\n{}\n\n{}\n",
+            prologue(OptimizeFor::Gas),
+            r#"(let __test (LetBind "x"
+                (Const (SmallInt 1) (Base (UIntT 256)) (InFunction "test"))
+                (LetBind "y"
+                    (Var "x")
+                    (Var "y"))))"#,
+            "(ImmutableVar \"x\")\n(ImmutableVar \"y\")",
+            "(run-schedule
+                (saturate (seq (run dead-code) (run range-analysis) (run type-propagation)))
+                (repeat 3
+                    (seq
+                        (run peepholes)
+                        (run u256-const-fold)
+                        (saturate (seq (run const-prop) (run u256-const-fold)))
+                        (saturate (seq (run dead-code) (run range-analysis) (run type-propagation))))))",
+            "(extract __test)"
+        );
+
+        let mut egraph = create_egraph();
+        let outputs = egraph.parse_and_run_program(None, &program).unwrap();
+        let extracted = outputs.last().unwrap();
+
+        eprintln!("const_prop result: {extracted}");
+        // Should not contain LetBind or Var — everything propagated to Const(1)
+        assert!(
+            !extracted.contains("LetBind"),
+            "LetBinds should be eliminated by const-prop, got: {extracted}"
+        );
+        assert!(
+            !extracted.contains("Var"),
+            "Vars should be replaced by const, got: {extracted}"
         );
     }
 

@@ -1,0 +1,62 @@
+// test_packed_structs.edge — Execution tests for packed struct bit-packing
+//
+// Packed structs store fields in a single 256-bit word using SHL+OR on write
+// and SHR+AND on read. First field at MSB, last at LSB.
+// packed { r: u8, g: u8, b: u8 } with r=1, g=2, b=3 → 0x010203
+
+type Rgb = packed {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+type Pair128 = packed {
+    a: u128,
+    b: u128,
+};
+
+contract TestPackedStructs {
+    pub fn packed_rgb_r() -> (u256) {
+        let c: Rgb;
+        c = Rgb { r: 1, g: 2, b: 3 };
+        return c.r;
+    }
+
+    pub fn packed_rgb_g() -> (u256) {
+        let c: Rgb;
+        c = Rgb { r: 1, g: 2, b: 3 };
+        return c.g;
+    }
+
+    pub fn packed_rgb_b() -> (u256) {
+        let c: Rgb;
+        c = Rgb { r: 1, g: 2, b: 3 };
+        return c.b;
+    }
+
+    pub fn packed_pair_a() -> (u256) {
+        let p: Pair128;
+        p = Pair128 { a: 42, b: 99 };
+        return p.a;
+    }
+
+    pub fn packed_pair_b() -> (u256) {
+        let p: Pair128;
+        p = Pair128 { a: 42, b: 99 };
+        return p.b;
+    }
+
+    pub fn packed_field_sum() -> (u256) {
+        let c: Rgb;
+        c = Rgb { r: 10, g: 20, b: 30 };
+        return c.r + c.g + c.b;
+    }
+
+    pub fn packed_two_structs() -> (u256) {
+        let a: Rgb;
+        a = Rgb { r: 1, g: 2, b: 3 };
+        let b: Rgb;
+        b = Rgb { r: 10, g: 20, b: 30 };
+        return a.r + b.b;
+    }
+}

@@ -1,0 +1,65 @@
+// test_inline_asm.edge — Execution tests for inline assembly
+
+contract TestInlineAsm {
+    // Basic asm: add two inputs
+    pub fn asm_add() -> (u256) {
+        let result: u256 = asm (1, 2) -> (r) {
+            add
+        };
+        return result;
+    }
+
+    // Asm with literals in body
+    pub fn asm_mul_add() -> (u256) {
+        let result: u256 = asm (2, 3) -> (r) {
+            mul
+            1
+            add
+        };
+        return result;
+    }
+
+    // Asm identity: pass a value through
+    pub fn asm_identity() -> (u256) {
+        let result: u256 = asm (99) -> (r) {
+        };
+        return result;
+    }
+
+    // Asm with hex literal
+    pub fn asm_hex_literal() -> (u256) {
+        let result: u256 = asm () -> (r) {
+            0xff
+        };
+        return result;
+    }
+
+    // Asm no inputs, no outputs: caller opcode + pop (side effect only)
+    pub fn asm_caller() -> (u256) {
+        let result: u256 = asm () -> (r) {
+            caller
+        };
+        return result;
+    }
+
+    // Asm with local variable as input
+    pub fn asm_local_var() -> (u256) {
+        let x: u256 = 10;
+        let y: u256 = 20;
+        let result: u256 = asm (x, y) -> (r) {
+            add
+        };
+        return result;
+    }
+
+    // Asm using a computed local
+    pub fn asm_computed_local() -> (u256) {
+        let a: u256 = 3;
+        let b: u256 = a + 7;
+        let result: u256 = asm (b) -> (r) {
+            0x05
+            mul
+        };
+        return result;
+    }
+}

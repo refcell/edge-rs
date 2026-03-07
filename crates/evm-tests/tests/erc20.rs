@@ -7,7 +7,7 @@ use edge_evm_tests::{
     abi_decode_bool, abi_decode_u256, abi_encode_address, abi_encode_u256, fn_selector, EvmTestHost,
 };
 
-const ERC20_PATH: &str = "../../examples/test_erc20.edge";
+const ERC20_PATH: &str = "../../examples/tests/test_erc20.edge";
 
 fn sel_total_supply() -> [u8; 4] {
     fn_selector("totalSupply()")

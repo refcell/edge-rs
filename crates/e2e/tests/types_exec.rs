@@ -150,7 +150,7 @@ fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8))
 // Struct execution tests (examples/test_structs.edge)
 // =============================================================================
 
-const STRUCTS: &str = "examples/test_structs.edge";
+const STRUCTS: &str = "examples/tests/test_structs.edge";
 
 #[test]
 fn test_struct_field_x() {
@@ -192,7 +192,7 @@ fn test_struct_two_structs() {
 // Enum execution tests (examples/test_enums2.edge)
 // =============================================================================
 
-const ENUMS: &str = "examples/test_enums2.edge";
+const ENUMS: &str = "examples/tests/test_enums2.edge";
 
 #[test]
 fn test_enum_direction_north() {
@@ -258,7 +258,7 @@ fn test_enum_is_north_false() {
 // Array execution tests (examples/test_arrays.edge)
 // =============================================================================
 
-const ARRAYS: &str = "examples/test_arrays.edge";
+const ARRAYS: &str = "examples/tests/test_arrays.edge";
 
 #[test]
 fn test_array_element_access() {
@@ -306,7 +306,7 @@ fn test_array_slice_sum() {
 // Inlined function execution tests (examples/test_inline.edge)
 // =============================================================================
 
-const INLINE: &str = "examples/test_inline.edge";
+const INLINE: &str = "examples/tests/test_inline.edge";
 
 #[test]
 fn test_inline_double() {
@@ -382,7 +382,7 @@ fn test_inline_in_loop() {
 // Merkle / array params execution tests (examples/test_merkle.edge)
 // =============================================================================
 
-const MERKLE: &str = "examples/test_merkle.edge";
+const MERKLE: &str = "examples/tests/test_merkle.edge";
 
 #[test]
 fn test_merkle_hash_two() {

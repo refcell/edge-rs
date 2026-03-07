@@ -39,6 +39,7 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..)
         | EvmExpr::Drop(_) => false,
+        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(|inp| references_any_var(inp, names)),
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
             references_any_var(a, names) || references_any_var(b, names)
         }
@@ -133,6 +134,92 @@ pub(crate) struct GenericTypeTemplate {
     pub type_sig: edge_ast::ty::TypeSig,
 }
 
+/// Packed layout for a single field within a packed struct.
+#[derive(Debug, Clone)]
+pub(crate) struct PackedFieldLayout {
+    /// Bit offset from LSB within the word
+    pub bit_offset: u16,
+    /// Bit width of this field
+    pub bit_width: u16,
+    /// Which 256-bit word this field lives in (0 for single-word packed structs)
+    pub word_index: usize,
+}
+
+/// Layout information for a packed struct.
+#[derive(Debug, Clone)]
+pub(crate) struct PackedLayout {
+    /// Total bits used across all fields
+    pub _total_bits: u16,
+    /// Number of 256-bit words needed
+    pub word_count: usize,
+    /// Per-field layout information (same order as fields vec)
+    pub field_layouts: Vec<PackedFieldLayout>,
+}
+
+/// Extended struct type info that tracks packed-ness.
+#[derive(Debug, Clone)]
+pub(crate) struct StructTypeInfo {
+    /// Field definitions: (name, type)
+    pub fields: Vec<(String, EvmType)>,
+    /// Whether this is a packed struct
+    pub is_packed: bool,
+    /// Layout info for packed structs
+    pub packed_layout: Option<PackedLayout>,
+}
+
+impl StructTypeInfo {
+    /// Create an unpacked struct type info.
+    pub(crate) const fn unpacked(fields: Vec<(String, EvmType)>) -> Self {
+        Self {
+            fields,
+            is_packed: false,
+            packed_layout: None,
+        }
+    }
+
+    /// Create a packed struct type info, computing layout from field types.
+    pub(crate) fn packed(fields: Vec<(String, EvmType)>) -> Self {
+        let mut field_layouts = Vec::with_capacity(fields.len());
+
+        // Compute total bits first (for MSB-first layout)
+        let total_bits: u16 = fields
+            .iter()
+            .map(|(_, ty)| match ty {
+                EvmType::Base(b) => b.bit_width(),
+                _ => 256,
+            })
+            .sum();
+
+        // Fields are packed MSB-first: first field at highest bits, last at lowest.
+        // We compute bit_offset from LSB for each field.
+        let mut remaining_bits = total_bits;
+        for (_, ty) in &fields {
+            let width = match ty {
+                EvmType::Base(b) => b.bit_width(),
+                _ => 256,
+            };
+            remaining_bits -= width;
+            field_layouts.push(PackedFieldLayout {
+                bit_offset: remaining_bits,
+                bit_width: width,
+                word_index: 0, // TODO: multi-word support
+            });
+        }
+
+        let word_count = (total_bits as usize).div_ceil(256);
+
+        Self {
+            fields,
+            is_packed: true,
+            packed_layout: Some(PackedLayout {
+                _total_bits: total_bits,
+                word_count: word_count.max(1),
+                field_layouts,
+            }),
+        }
+    }
+}
+
 /// Trait definition info.
 #[derive(Debug, Clone)]
 pub(crate) struct TraitInfo {
@@ -191,9 +278,9 @@ pub struct AstToEgglog {
     /// Union/enum type declarations: `type_name` -> `[(variant_name, has_data)]`
     /// Variant index is its position in the vector.
     pub(crate) union_types: IndexMap<String, Vec<(String, bool)>>,
-    /// Struct type declarations: `type_name` -> `[(field_name, field_type)]`
-    /// Field index is its position in the vector.
-    pub(crate) struct_types: IndexMap<String, Vec<(String, EvmType)>>,
+    /// Struct type declarations: `type_name` -> struct type info (fields, packed layout)
+    /// Field index is its position in the fields vector.
+    pub(crate) struct_types: IndexMap<String, StructTypeInfo>,
     /// Type aliases: name -> `TypeSig` (for resolving named types like `FiveInts`)
     pub(crate) type_aliases: IndexMap<String, edge_ast::ty::TypeSig>,
     /// Storage array fields: `field_name` -> `(base_slot, array_length)`
@@ -457,16 +544,24 @@ impl AstToEgglog {
                         .collect();
                     self.union_types
                         .insert(_type_decl.name.name.clone(), variants);
-                } else if let edge_ast::ty::TypeSig::Struct(fields)
-                | edge_ast::ty::TypeSig::PackedStruct(fields) = type_sig
-                {
-                    // Treat packed structs as unpacked for now (each field = 32 bytes)
+                } else if let edge_ast::ty::TypeSig::Struct(fields) = type_sig {
                     let field_info: Vec<(String, EvmType)> = fields
                         .iter()
                         .map(|f| (f.name.name.clone(), self.lower_type_sig(&f.ty)))
                         .collect();
-                    self.struct_types
-                        .insert(_type_decl.name.name.clone(), field_info);
+                    self.struct_types.insert(
+                        _type_decl.name.name.clone(),
+                        StructTypeInfo::unpacked(field_info),
+                    );
+                } else if let edge_ast::ty::TypeSig::PackedStruct(fields) = type_sig {
+                    let field_info: Vec<(String, EvmType)> = fields
+                        .iter()
+                        .map(|f| (f.name.name.clone(), self.lower_type_sig(&f.ty)))
+                        .collect();
+                    self.struct_types.insert(
+                        _type_decl.name.name.clone(),
+                        StructTypeInfo::packed(field_info),
+                    );
                 }
             }
         }
@@ -697,6 +792,9 @@ impl AstToEgglog {
             let field_ir = ast_helpers::storage_field(ident.name.clone(), slot, ty.clone());
             self.storage_fields.push(field_ir);
 
+            // Check if the field type resolves to a packed struct
+            let composite_type = self.resolve_storage_packed_struct_type(type_sig);
+
             // Register in scope with the correct location
             let binding = VarBinding {
                 value: ast_helpers::const_int(
@@ -707,7 +805,7 @@ impl AstToEgglog {
                 storage_slot: Some(slot),
                 _ty: ty,
                 let_bind_name: None,
-                composite_type: None,
+                composite_type,
                 composite_base: None,
             };
             self.scopes

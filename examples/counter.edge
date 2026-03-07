@@ -18,15 +18,13 @@ contract Counter {
 
     // Increment the counter by 1
     pub fn increment() {
-        let val: u256;
-        val = count + 1;
+        let val: u256 = count + 1;
         count = val;
     }
 
     // Decrement the counter by 1 (saturating at 0)
     pub fn decrement() {
-        let val: u256;
-        val = count - 1;
+        let val: u256 = count - 1;
         count = val;
     }
 

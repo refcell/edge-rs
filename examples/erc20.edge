@@ -53,8 +53,7 @@ contract ERC20 {
 
     // Core ERC-20 functions
     pub fn transfer(to: addr, amount: u256) -> (bool) {
-        let from: addr;
-        from = @caller();
+        let from: addr = @caller();
         _transfer(from, to, amount);
         return true;
     }
@@ -64,17 +63,14 @@ contract ERC20 {
     }
 
     pub fn approve(spender: addr, amount: u256) -> (bool) {
-        let owner: addr;
-        owner = @caller();
+        let owner: addr = @caller();
         _approve(owner, spender, amount);
         return true;
     }
 
     pub fn transferFrom(from: addr, to: addr, amount: u256) -> (bool) {
-        let caller: addr;
-        let current_allowance: u256;
-        caller = @caller();
-        current_allowance = allowances[from][caller];
+        let caller: addr = @caller();
+        let current_allowance: u256 = allowances[from][caller];
         allowances[from][caller] = current_allowance - amount;
         _transfer(from, to, amount);
         return true;
@@ -82,8 +78,7 @@ contract ERC20 {
 
     // Internal helpers
     fn _transfer(from: addr, to: addr, amount: u256) {
-        let from_balance: u256;
-        from_balance = balances[from];
+        let from_balance: u256 = balances[from];
         balances[from] = from_balance - amount;
         balances[to] = balances[to] + amount;
         emit Transfer(from, to, amount);

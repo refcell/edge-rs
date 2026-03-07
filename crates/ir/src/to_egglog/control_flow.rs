@@ -160,7 +160,7 @@ impl AstToEgglog {
 
             for stmt in &items {
                 match stmt {
-                    edge_ast::Stmt::VarDecl(ident, type_sig, _span) => {
+                    edge_ast::Stmt::VarDecl(ident, type_sig, _init, _span) => {
                         let ty = type_sig
                             .as_ref()
                             .map(|ts| self.lower_type_sig(ts))
@@ -280,7 +280,7 @@ impl AstToEgglog {
             .iter()
             .filter_map(|item| match item {
                 edge_ast::LoopItem::Stmt(stmt) => match stmt.as_ref() {
-                    edge_ast::Stmt::VarDecl(ident, _, _) => Some(ident.name.clone()),
+                    edge_ast::Stmt::VarDecl(ident, _, _, _) => Some(ident.name.clone()),
                     _ => None,
                 },
                 _ => None,

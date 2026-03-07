@@ -32,6 +32,19 @@ pub enum EvmBaseType {
     StateT,
 }
 
+impl EvmBaseType {
+    /// Returns the bit width of this type for packed struct layout.
+    pub const fn bit_width(&self) -> u16 {
+        match self {
+            Self::UIntT(n) | Self::IntT(n) => *n,
+            Self::BytesT(n) => (*n as u16) * 8,
+            Self::AddrT => 160,
+            Self::BoolT => 8,
+            Self::UnitT | Self::StateT => 0,
+        }
+    }
+}
+
 /// EVM types.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EvmType {
@@ -318,6 +331,12 @@ pub enum EvmExpr {
     Function(String, EvmType, EvmType, RcExpr),
     /// Storage field: (name, `slot_index`, type)
     StorageField(String, usize, EvmType),
+
+    /// Inline assembly: (`input_exprs`, `encoded_ops_hex`, `num_outputs`)
+    /// Input expressions are compiled and pushed to stack before the asm body.
+    /// `num_outputs` is how many values the asm block leaves on stack after consuming inputs.
+    /// Opaque to egglog — passes through optimization unchanged.
+    InlineAsm(Vec<RcExpr>, String, i32),
 }
 
 // ============================================================

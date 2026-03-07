@@ -25,6 +25,8 @@ pub enum AsmInstruction {
     PushLabel(String),
     /// A comment (zero-width, no bytecode emitted). Used for IR provenance.
     Comment(String),
+    /// Raw bytecode bytes (inline assembly). Not subject to label resolution.
+    Raw(Vec<u8>),
 }
 
 impl AsmInstruction {
@@ -51,6 +53,7 @@ impl AsmInstruction {
                 }
             } // PUSH1/PUSH2 (no JUMP)
             Self::Comment(_) => 0,
+            Self::Raw(data) => data.len(),
         }
     }
 }
@@ -228,6 +231,9 @@ impl Assembler {
                 }
                 AsmInstruction::Comment(_) => {
                     // Comments are zero-width; no bytecode emitted.
+                }
+                AsmInstruction::Raw(data) => {
+                    bytecode.extend_from_slice(data);
                 }
             }
         }

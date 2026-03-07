@@ -96,7 +96,8 @@ impl AstToEgglog {
     }
 
     /// Lower a struct instantiation: `Point { x: 10, y: 20 }`
-    /// Stores fields at sequential 32-byte memory offsets.
+    /// For unpacked structs: stores fields at sequential 32-byte memory offsets.
+    /// For packed structs: packs fields into minimal words via SHL+OR.
     /// Returns the base memory address as the struct "value".
     pub(crate) fn lower_struct_instantiation(
         &mut self,
@@ -110,8 +111,24 @@ impl AstToEgglog {
             self.resolve_generic_type_name(type_name)
                 .unwrap_or_else(|| type_name.to_string())
         };
-        let field_info = self.struct_types.get(&resolved_name).cloned();
-        let field_info = field_info.unwrap_or_else(|| {
+        let struct_info = self.struct_types.get(&resolved_name).cloned();
+
+        // Check for packed struct path
+        if let Some(ref info) = struct_info {
+            if info.is_packed {
+                if let Some(ref layout) = info.packed_layout {
+                    return self.lower_packed_struct_instantiation(
+                        &resolved_name,
+                        fields,
+                        &info.fields,
+                        layout,
+                    );
+                }
+            }
+        }
+
+        // Unpacked path
+        let field_info = struct_info.map(|i| i.fields).unwrap_or_else(|| {
             // Unknown struct type — treat each field as a 32-byte word in order
             fields
                 .iter()
@@ -154,6 +171,101 @@ impl AstToEgglog {
         Ok(ast_helpers::concat(result, base_ir))
     }
 
+    /// Lower a packed struct instantiation.
+    /// Packs all fields into minimal 256-bit words using SHL+OR, then MSTOREs.
+    fn lower_packed_struct_instantiation(
+        &mut self,
+        resolved_name: &str,
+        fields: &[(edge_ast::Ident, edge_ast::Expr)],
+        field_defs: &[(String, EvmType)],
+        layout: &super::PackedLayout,
+    ) -> Result<RcExpr, IrError> {
+        let base = self.next_memory_offset;
+        self.next_memory_offset += layout.word_count * 32;
+
+        let mut result =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+
+        // Build packed word: OR together (val & mask) << bit_offset for each field
+        // For now, single-word only (word_index == 0 for all fields)
+        let mut packed_word: Option<RcExpr> = None;
+
+        for (name, expr) in fields {
+            let field_idx = field_defs
+                .iter()
+                .position(|(n, _)| n == &name.name)
+                .unwrap_or_else(|| {
+                    fields
+                        .iter()
+                        .position(|(n, _)| n.name == name.name)
+                        .unwrap_or(0)
+                });
+
+            let fl = &layout.field_layouts[field_idx];
+            let val = self.lower_expr(expr)?;
+
+            // Mask the value to its bit width: val & ((1 << bit_width) - 1)
+            let mask = Self::make_mask(fl.bit_width, &self.current_ctx);
+            let masked = ast_helpers::bitand(val, mask);
+
+            // Shift to position: masked << bit_offset
+            let shifted = if fl.bit_offset > 0 {
+                let shift = ast_helpers::const_int(fl.bit_offset as i64, self.current_ctx.clone());
+                ast_helpers::shl(shift, masked)
+            } else {
+                masked
+            };
+
+            // OR into accumulated word
+            packed_word = Some(match packed_word {
+                Some(acc) => ast_helpers::bitor(acc, shifted),
+                None => shifted,
+            });
+        }
+
+        // MSTORE the packed word
+        if let Some(word) = packed_word {
+            let offset = ast_helpers::const_int(base as i64, self.current_ctx.clone());
+            let mstore = ast_helpers::mstore(offset, word, Rc::clone(&self.current_state));
+            self.current_state = Rc::clone(&mstore);
+            result = ast_helpers::concat(result, mstore);
+        }
+
+        // Track this allocation for VarAssign wiring
+        self.last_composite_alloc = Some((resolved_name.to_string(), base));
+
+        // Return the base address as the struct value
+        let base_ir = ast_helpers::const_int(base as i64, self.current_ctx.clone());
+        Ok(ast_helpers::concat(result, base_ir))
+    }
+
+    /// Create a mask for the given bit width: `(1 << bit_width) - 1`
+    fn make_mask(bit_width: u16, ctx: &crate::schema::EvmContext) -> RcExpr {
+        if bit_width >= 256 {
+            // Full word — all ones
+            ast_helpers::const_bigint(
+                "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+                ctx.clone(),
+            )
+        } else if bit_width <= 63 {
+            let mask_val = (1i64 << bit_width) - 1;
+            ast_helpers::const_int(mask_val, ctx.clone())
+        } else {
+            // Build hex mask string for wider masks (64..255 bits)
+            // (1 << N) - 1 = N/4 'f' hex digits, possibly with a partial leading digit
+            let full_nibbles = (bit_width / 4) as usize;
+            let remainder = bit_width % 4;
+            let mut hex = String::with_capacity(full_nibbles + 1);
+            if remainder > 0 {
+                hex.push(char::from_digit((1u32 << remainder) - 1, 16).unwrap());
+            }
+            for _ in 0..full_nibbles {
+                hex.push('f');
+            }
+            ast_helpers::const_bigint(hex, ctx.clone())
+        }
+    }
+
     /// Lower an array instantiation: `[10, 20, 30]`
     /// Stores elements at sequential 32-byte memory offsets.
     /// Returns the base memory address.
@@ -184,6 +296,7 @@ impl AstToEgglog {
 
     /// Lower field access: `obj.field`
     /// For struct-typed variables: compute memory offset and MLOAD.
+    /// For packed structs: MLOAD + SHR + AND to extract the field.
     /// Falls back to storage field access for contract storage fields.
     pub(crate) fn lower_field_access(
         &mut self,
@@ -192,10 +305,33 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         // Check if obj is an identifier bound to a struct-typed variable
         if let edge_ast::Expr::Ident(ident) = obj {
+            // Check for storage-backed packed struct field read (e.g., self.color.r)
+            if let Some(result) =
+                self.try_lower_storage_packed_field_read(&ident.name, field_name)?
+            {
+                return Ok(result);
+            }
+
             let lookup = self.lookup_composite_info(&ident.name);
             if let Some((type_name, base_offset)) = lookup {
-                if let Some(field_info) = self.struct_types.get(&type_name).cloned() {
-                    if let Some(field_idx) = field_info.iter().position(|(n, _)| n == field_name) {
+                if let Some(struct_info) = self.struct_types.get(&type_name).cloned() {
+                    if let Some(field_idx) =
+                        struct_info.fields.iter().position(|(n, _)| n == field_name)
+                    {
+                        // Packed struct field read
+                        if struct_info.is_packed {
+                            if let Some(ref layout) = struct_info.packed_layout {
+                                let fl = &layout.field_layouts[field_idx];
+                                let word_offset = ast_helpers::const_int(
+                                    (base_offset + fl.word_index * 32) as i64,
+                                    self.current_ctx.clone(),
+                                );
+                                let word =
+                                    ast_helpers::mload(word_offset, Rc::clone(&self.current_state));
+                                return Ok(Self::extract_packed_field(word, fl, &self.current_ctx));
+                            }
+                        }
+                        // Unpacked struct field read
                         let offset = ast_helpers::const_int(
                             (base_offset + field_idx * 32) as i64,
                             self.current_ctx.clone(),
@@ -211,14 +347,14 @@ impl AstToEgglog {
             if let edge_ast::Expr::Ident(ident) = inner_obj.as_ref() {
                 let lookup = self.lookup_composite_info(&ident.name);
                 if let Some((type_name, base_offset)) = lookup {
-                    if let Some(field_info) = self.struct_types.get(&type_name).cloned() {
-                        if let Some(inner_idx) =
-                            field_info.iter().position(|(n, _)| n == &inner_field.name)
+                    if let Some(struct_info) = self.struct_types.get(&type_name).cloned() {
+                        if let Some(inner_idx) = struct_info
+                            .fields
+                            .iter()
+                            .position(|(n, _)| n == &inner_field.name)
                         {
                             // The inner field's type should be a struct too
-                            let inner_type = &field_info[inner_idx].0;
-                            // Look up field in inner struct type via the field's type
-                            // For now, read the base address from memory and compute offset
+                            let inner_type = &struct_info.fields[inner_idx].0;
                             let inner_base_ir = ast_helpers::mload(
                                 ast_helpers::const_int(
                                     (base_offset + inner_idx * 32) as i64,
@@ -226,14 +362,11 @@ impl AstToEgglog {
                                 ),
                                 Rc::clone(&self.current_state),
                             );
-                            // Try to find the inner struct's type name
-                            let _ = inner_type; // suppress unused warning
-                                                // For now, try looking up field_name in all struct types
-                            for (_sname, sfields) in &self.struct_types {
+                            let _ = inner_type;
+                            for (_sname, sinfo) in &self.struct_types {
                                 if let Some(fidx) =
-                                    sfields.iter().position(|(n, _)| n == field_name)
+                                    sinfo.fields.iter().position(|(n, _)| n == field_name)
                                 {
-                                    // inner_base + fidx * 32
                                     let field_offset = ast_helpers::const_int(
                                         (fidx * 32) as i64,
                                         self.current_ctx.clone(),
@@ -254,6 +387,26 @@ impl AstToEgglog {
         // Fallback: treat as contract storage field access
         let _obj_ir = self.lower_expr(obj)?;
         self.lower_ident(field_name, None)
+    }
+
+    /// Extract a packed field from a loaded word: `SHR` by `bit_offset`, AND with mask.
+    fn extract_packed_field(
+        word: RcExpr,
+        fl: &super::PackedFieldLayout,
+        ctx: &crate::schema::EvmContext,
+    ) -> RcExpr {
+        let shifted = if fl.bit_offset > 0 {
+            let shift = ast_helpers::const_int(fl.bit_offset as i64, ctx.clone());
+            ast_helpers::shr(shift, word)
+        } else {
+            word
+        };
+        if fl.bit_width >= 256 {
+            shifted
+        } else {
+            let mask = Self::make_mask(fl.bit_width, ctx);
+            ast_helpers::bitand(shifted, mask)
+        }
     }
 
     /// Look up composite (struct/array) type info for a variable.
@@ -388,5 +541,134 @@ impl AstToEgglog {
             }
         }
         Ok(None)
+    }
+
+    // =========================================================================
+    // Storage-backed packed struct field access
+    // =========================================================================
+
+    /// Look up a storage binding that has a packed struct composite type.
+    /// Returns `(slot, location, type_name)` if the variable is a storage-backed packed struct.
+    fn lookup_storage_packed_binding(
+        &self,
+        var_name: &str,
+    ) -> Option<(usize, crate::schema::DataLocation, String)> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(binding) = scope.bindings.get(var_name) {
+                if let (Some(slot), Some(ref type_name)) =
+                    (binding.storage_slot, &binding.composite_type)
+                {
+                    if let Some(info) = self.struct_types.get(type_name) {
+                        if info.is_packed {
+                            return Some((slot, binding.location, type_name.clone()));
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Try to lower a storage-backed packed struct field read.
+    /// e.g., `self.color.r` where `color: &s Rgb` and `Rgb = packed { r: u8, g: u8, b: u8 }`
+    /// Generates: `SLOAD(slot)` → `SHR(bit_offset)` → `AND(mask)`
+    pub(crate) fn try_lower_storage_packed_field_read(
+        &self,
+        var_name: &str,
+        field_name: &str,
+    ) -> Result<Option<RcExpr>, IrError> {
+        let (slot, location, type_name) = match self.lookup_storage_packed_binding(var_name) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let struct_info = self.struct_types.get(&type_name).unwrap();
+        let field_idx = match struct_info.fields.iter().position(|(n, _)| n == field_name) {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+        let layout = struct_info.packed_layout.as_ref().unwrap();
+        let fl = &layout.field_layouts[field_idx];
+
+        let slot_ir = ast_helpers::const_int(slot as i64, self.current_ctx.clone());
+        let word = match location {
+            crate::schema::DataLocation::Transient => {
+                ast_helpers::tload(slot_ir, Rc::clone(&self.current_state))
+            }
+            _ => ast_helpers::sload(slot_ir, Rc::clone(&self.current_state)),
+        };
+        Ok(Some(Self::extract_packed_field(
+            word,
+            fl,
+            &self.current_ctx,
+        )))
+    }
+
+    /// Try to lower a storage-backed packed struct sub-field write.
+    /// e.g., `self.color.r = 5` where `color: &s Rgb` and `Rgb = packed { ... }`
+    /// Generates read-modify-write: SLOAD → clear field bits → OR new value → SSTORE
+    pub(crate) fn try_lower_storage_packed_field_write(
+        &mut self,
+        var_name: &str,
+        field_name: &str,
+        new_value: RcExpr,
+    ) -> Result<Option<RcExpr>, IrError> {
+        let (slot, location, type_name) = match self.lookup_storage_packed_binding(var_name) {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let struct_info = self.struct_types.get(&type_name).unwrap();
+        let field_idx = match struct_info.fields.iter().position(|(n, _)| n == field_name) {
+            Some(i) => i,
+            None => return Ok(None),
+        };
+        let layout = struct_info.packed_layout.as_ref().unwrap();
+        let fl = &layout.field_layouts[field_idx];
+
+        let slot_ir = ast_helpers::const_int(slot as i64, self.current_ctx.clone());
+
+        // Load current word from storage
+        let current_word = match location {
+            crate::schema::DataLocation::Transient => {
+                ast_helpers::tload(Rc::clone(&slot_ir), Rc::clone(&self.current_state))
+            }
+            _ => ast_helpers::sload(Rc::clone(&slot_ir), Rc::clone(&self.current_state)),
+        };
+
+        // Clear the field bits: current_word & ~(mask << bit_offset)
+        let mask = Self::make_mask(fl.bit_width, &self.current_ctx);
+        let shifted_mask = if fl.bit_offset > 0 {
+            let shift = ast_helpers::const_int(fl.bit_offset as i64, self.current_ctx.clone());
+            ast_helpers::shl(shift, mask)
+        } else {
+            mask
+        };
+        let inverted_mask = Rc::new(crate::schema::EvmExpr::Uop(
+            crate::schema::EvmUnaryOp::Not,
+            shifted_mask,
+        ));
+        let cleared = ast_helpers::bitand(current_word, inverted_mask);
+
+        // Shift new value into position: (new_value & mask) << bit_offset
+        let new_mask = Self::make_mask(fl.bit_width, &self.current_ctx);
+        let masked_new = ast_helpers::bitand(new_value, new_mask);
+        let shifted_new = if fl.bit_offset > 0 {
+            let shift = ast_helpers::const_int(fl.bit_offset as i64, self.current_ctx.clone());
+            ast_helpers::shl(shift, masked_new)
+        } else {
+            masked_new
+        };
+
+        // OR together: cleared | shifted_new
+        let new_word = ast_helpers::bitor(cleared, shifted_new);
+
+        // Store back
+        let store = match location {
+            crate::schema::DataLocation::Transient => {
+                ast_helpers::tstore(slot_ir, new_word, Rc::clone(&self.current_state))
+            }
+            _ => ast_helpers::sstore(slot_ir, new_word, Rc::clone(&self.current_state)),
+        };
+        self.current_state = Rc::clone(&store);
+        Ok(Some(store))
     }
 }

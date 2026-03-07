@@ -158,6 +158,13 @@
       ((union e (Const (SmallInt 0) (Base (UIntT 256)) (InFunction "__opt__"))))
       :ruleset u256-const-fold)
 
+;; NOT (bitwise complement)
+(rule ((= e (Uop (OpNot) x))
+       (= vx (const-u256-val x)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-not vx)))
+                       (Base (UIntT 256)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
 ;; ISZERO
 (rule ((= e (Uop (OpIsZero) x))
        (= vx (const-u256-val x))

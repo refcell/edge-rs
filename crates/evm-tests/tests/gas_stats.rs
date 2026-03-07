@@ -9,7 +9,7 @@ use edge_evm_tests::{
 };
 
 const COUNTER_PATH: &str = "../../examples/counter.edge";
-const ERC20_PATH: &str = "../../examples/test_erc20.edge";
+const ERC20_PATH: &str = "../../examples/tests/test_erc20.edge";
 
 fn addr(n: u8) -> Address {
     Address::from([n; 20])

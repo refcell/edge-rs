@@ -270,6 +270,23 @@ fn split_into_basic_blocks(instructions: Vec<AsmInstruction>) -> Vec<BasicBlock>
                     terminator: Some(inst),
                 });
             }
+            AsmInstruction::Raw(_) => {
+                // Raw bytecode (inline asm) acts as a barrier — flush current block,
+                // then emit the Raw as its own isolated block so the egglog optimizer
+                // cannot touch it.
+                blocks.push(BasicBlock {
+                    label: current_label.take(),
+                    comments: std::mem::take(&mut current_comments),
+                    body: std::mem::take(&mut current_body),
+                    terminator: None,
+                });
+                blocks.push(BasicBlock {
+                    label: None,
+                    comments: Vec::new(),
+                    body: vec![inst],
+                    terminator: None,
+                });
+            }
             AsmInstruction::Op(_) | AsmInstruction::Push(_) => {
                 current_body.push(inst);
             }

@@ -194,7 +194,7 @@ fn test_erc20_initial_supply() {
 
 #[test]
 fn test_erc20_mint_and_balance() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     let alice = test_address(0x02);
@@ -222,7 +222,7 @@ fn test_erc20_mint_and_balance() {
 
 #[test]
 fn test_erc20_transfer() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     // CALLER is [0x01; 20]. transfer() uses @caller() as `from`.
@@ -267,7 +267,7 @@ fn test_erc20_transfer() {
 
 #[test]
 fn test_erc20_approve_and_transferfrom() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     // CALLER = [0x01; 20]. approve() uses @caller() as owner,
@@ -353,7 +353,7 @@ fn test_erc20_approve_and_transferfrom() {
 
 #[test]
 fn test_erc20_total_supply_after_mint() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     let alice = test_address(0x02);
@@ -378,7 +378,7 @@ fn test_erc20_total_supply_after_mint() {
 
 #[test]
 fn test_erc20_transfer_updates_both_balances() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     let caller_addr: [u8; 20] = [0x01; 20];
@@ -414,7 +414,7 @@ fn test_erc20_transfer_updates_both_balances() {
 
 #[test]
 fn test_erc20_approve_sets_allowance() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
 
     let caller_addr: [u8; 20] = [0x01; 20];
@@ -439,7 +439,7 @@ fn test_erc20_approve_sets_allowance() {
 
 #[test]
 fn test_erc20_unknown_selector_reverts() {
-    let bytecode = compile_contract("examples/test_erc20.edge");
+    let bytecode = compile_contract("examples/tests/test_erc20.edge");
     let mut evm = EvmHandle::new(bytecode);
     let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
     assert!(!ok, "unknown selector should revert");

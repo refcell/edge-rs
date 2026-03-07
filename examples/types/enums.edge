@@ -60,8 +60,7 @@ type StackUnion = A(u8) | B(u248);
 
 // Demonstrate match statement with all arms covered.
 fn direction_to_offset(d: Direction) -> (u256) {
-    let offset: u256;
-    offset = 0;
+    let offset: u256 = 0;
 
     match d {
         Direction::North => {
@@ -133,22 +132,17 @@ fn handle_result(r: Result<u256>) -> (u256) {
 
 fn create_unions() -> (u256) {
     // Create a simple enum value.
-    let dir: Direction;
-    dir = Direction::North;
+    let dir: Direction = Direction::North;
 
     // Create a union with data.
-    let ok_result: Result<u256>;
-    ok_result = Result::Ok(42);
+    let ok_result: Result<u256> = Result::Ok(42);
 
-    let err_result: Result<u256>;
-    err_result = Result::Err(1);
+    let err_result: Result<u256> = Result::Err(1);
 
     // Create Option values.
-    let some_val: Option<u256>;
-    some_val = Option::Some(100);
+    let some_val: Option<u256> = Option::Some(100);
 
-    let none_val: Option<u256>;
-    none_val = Option::None();
+    let none_val: Option<u256> = Option::None();
 
     return handle_result(ok_result);
 }

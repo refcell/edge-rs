@@ -300,6 +300,23 @@ impl<'a> ExprCompiler<'a> {
                 self.compile_drop(name);
             }
 
+            EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+                // Compile input expressions — they push values to stack
+                for input in inputs {
+                    self.compile_expr(input);
+                }
+                // Decode hex string to raw bytes and emit directly
+                let bytes: Vec<u8> = (0..hex.len())
+                    .step_by(2)
+                    .filter_map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+                    .collect();
+                self.asm.emit(AsmInstruction::Raw(bytes));
+                // Adjust stack depth: inputs consumed, outputs produced
+                // Net delta = num_outputs - num_inputs
+                let num_inputs = inputs.len() as i32;
+                self.stack_depth = (self.stack_depth as i32 + num_outputs - num_inputs) as usize;
+            }
+
             EvmExpr::Function(name, in_ty, _out_ty, body) => {
                 // Emit function body as a labeled subroutine.
                 // Calling convention:
@@ -1138,9 +1155,17 @@ impl<'a> ExprCompiler<'a> {
     /// Estimate how many stack values an expression pushes.
     ///
     /// Must be accurate for stack-mode `LetBind` cleanup (SWAP+POP).
+    /// Uses signed arithmetic internally to handle `InlineAsm`'s negative deltas
+    /// (it consumes sibling values pushed by Concat).
     fn count_stack_values(expr: &EvmExpr) -> usize {
+        Self::count_stack_values_signed(expr).max(0) as usize
+    }
+
+    fn count_stack_values_signed(expr: &EvmExpr) -> i32 {
         match expr {
-            EvmExpr::Concat(a, b) => Self::count_stack_values(a) + Self::count_stack_values(b),
+            EvmExpr::Concat(a, b) => {
+                Self::count_stack_values_signed(a) + Self::count_stack_values_signed(b)
+            }
             EvmExpr::Empty(_, _)
             | EvmExpr::VarStore(_, _)
             | EvmExpr::Drop(_)
@@ -1150,8 +1175,8 @@ impl<'a> ExprCompiler<'a> {
             | EvmExpr::Function(_, _, _, _)
             | EvmExpr::DoWhile(_, _)
             | EvmExpr::StorageField(_, _, _) => 0,
-            EvmExpr::Arg(ty, _) => Self::type_slot_count(ty),
-            EvmExpr::LetBind(_, _, body) => Self::count_stack_values(body),
+            EvmExpr::Arg(ty, _) => Self::type_slot_count(ty) as i32,
+            EvmExpr::LetBind(_, _, body) => Self::count_stack_values_signed(body),
             // Side-effect ternary ops push nothing onto the stack
             EvmExpr::Top(op, _, _, _) => match op {
                 EvmTernaryOp::SStore
@@ -1162,7 +1187,9 @@ impl<'a> ExprCompiler<'a> {
                 EvmTernaryOp::Keccak256 | EvmTernaryOp::Select => 1,
             },
             // If: both branches should push the same count
-            EvmExpr::If(_, _, then_body, _) => Self::count_stack_values(then_body),
+            EvmExpr::If(_, _, then_body, _) => Self::count_stack_values_signed(then_body),
+            // InlineAsm: net delta = num_outputs - num_inputs
+            EvmExpr::InlineAsm(inputs, _, num_outputs) => *num_outputs - inputs.len() as i32,
             // Everything else pushes 1 value (Var, Bop, Uop, Const, etc.)
             _ => 1,
         }

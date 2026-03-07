@@ -45,44 +45,35 @@ impl Wrapper: Eq {
 contract TestTraits {
     // Test qualified trait call: Doubler::double(w) where w.val = 21
     pub fn test_double() -> (u256) {
-        let w: Wrapper;
-        w = Wrapper { val: 21 };
+        let w: Wrapper = Wrapper { val: 21 };
         return Doubler::double(w);
     }
 
     // Test qualified trait call: Tripler::triple(w) where w.val = 10
     pub fn test_triple() -> (u256) {
-        let w: Wrapper;
-        w = Wrapper { val: 10 };
+        let w: Wrapper = Wrapper { val: 10 };
         return Tripler::triple(w);
     }
 
     // Test chaining trait calls
     pub fn test_double_then_triple() -> (u256) {
-        let w: Wrapper;
-        w = Wrapper { val: 5 };
-        let doubled: u256;
-        doubled = Doubler::double(w);
+        let w: Wrapper = Wrapper { val: 5 };
+        let doubled: u256 = Doubler::double(w);
         return doubled * 3;
     }
 
     // Test operator overloading: + dispatches to Add::add
     pub fn test_add_overload() -> (u256) {
-        let a: Wrapper;
-        a = Wrapper { val: 10 };
-        let b: Wrapper;
-        b = Wrapper { val: 32 };
-        let c: Wrapper;
-        c = a + b;
+        let a: Wrapper = Wrapper { val: 10 };
+        let b: Wrapper = Wrapper { val: 32 };
+        let c: Wrapper = a + b;
         return c.val;
     }
 
     // Test operator overloading: == dispatches to Eq::eq
     pub fn test_eq_overload() -> (u256) {
-        let a: Wrapper;
-        a = Wrapper { val: 42 };
-        let b: Wrapper;
-        b = Wrapper { val: 42 };
+        let a: Wrapper = Wrapper { val: 42 };
+        let b: Wrapper = Wrapper { val: 42 };
         if a == b {
             return 1;
         }

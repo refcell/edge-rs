@@ -37,8 +37,7 @@ contract TestStorageHeavy {
     }
 
     pub fn swap_first_two() {
-        let tmp: u256;
-        tmp = field_a;
+        let tmp: u256 = field_a;
         field_a = field_b;
         field_b = tmp;
     }

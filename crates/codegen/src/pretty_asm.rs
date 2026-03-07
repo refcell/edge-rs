@@ -78,6 +78,15 @@ fn pp_instructions(instructions: &[AsmInstruction], buf: &mut String) {
                 let prefix = if in_block { "    " } else { "  " };
                 buf.push_str(&format!("{prefix}      ; {msg}\n"));
             }
+            AsmInstruction::Raw(data) => {
+                let prefix = if in_block { "    " } else { "  " };
+                let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+                buf.push_str(&format!(
+                    "{prefix}{byte_offset:04x}  ASM [{} bytes] {hex}\n",
+                    data.len()
+                ));
+                byte_offset += data.len();
+            }
         }
     }
 }
@@ -89,6 +98,7 @@ fn est_size(inst: &AsmInstruction) -> usize {
         AsmInstruction::JumpTo(_) | AsmInstruction::JumpITo(_) => 4, // conservative
         AsmInstruction::PushLabel(_) => 3,
         AsmInstruction::Comment(_) => 0,
+        AsmInstruction::Raw(data) => data.len(),
     }
 }
 

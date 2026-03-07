@@ -4,8 +4,8 @@
 use alloy_primitives::U256;
 use edge_evm_tests::{abi_decode_u256, abi_encode_u256, EvmTestHost};
 
-const PATH: &str = "../../examples/test_checked_elision.edge";
-const SIMPLE: &str = "../../examples/test_elision_simple.edge";
+const PATH: &str = "../../examples/tests/test_checked_elision.edge";
+const SIMPLE: &str = "../../examples/tests/test_elision_simple.edge";
 
 fn decode(data: &[u8]) -> U256 {
     abi_decode_u256(data)

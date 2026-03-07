@@ -151,6 +151,12 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
             cleanup_expr(body),
         )),
 
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => Rc::new(EvmExpr::InlineAsm(
+            inputs.iter().map(cleanup_expr).collect(),
+            hex.clone(),
+            *num_outputs,
+        )),
+
         // Leaf nodes — no children to clean
         EvmExpr::Arg(..)
         | EvmExpr::Const(..)

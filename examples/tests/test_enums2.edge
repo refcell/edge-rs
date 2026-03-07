@@ -8,8 +8,7 @@ type Result = Ok(u256) | Err(u256);
 
 contract TestEnums {
     pub fn direction_north() -> (u256) {
-        let d: Direction;
-        d = Direction::North;
+        let d: Direction = Direction::North;
         match d {
             Direction::North => { return 1; },
             Direction::South => { return 2; },
@@ -19,8 +18,7 @@ contract TestEnums {
     }
 
     pub fn direction_west() -> (u256) {
-        let d: Direction;
-        d = Direction::West;
+        let d: Direction = Direction::West;
         match d {
             Direction::North => { return 1; },
             Direction::South => { return 2; },
@@ -30,8 +28,7 @@ contract TestEnums {
     }
 
     pub fn result_ok_value() -> (u256) {
-        let r: Result;
-        r = Result::Ok(42);
+        let r: Result = Result::Ok(42);
         match r {
             Result::Ok(val) => { return val; },
             Result::Err(code) => { return code; },
@@ -39,8 +36,7 @@ contract TestEnums {
     }
 
     pub fn result_err_value() -> (u256) {
-        let r: Result;
-        r = Result::Err(99);
+        let r: Result = Result::Err(99);
         match r {
             Result::Ok(val) => { return val; },
             Result::Err(code) => { return code; },

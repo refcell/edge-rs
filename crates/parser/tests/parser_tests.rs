@@ -37,7 +37,7 @@ fn parse_single_var_decl() {
 #[test]
 fn parse_var_decl_has_correct_name() {
     let program = parse("let myVar: u256;").unwrap();
-    if let edge_ast::Stmt::VarDecl(ref ident, _, _) = program.stmts[0] {
+    if let edge_ast::Stmt::VarDecl(ref ident, _, _, _) = program.stmts[0] {
         assert_eq!(ident.name, "myVar");
     } else {
         panic!("expected VarDecl");

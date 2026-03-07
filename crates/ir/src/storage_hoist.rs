@@ -304,15 +304,22 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
         | EvmExpr::Drop(..)
         | EvmExpr::Selector(..)
         | EvmExpr::StorageField(..) => Rc::clone(expr),
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| replace_sloads_inline(i, known))
+                .collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
     }
 }
 
 /// Check if an expression (non-top-level `SStore`) might modify storage.
 fn might_modify_storage(expr: &RcExpr) -> bool {
     match expr.as_ref() {
-        EvmExpr::ExtCall(..) | EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => {
-            true
-        }
+        EvmExpr::ExtCall(..)
+        | EvmExpr::InlineAsm(..)
+        | EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => true,
         EvmExpr::If(c, i, t, e) => {
             might_modify_storage(c)
                 || might_modify_storage(i)
@@ -1057,6 +1064,10 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..) => Rc::clone(expr),
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs.iter().map(forward_stores_expr).collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
     }
 }
 
