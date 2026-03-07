@@ -80,7 +80,8 @@ impl Compiler {
     ///
     /// Useful for testing and benchmarks where the source is already in memory.
     pub fn from_source(source: impl Into<String>) -> Self {
-        let config = CompilerConfig::new(std::path::PathBuf::from("<stdin>"));
+        let mut config = CompilerConfig::new(std::path::PathBuf::from("<stdin>"));
+        config.quiet = true;
         Self {
             session: Session::new(config, source.into()),
         }
@@ -94,6 +95,17 @@ impl Compiler {
             .iter()
             .map(|d| d.message.clone())
             .collect()
+    }
+
+    /// Render all diagnostics to a plain-text string (no ANSI colors).
+    ///
+    /// Useful for snapshot tests — captures the same output as ariadne would
+    /// print to stderr.
+    pub fn render_diagnostics(&self) -> String {
+        let path = self.session.config.input_file.display().to_string();
+        self.session
+            .diagnostics
+            .render_to_string(&path, &self.session.source)
     }
 
     /// Run the compilation pipeline

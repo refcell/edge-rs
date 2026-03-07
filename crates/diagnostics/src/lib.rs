@@ -230,4 +230,83 @@ impl DiagnosticBag {
             let _ = report.eprint(&mut cache);
         }
     }
+
+    /// Render all diagnostics to a string (without ANSI colors).
+    ///
+    /// Useful for testing — captures the same output that `report_all` would
+    /// print to stderr, but returns it as a plain string.
+    pub fn render_to_string(&self, path: &str, source: &str) -> String {
+        use std::collections::HashMap;
+
+        let mut source_map: HashMap<String, String> = HashMap::new();
+        source_map.insert(path.to_string(), source.to_string());
+
+        for diag in &self.diagnostics {
+            for label in &diag.labels {
+                if let Some(ref file) = label.span.file {
+                    if let Some(ref src) = file.source {
+                        source_map
+                            .entry(file.path.clone())
+                            .or_insert_with(|| src.clone());
+                    }
+                }
+            }
+        }
+
+        let mut cache = ariadne::sources(source_map);
+        let mut buf = Vec::new();
+
+        for diag in &self.diagnostics {
+            let kind = match diag.severity {
+                Severity::Error => ariadne::ReportKind::Error,
+                Severity::Warning => ariadne::ReportKind::Warning,
+                Severity::Note => ariadne::ReportKind::Advice,
+            };
+
+            let primary_label = diag
+                .labels
+                .iter()
+                .find(|l| l.severity == diag.severity)
+                .or_else(|| diag.labels.first());
+            let (file_id, offset) = primary_label.map_or_else(
+                || (path.to_string(), 0),
+                |label| {
+                    let fid = label
+                        .span
+                        .file
+                        .as_ref()
+                        .map_or_else(|| path.to_string(), |f| f.path.clone());
+                    (fid, label.span.start)
+                },
+            );
+
+            let mut builder = ariadne::Report::build(kind, (file_id.clone(), offset..offset))
+                .with_message(&diag.message)
+                .with_config(ariadne::Config::default().with_color(false));
+
+            for (i, label) in diag.labels.iter().enumerate() {
+                let fid = label
+                    .span
+                    .file
+                    .as_ref()
+                    .map_or_else(|| path.to_string(), |f| f.path.clone());
+                let start = label.span.start;
+                let end = (label.span.end + 1).max(start + 1);
+                builder.add_label(
+                    ariadne::Label::new((fid, start..end))
+                        .with_message(&label.message)
+                        .with_order(i as i32),
+                );
+            }
+
+            for note in &diag.notes {
+                builder.add_note(note);
+            }
+
+            let report = builder.finish();
+            let _ = report.write(&mut cache, &mut buf);
+        }
+
+        String::from_utf8(buf).unwrap_or_default()
+    }
 }

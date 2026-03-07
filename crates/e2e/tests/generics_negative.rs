@@ -3,23 +3,37 @@
 //! Negative tests for generics — things that should NOT compile.
 //!
 //! Each test compiles a .edge snippet from memory, asserts failure,
-//! and checks that the diagnostic messages contain expected substrings.
+//! and checks that both the diagnostic messages and the rendered ariadne
+//! output contain the expected content.
 
 use edge_driver::compiler::Compiler;
 
-fn assert_compile_error(source: &str, expected: &[&str]) {
+/// Compile source, assert failure, and check both diagnostic messages
+/// and rendered ariadne output against expected substrings.
+fn assert_compile_error(source: &str, expected_messages: &[&str], expected_rendered: &[&str]) {
     let mut compiler = Compiler::from_source(source);
     let result = compiler.compile();
     assert!(
         result.is_err(),
         "Expected compilation to fail, but it succeeded.\nSource:\n{source}"
     );
+
+    // Check diagnostic messages
     let messages = compiler.diagnostic_messages();
     let all_messages = messages.join("\n");
-    for exp in expected {
+    for exp in expected_messages {
         assert!(
             all_messages.contains(exp),
-            "Expected error containing '{exp}', got:\n{all_messages}\nSource:\n{source}"
+            "Expected message containing '{exp}', got:\n{all_messages}\nSource:\n{source}"
+        );
+    }
+
+    // Check rendered ariadne output
+    let rendered = compiler.render_diagnostics();
+    for exp in expected_rendered {
+        assert!(
+            rendered.contains(exp),
+            "Expected rendered output containing '{exp}', got:\n{rendered}\nSource:\n{source}"
         );
     }
 }
@@ -38,6 +52,10 @@ contract C {
 }
 "#,
         &["wrong number of type arguments", "expected 1, found 2"],
+        &[
+            "expected 1 type argument",
+            "function `identity` has 1 type parameter(s)",
+        ],
     );
 }
 
@@ -51,6 +69,10 @@ contract C {
 }
 "#,
         &["wrong number of type arguments", "expected 2, found 1"],
+        &[
+            "expected 2 type arguments",
+            "function `pair` has 2 type parameter(s)",
+        ],
     );
 }
 
@@ -68,6 +90,10 @@ contract C {
 }
 "#,
         &["cannot infer type"],
+        &[
+            "cannot infer type for this parameter",
+            "explicit type arguments",
+        ],
     );
 }
 
@@ -92,6 +118,7 @@ contract C {
 }
 "#,
         &["not all trait items implemented", "baz"],
+        &["`baz` from trait", "missing `baz` in implementation"],
     );
 }
 
@@ -117,6 +144,7 @@ contract C {
 }
 "#,
         &["cannot apply operator", "Wrapper"],
+        &["cannot apply operator `+` to type `Wrapper`"],
     );
 }
 
@@ -138,6 +166,7 @@ contract C {
 }
 "#,
         &["no method named", "sum", "Point"],
+        &["no method named `sum` found for type `Point`"],
     );
 }
 
@@ -162,6 +191,10 @@ contract C {
 }
 "#,
         &["no method named", "nonexistent", "Point"],
+        &[
+            "method not found in `Point`",
+            "available methods for `Point`: sum",
+        ],
     );
 }
 
@@ -181,6 +214,7 @@ contract C {
     }
 }
 "#,
-        &["type arguments"],
+        &["type `Pair` expects 2 type arguments"],
+        &["expected 2 type arguments"],
     );
 }
