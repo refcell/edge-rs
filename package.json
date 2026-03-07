@@ -11,5 +11,8 @@
   },
   "dependencies": {
     "vocs": "1.4.1"
+  },
+  "overrides": {
+    "@types/node": "24.10.1"
   }
 }
