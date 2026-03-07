@@ -54,6 +54,8 @@ pub enum Commands {
     Check(FileArgs),
     /// Lex a file and print tokens
     Lex(FileArgs),
+    /// Start the LSP server (communicates over stdin/stdout)
+    Lsp,
     /// Parse a file and print AST
     Parse(FileArgs),
 }
@@ -71,6 +73,7 @@ impl Cli {
         match self.command {
             Some(Commands::Check(args)) => Self::check(args, self.std_path),
             Some(Commands::Lex(args)) => Self::lex(args, self.std_path),
+            Some(Commands::Lsp) => Self::lsp(),
             Some(Commands::Parse(args)) => Self::parse(args, self.std_path),
             None => {
                 if let Some(file) = self.file {
@@ -227,6 +230,11 @@ impl Cli {
             }
         }
 
+        Ok(())
+    }
+
+    fn lsp() -> Result<()> {
+        tokio::runtime::Runtime::new()?.block_on(edge_lsp::run());
         Ok(())
     }
 
