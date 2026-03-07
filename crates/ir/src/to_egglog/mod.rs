@@ -872,49 +872,11 @@ impl AstToEgglog {
         // so they survive halting-DCE in the cleanup pass.
         let internal_functions: Vec<RcExpr> = self.lowered_functions.clone();
 
-        // Constructor: initialize persistent storage fields to zero.
-        // Transient fields are auto-zeroed per EIP-1153 at the start of each tx.
+        // Constructor: EVM storage is zero-initialized, so no SSTOREs needed.
+        // Transient fields are also auto-zeroed per EIP-1153 at the start of each tx.
         let constructor_ctx = EvmContext::InFunction(format!("{contract_name}::constructor"));
-        // Collect persistent storage slot indices
-        let persistent_slots: Vec<usize> = contract
-            .fields
-            .iter()
-            .filter_map(|(ident, type_sig)| {
-                let loc = Self::extract_data_location(type_sig);
-                if loc != DataLocation::Transient {
-                    self.scopes
-                        .last()
-                        .and_then(|s| s.bindings.get(&ident.name))
-                        .and_then(|b| b.storage_slot)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let constructor = if persistent_slots.is_empty() {
-            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx)
-        } else {
-            let mut sstores: Vec<RcExpr> = Vec::new();
-            let init_state = Rc::new(EvmExpr::Arg(
-                EvmType::Base(EvmBaseType::StateT),
-                constructor_ctx.clone(),
-            ));
-            let mut ctor_state = init_state;
-            for &slot in &persistent_slots {
-                let store = ast_helpers::sstore(
-                    ast_helpers::const_int(slot as i64, constructor_ctx.clone()),
-                    ast_helpers::const_int(0, constructor_ctx.clone()),
-                    Rc::clone(&ctor_state),
-                );
-                ctor_state = Rc::clone(&store);
-                sstores.push(store);
-            }
-            let mut result = Rc::clone(&sstores[0]);
-            for store in &sstores[1..] {
-                result = ast_helpers::concat(result, Rc::clone(store));
-            }
-            result
-        };
+        let constructor =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), constructor_ctx);
 
         Ok(EvmContract {
             name: contract_name,
