@@ -1,0 +1,12 @@
+{
+  "name": "edge-docs-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vocs build",
+    "docs:build": "vocs build"
+  },
+  "dependencies": {
+    "vocs": "1.4.1"
+  }
+}
