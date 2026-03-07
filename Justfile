@@ -6,6 +6,7 @@ alias b := build
 alias t := test
 alias c := clean
 alias l := lint
+alias book := docs
 
 # Build all
 build:
@@ -98,6 +99,18 @@ bench:
 bench-filter filter:
     cargo bench -p edge-bench -- {{filter}}
 
-# Serve the book
-book:
-    mdbook serve --open
+# Install docs dependencies
+docs-install:
+    npm install
+
+# Serve the Vocs docs site
+docs:
+    npm run docs:dev
+
+# Build the Vocs docs site
+docs-build:
+    npm run docs:build
+
+# Validate docs source and rendered output
+docs-validate:
+    npm run docs:validate
