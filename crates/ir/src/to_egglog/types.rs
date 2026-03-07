@@ -298,7 +298,7 @@ impl AstToEgglog {
             // Variant carries data — infer from the constructor arg
             if args.len() == 1 {
                 let arg_evm_ty = self.infer_expr_type(&args[0]);
-                Self::unify_type(inner_ty, &arg_evm_ty, &tp_names, &mut subst);
+                Self::unify_type(inner_ty, &arg_evm_ty, &tp_names, &mut subst)?;
             }
         }
         // For variants with no data (e.g., `Err(u256)` where the data type is concrete),
@@ -392,18 +392,37 @@ impl AstToEgglog {
         Ok(mangled)
     }
 
-    /// Infer type parameters for a generic function call from argument types.
-    pub(crate) fn infer_type_params_from_args(
+    /// Infer type parameters from argument types and optionally from the return type
+    /// via the assignment target type hint.
+    pub(crate) fn infer_type_params_from_args_and_return(
         &self,
         type_params: &[edge_ast::ty::TypeParam],
         param_types: &[(String, edge_ast::ty::TypeSig)],
         arg_types: &[EvmType],
+        return_types: &[edge_ast::ty::TypeSig],
     ) -> Result<HashMap<String, edge_ast::ty::TypeSig>, IrError> {
         let tp_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.name.as_str()).collect();
         let mut inferred: HashMap<String, edge_ast::ty::TypeSig> = HashMap::new();
 
+        // Infer from argument types
         for ((_name, param_ty), arg_ty) in param_types.iter().zip(arg_types.iter()) {
-            Self::unify_type(param_ty, arg_ty, &tp_names, &mut inferred);
+            Self::unify_type(param_ty, arg_ty, &tp_names, &mut inferred)?;
+        }
+
+        // If some params are still unresolved, try to infer from the return type
+        // using the assignment target type hint.
+        if let Some(ref hint_ty) = self.type_hint {
+            let unresolved: Vec<&str> = type_params
+                .iter()
+                .filter(|tp| !inferred.contains_key(&tp.name.name))
+                .map(|tp| tp.name.name.as_str())
+                .collect();
+            if !unresolved.is_empty() && !return_types.is_empty() {
+                // Unify each return type with the hint
+                for ret_ty in return_types {
+                    Self::unify_type(ret_ty, hint_ty, &tp_names, &mut inferred)?;
+                }
+            }
         }
 
         // Check all type params were inferred
@@ -424,23 +443,64 @@ impl AstToEgglog {
     }
 
     /// Try to unify a `TypeSig` parameter with a concrete `EvmType` to infer type params.
+    /// Returns `Err` if a type parameter would be unified to two different concrete types.
     fn unify_type(
         param_ty: &edge_ast::ty::TypeSig,
         arg_ty: &EvmType,
         type_params: &HashSet<&str>,
         inferred: &mut HashMap<String, edge_ast::ty::TypeSig>,
-    ) {
+    ) -> Result<(), IrError> {
         match param_ty {
             edge_ast::ty::TypeSig::Named(ident, args)
                 if args.is_empty() && type_params.contains(ident.name.as_str()) =>
             {
                 // This is a type parameter — infer from arg type
                 let concrete = Self::evm_type_to_type_sig(arg_ty);
-                inferred.entry(ident.name.clone()).or_insert(concrete);
+                if let Some(existing) = inferred.get(&ident.name) {
+                    if *existing != concrete {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "conflicting types for parameter `{}`: expected `{}`, found `{}`",
+                                ident.name,
+                                Self::type_sig_display(existing),
+                                Self::type_sig_display(&concrete),
+                            ))
+                            .with_label(
+                                ident.span.clone(),
+                                format!("conflicting inference for `{}`", ident.name),
+                            ),
+                        ));
+                    }
+                } else {
+                    inferred.insert(ident.name.clone(), concrete);
+                }
             }
             _ => {
                 // Not a type parameter — no inference needed
             }
+        }
+        Ok(())
+    }
+
+    /// Simple display for a `TypeSig` (for error messages).
+    fn type_sig_display(ty: &edge_ast::ty::TypeSig) -> String {
+        match ty {
+            edge_ast::ty::TypeSig::Primitive(p) => format!("{p:?}").to_lowercase(),
+            edge_ast::ty::TypeSig::Named(ident, args) => {
+                if args.is_empty() {
+                    ident.name.clone()
+                } else {
+                    format!(
+                        "{}<{}>",
+                        ident.name,
+                        args.iter()
+                            .map(Self::type_sig_display)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            }
+            _ => "?".to_string(),
         }
     }
 

@@ -64,7 +64,17 @@ impl AstToEgglog {
             edge_ast::Stmt::VarAssign(lhs, rhs, _span) => {
                 // Clear composite tracking before evaluating RHS
                 self.last_composite_alloc = None;
+                // Set type hint from the LHS variable's declared type
+                if let edge_ast::Expr::Ident(ident) = lhs {
+                    for scope in self.scopes.iter().rev() {
+                        if let Some(binding) = scope.bindings.get(&ident.name) {
+                            self.type_hint = Some(binding._ty.clone());
+                            break;
+                        }
+                    }
+                }
                 let rhs_ir = self.lower_expr(rhs)?;
+                self.type_hint = None;
                 // If RHS was a struct/array instantiation, wire composite info to LHS binding
                 if let Some((ref type_name, base)) = self.last_composite_alloc.clone() {
                     if let edge_ast::Expr::Ident(ident) = lhs {
@@ -242,8 +252,8 @@ impl AstToEgglog {
                 )))
             }
 
-            edge_ast::Expr::FunctionCall(callee, args, _span) => {
-                self.lower_function_call(callee, args)
+            edge_ast::Expr::FunctionCall(callee, args, type_args, _span) => {
+                self.lower_function_call(callee, args, type_args)
             }
 
             edge_ast::Expr::At(builtin_name, args, _span) => {

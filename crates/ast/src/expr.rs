@@ -30,8 +30,9 @@ pub enum Expr {
     /// Ternary operation: cond ? `true_expr` : `false_expr`
     Ternary(Box<Self>, Box<Self>, Box<Self>, Span),
 
-    /// Function call: func(args...)
-    FunctionCall(Box<Self>, Vec<Self>, Span),
+    /// Function call: `func(args...)` or `func::<T, U>(args...)`
+    /// The Vec<TypeSig> holds explicit type arguments (turbofish), empty if none.
+    FunctionCall(Box<Self>, Vec<Self>, Vec<crate::ty::TypeSig>, Span),
 
     /// Field access: expr.field
     FieldAccess(Box<Self>, Ident, Span),
@@ -86,7 +87,7 @@ impl Expr {
             Self::Binary(_, _, _, span) => span.clone(),
             Self::Unary(_, _, span) => span.clone(),
             Self::Ternary(_, _, _, span) => span.clone(),
-            Self::FunctionCall(_, _, span) => span.clone(),
+            Self::FunctionCall(_, _, _, span) => span.clone(),
             Self::FieldAccess(_, _, span) => span.clone(),
             Self::TupleFieldAccess(_, _, span) => span.clone(),
             Self::ArrayIndex(_, _, _, span) => span.clone(),

@@ -9,7 +9,7 @@ use edge_ast::{
 use edge_lexer::lexer::Lexer;
 use edge_types::{
     span::Span,
-    tokens::{Keyword, Operator, Token, TokenKind},
+    tokens::{ComparisonOperator, Keyword, Operator, Token, TokenKind},
 };
 
 use crate::errors::{ParseError, ParseResult};
@@ -1619,7 +1619,7 @@ impl Parser {
                         file: expr.span().file.clone(),
                     };
 
-                    expr = Expr::FunctionCall(Box::new(expr), args, span);
+                    expr = Expr::FunctionCall(Box::new(expr), args, vec![], span);
                 }
                 TokenKind::OpenBracket => {
                     self.advance();
@@ -1716,8 +1716,16 @@ impl Parser {
                 // Check for :: path expressions
                 if self.check(&TokenKind::DoubleColon) {
                     let mut path_segments = vec![ident];
+                    let mut turbofish_type_args: Vec<TypeSig> = vec![];
                     while self.check(&TokenKind::DoubleColon) {
                         self.advance();
+                        // Check for turbofish: ::<Type, Type>
+                        if self.check(&TokenKind::Operator(Operator::Comparison(
+                            ComparisonOperator::LessThan,
+                        ))) {
+                            turbofish_type_args = self.parse_turbofish_type_args()?;
+                            break;
+                        }
                         if let TokenKind::Ident(next_name) = self.peek().kind.clone() {
                             let next_token = self.advance();
                             path_segments.push(Ident {
@@ -1732,7 +1740,7 @@ impl Parser {
                         }
                     }
 
-                    // Check for union instantiation with parens: Path::Variant(args)
+                    // Check for function call with parens: Path::Variant(args) or func::<T>(args)
                     self.skip_whitespace_and_comments();
                     if self.check(&TokenKind::OpenParen) {
                         self.advance();
@@ -1757,6 +1765,7 @@ impl Parser {
                         Ok(Expr::FunctionCall(
                             Box::new(Expr::Path(path_segments, span.clone())),
                             args,
+                            turbofish_type_args,
                             span,
                         ))
                     } else {
@@ -1973,6 +1982,33 @@ impl Parser {
                 })
             }
         }
+    }
+
+    /// Parse turbofish type arguments: `<Type, Type, ...>`
+    ///
+    /// Called after consuming `::` when the next token is `<`.
+    fn parse_turbofish_type_args(&mut self) -> ParseResult<Vec<TypeSig>> {
+        // Consume the `<`
+        self.expect(TokenKind::Operator(Operator::Comparison(
+            ComparisonOperator::LessThan,
+        )))?;
+        let mut type_args = Vec::new();
+        loop {
+            self.skip_whitespace_and_comments();
+            // Check for closing `>`
+            if self.check(&TokenKind::Operator(Operator::Comparison(
+                ComparisonOperator::GreaterThan,
+            ))) {
+                self.advance();
+                break;
+            }
+            type_args.push(self.parse_type_sig()?);
+            self.skip_whitespace_and_comments();
+            if self.check(&TokenKind::Comma) {
+                self.advance();
+            }
+        }
+        Ok(type_args)
     }
 
     // ============ Type Parsing ============

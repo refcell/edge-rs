@@ -120,6 +120,7 @@ pub(crate) type ContractFunction = (
 pub(crate) struct FreeFnInfo {
     pub name: String,
     pub params: Vec<(String, edge_ast::ty::TypeSig)>,
+    pub returns: Vec<edge_ast::ty::TypeSig>,
     pub body: edge_ast::CodeBlock,
     pub is_comptime: bool,
     pub type_params: Vec<edge_ast::ty::TypeParam>,
@@ -227,6 +228,9 @@ pub struct AstToEgglog {
     /// Operator traits imported from `std::ops` (e.g., "Add", "Sub").
     /// Only these traits are eligible for operator overloading dispatch.
     pub(crate) std_ops_traits: HashSet<String>,
+    /// Type hint from assignment target, used for generic return-type inference.
+    /// Set before lowering the RHS of a typed variable assignment, cleared after.
+    pub(crate) type_hint: Option<EvmType>,
 }
 
 impl Default for AstToEgglog {
@@ -272,6 +276,7 @@ impl AstToEgglog {
             inherent_methods: IndexMap::new(),
             _self_type: None,
             std_ops_traits: HashSet::new(),
+            type_hint: None,
         }
     }
 
@@ -363,6 +368,7 @@ impl AstToEgglog {
                     let info = FreeFnInfo {
                         name: fn_decl.name.name.clone(),
                         params,
+                        returns: fn_decl.returns.clone(),
                         body: body.clone(),
                         is_comptime: false,
                         type_params: fn_decl.type_params.clone(),
@@ -384,6 +390,7 @@ impl AstToEgglog {
                     self.free_fn_bodies.push(FreeFnInfo {
                         name: fn_decl.name.name.clone(),
                         params,
+                        returns: fn_decl.returns.clone(),
                         body: body.clone(),
                         is_comptime: true,
                         type_params: fn_decl.type_params.clone(),

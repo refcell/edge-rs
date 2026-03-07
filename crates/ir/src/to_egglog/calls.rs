@@ -14,6 +14,7 @@ impl AstToEgglog {
         &mut self,
         callee: &edge_ast::Expr,
         args: &[edge_ast::Expr],
+        explicit_type_args: &[edge_ast::ty::TypeSig],
     ) -> Result<RcExpr, IrError> {
         // Check if this is a union constructor call (e.g., Result::Ok(42))
         if let edge_ast::Expr::Path(components, span) = callee {
@@ -128,7 +129,7 @@ impl AstToEgglog {
 
         // Check generic function templates
         if let Some(template) = self.generic_fn_templates.get(&fn_name).cloned() {
-            return self.lower_generic_function_call(&template, args);
+            return self.lower_generic_function_call(&template, args, explicit_type_args);
         }
 
         // Handle builtin functions
@@ -303,13 +304,40 @@ impl AstToEgglog {
         &mut self,
         template: &FreeFnInfo,
         args: &[edge_ast::Expr],
+        explicit_type_args: &[edge_ast::ty::TypeSig],
     ) -> Result<RcExpr, IrError> {
-        // Lower args to get their types
-        let arg_types: Vec<EvmType> = args.iter().map(|a| self.infer_expr_type(a)).collect();
-
-        // Infer type params from argument types
-        let inferred =
-            self.infer_type_params_from_args(&template.type_params, &template.params, &arg_types)?;
+        // If explicit type args provided (turbofish), use them directly
+        let inferred = if !explicit_type_args.is_empty() {
+            if explicit_type_args.len() != template.type_params.len() {
+                return Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "wrong number of type arguments: expected {}, found {}",
+                        template.type_params.len(),
+                        explicit_type_args.len(),
+                    ))
+                    .with_note(format!(
+                        "function `{}` has {} type parameter(s)",
+                        template.name,
+                        template.type_params.len(),
+                    )),
+                ));
+            }
+            template
+                .type_params
+                .iter()
+                .zip(explicit_type_args.iter())
+                .map(|(tp, ts)| (tp.name.name.clone(), ts.clone()))
+                .collect::<std::collections::HashMap<_, _>>()
+        } else {
+            // Infer type params from argument types + return type hint
+            let arg_types: Vec<EvmType> = args.iter().map(|a| self.infer_expr_type(a)).collect();
+            self.infer_type_params_from_args_and_return(
+                &template.type_params,
+                &template.params,
+                &arg_types,
+                &template.returns,
+            )?
+        };
 
         // Build mangled name
         let concrete_types: Vec<EvmType> = template
@@ -338,6 +366,7 @@ impl AstToEgglog {
         let mono_info = FreeFnInfo {
             name: mangled.clone(),
             params: new_params.clone(),
+            returns: template.returns.clone(),
             body: template.body.clone(),
             is_comptime: template.is_comptime,
             type_params: Vec::new(),
