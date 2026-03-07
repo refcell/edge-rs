@@ -12,7 +12,15 @@ mod diagnostics;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
-use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspService, Server};
+use tower_lsp::{
+    jsonrpc::Result,
+    lsp_types::{
+        DidChangeTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
+        InitializedParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+        Url,
+    },
+    Client, LanguageServer, LspService, Server,
+};
 
 /// State shared across the LSP server.
 #[derive(Debug)]
