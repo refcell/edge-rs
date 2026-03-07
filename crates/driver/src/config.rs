@@ -39,6 +39,8 @@ pub struct CompilerConfig {
     pub optimize_for: OptimizeFor,
     /// Path to the Edge standard library directory
     pub std_path: Option<PathBuf>,
+    /// Suppress diagnostic output to stderr (diagnostics are still collected)
+    pub quiet: bool,
 }
 
 impl CompilerConfig {
@@ -52,6 +54,7 @@ impl CompilerConfig {
             verbose: false,
             optimize_for: OptimizeFor::default(),
             std_path: None,
+            quiet: false,
         }
     }
 }

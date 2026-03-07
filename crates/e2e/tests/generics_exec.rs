@@ -221,6 +221,28 @@ fn test_generic_option_none() {
     });
 }
 
+#[test]
+fn test_turbofish_identity() {
+    for_all_opt_levels(GENERICS, |h, o| {
+        let (ok, out) = h.call(calldata(selector("test_turbofish_identity()"), &[]));
+        assert!(ok, "test_turbofish_identity() reverted at O{o}");
+        assert_eq!(
+            decode_u256(&out),
+            42,
+            "test_turbofish_identity() wrong at O{o}"
+        );
+    });
+}
+
+#[test]
+fn test_turbofish_max() {
+    for_all_opt_levels(GENERICS, |h, o| {
+        let (ok, out) = h.call(calldata(selector("test_turbofish_max()"), &[]));
+        assert!(ok, "test_turbofish_max() reverted at O{o}");
+        assert_eq!(decode_u256(&out), 20, "test_turbofish_max() wrong at O{o}");
+    });
+}
+
 // =============================================================================
 // Impl block tests (examples/test_impl.edge)
 // =============================================================================

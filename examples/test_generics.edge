@@ -106,4 +106,16 @@ contract TestGenerics {
             Option::None => { return 0; },
         };
     }
+
+    // Test turbofish: explicit type args at call site
+    pub fn test_turbofish_identity() -> (u256) {
+        let x: u256;
+        x = identity::<u256>(42);
+        return x;
+    }
+
+    // Test turbofish with max
+    pub fn test_turbofish_max() -> (u256) {
+        return max::<u256>(10, 20);
+    }
 }
