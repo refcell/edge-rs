@@ -86,6 +86,16 @@ impl Compiler {
         }
     }
 
+    /// Get the diagnostic messages accumulated during compilation.
+    pub fn diagnostic_messages(&self) -> Vec<String> {
+        self.session
+            .diagnostics
+            .diagnostics()
+            .iter()
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
     /// Run the compilation pipeline
     pub fn compile(&mut self) -> Result<CompileOutput, CompileError> {
         tracing::info!("Compiling {:?}", self.session.config.input_file);
