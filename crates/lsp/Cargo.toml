@@ -1,0 +1,21 @@
+[package]
+name = "edge-lsp"
+description = "Edge Language LSP Server"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-lexer = { workspace = true }
+edge-parser = { workspace = true }
+edge-typeck = { workspace = true }
+edge-diagnostics = { workspace = true }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

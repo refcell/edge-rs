@@ -63,6 +63,7 @@ edge-typeck = { path = "crates/typeck" }
 edge-ir = { path = "crates/ir" }
 edge-codegen = { path = "crates/codegen" }
 edge-driver = { path = "crates/driver" }
+edge-lsp = { path = "crates/lsp" }
 anyhow = "1.0.79"
 inquire = "0.6.2"
 tracing = "0.1.40"
