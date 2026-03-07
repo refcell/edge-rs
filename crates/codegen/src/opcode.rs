@@ -38,6 +38,7 @@ pub enum Opcode {
     Shl = 0x1B,
     Shr = 0x1C,
     Sar = 0x1D,
+    Clz = 0x1E,
 
     // 0x20 - Keccak256
     Keccak256 = 0x20,
@@ -338,6 +339,7 @@ impl Opcode {
 
             Self::IsZero
             | Self::Not
+            | Self::Clz
             | Self::Pop
             | Self::MLoad
             | Self::SLoad
@@ -469,6 +471,7 @@ impl Opcode {
             | Self::Shl
             | Self::Shr
             | Self::Sar
+            | Self::Clz
             | Self::Keccak256
             | Self::Address
             | Self::Balance

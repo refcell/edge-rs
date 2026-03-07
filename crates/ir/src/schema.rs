@@ -182,6 +182,8 @@ pub enum EvmUnaryOp {
     Neg,
     /// Sign extend
     SignExtend,
+    /// Count leading zeros
+    Clz,
 }
 
 /// Ternary operators (three operands).
@@ -425,6 +427,7 @@ impl std::fmt::Display for EvmUnaryOp {
             Self::Not => "NOT",
             Self::Neg => "NEG",
             Self::SignExtend => "SIGNEXTEND",
+            Self::Clz => "CLZ",
         };
         write!(f, "{s}")
     }

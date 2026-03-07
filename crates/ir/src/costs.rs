@@ -114,6 +114,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("OpNot", 3);
     m.insert("OpNeg", 3);
     m.insert("OpSignExtend", 5);
+    m.insert("OpClz", 5);
 
     // -- EvmTernaryOp variants --
     m.insert("OpSStore", 5000);

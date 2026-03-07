@@ -15,8 +15,8 @@ pub(crate) fn inst_gas_cost(name: &str) -> u32 {
         | "IGasLimit" | "IChainId" | "ISelfBalance" | "IBaseFee" | "IReturnDataSize" | "IPc"
         | "IMSize" | "IGas" => 2,
 
-        // Glow (5) — mul, div, mod, signextend
-        "IMul" | "IDiv" | "ISDiv" | "IMod" | "ISMod" | "ISignExtend" => 5,
+        // Glow (5) — mul, div, mod, signextend, clz
+        "IMul" | "IDiv" | "ISDiv" | "IMod" | "ISMod" | "ISignExtend" | "IClz" => 5,
 
         // Medium (8)
         "IAddMod" | "IMulMod" => 8,

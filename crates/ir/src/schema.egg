@@ -116,7 +116,8 @@
   (OpIsZero)
   (OpNot)
   (OpNeg)
-  (OpSignExtend))
+  (OpSignExtend)
+  (OpClz))
 
 (datatype EvmTernaryOp
   ;; Storage write: (SStore slot value state) -> state

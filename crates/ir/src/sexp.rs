@@ -240,6 +240,7 @@ const fn unop_sexp(op: &EvmUnaryOp) -> &'static str {
         EvmUnaryOp::Not => "(OpNot)",
         EvmUnaryOp::Neg => "(OpNeg)",
         EvmUnaryOp::SignExtend => "(OpSignExtend)",
+        EvmUnaryOp::Clz => "(OpClz)",
     }
 }
 
@@ -702,6 +703,7 @@ fn sexp_to_unop(sexp: &Sexp) -> Result<EvmUnaryOp, IrError> {
                 "OpNot" => Ok(EvmUnaryOp::Not),
                 "OpNeg" => Ok(EvmUnaryOp::Neg),
                 "OpSignExtend" => Ok(EvmUnaryOp::SignExtend),
+                "OpClz" => Ok(EvmUnaryOp::Clz),
                 other => Err(IrError::Extraction(format!("unknown unary op: {other}"))),
             }
         }
