@@ -58,6 +58,9 @@ pub enum Commands {
     Lsp,
     /// Parse a file and print AST
     Parse(FileArgs),
+    /// Compile using standard JSON I/O (reads stdin, writes stdout)
+    #[command(name = "standard-json")]
+    StandardJson,
 }
 
 /// Arguments for file-based subcommands
@@ -75,6 +78,7 @@ impl Cli {
             Some(Commands::Lex(args)) => Self::lex(args, self.std_path),
             Some(Commands::Lsp) => Self::lsp(),
             Some(Commands::Parse(args)) => Self::parse(args, self.std_path),
+            Some(Commands::StandardJson) => Self::standard_json(),
             None => {
                 if let Some(file) = self.file {
                     Self::compile(
@@ -256,6 +260,28 @@ impl Cli {
             println!("{:#?}", ast);
         }
 
+        Ok(())
+    }
+
+    fn standard_json() -> Result<()> {
+        use std::io::Read;
+        let mut input_str = String::new();
+        std::io::stdin().read_to_string(&mut input_str)?;
+        let output =
+            match serde_json::from_str::<edge_driver::standard_json::StandardJsonInput>(&input_str)
+            {
+                Ok(input) => edge_driver::standard_json::compile_standard_json(input),
+                Err(e) => edge_driver::standard_json::StandardJsonOutput {
+                    errors: vec![edge_driver::standard_json::OutputError {
+                        kind: "Error".into(),
+                        severity: "error".into(),
+                        message: format!("invalid standard JSON input: {e}"),
+                        formatted_message: format!("invalid standard JSON input: {e}"),
+                    }],
+                    ..Default::default()
+                },
+            };
+        println!("{}", serde_json::to_string_pretty(&output)?);
         Ok(())
     }
 }

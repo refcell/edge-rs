@@ -84,6 +84,10 @@ edgec check examples/counter.edge
 # Print the contract ABI as JSON
 edgec --emit abi examples/counter.edge
 # [{"type":"function","name":"increment","inputs":[],"outputs":[],"stateMutability":"view"}, ...]
+
+# Standard JSON I/O (for tool integration — reads from stdin, writes to stdout)
+echo '{"language":"Edge","sources":{"counter.edge":{"content":"..."}}}' | edgec standard-json
+# {"sources":{"counter.edge":{"id":0}},"contracts":{"counter.edge":{"Counter":{"abi":[...],"evm":{"bytecode":{"object":"604d..."},...}}}}}
 ```
 
 ### Example: counter contract

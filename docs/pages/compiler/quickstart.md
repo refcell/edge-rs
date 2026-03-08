@@ -52,6 +52,15 @@ edgec --emit abi examples/counter.edge
 # [{"type":"function","name":"increment","inputs":[],"outputs":[],"stateMutability":"view"}, ...]
 ```
 
+## Standard JSON I/O
+
+The `edgec standard-json` command implements the standard JSON IPC protocol used by Foundry and solc-compatible toolchains. It reads a JSON request from stdin containing source files and compiler settings, compiles every source, and writes a JSON response to stdout with ABI and bytecode fields for each contract. The command always exits 0; compilation errors are reported inside the JSON response rather than as a non-zero exit code. This is the interface that the `foundry-compilers` crate uses to drive external compilers.
+
+```sh
+echo '{"language":"Edge","sources":{"counter.edge":{"content":"..."}}}' | edgec standard-json
+# {"sources":{"counter.edge":{"id":0}},"contracts":{"counter.edge":{"Counter":{"abi":[...],"evm":{"bytecode":{"object":"604d..."},...}}}}}
+```
+
 ## Explore the Reference Programs
 
 The repository includes a growing set of example contracts under

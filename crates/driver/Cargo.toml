@@ -22,6 +22,8 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 indexmap = { workspace = true }
 tiny-keccak = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 edge-parser = { workspace = true }

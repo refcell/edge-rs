@@ -157,12 +157,16 @@ impl Compiler {
             CompileError::TypeCheckErrors
         })?;
 
-        // ABI extraction — return early if that's all the user requested
+        // ABI extraction — always compute so downstream consumers (e.g. standard-json)
+        // can access the ABI alongside bytecode.
+        let abi: Vec<edge_typeck::AbiEntry> = checked
+            .contracts
+            .iter()
+            .flat_map(|c| edge_typeck::extract_abi(c, &checked.events))
+            .collect();
+
+        // Return early if ABI is all the user requested
         if emit == EmitKind::Abi {
-            let mut all_entries = Vec::new();
-            for contract in &checked.contracts {
-                all_entries.extend(edge_typeck::extract_abi(contract, &checked.events));
-            }
             return Ok(CompileOutput {
                 tokens: None,
                 ast: None,
@@ -170,7 +174,7 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: None,
-                abi: Some(all_entries),
+                abi: Some(abi),
             });
         }
 
@@ -300,7 +304,7 @@ impl Compiler {
             bytecode: last_bytecode,
             bytecodes: Some(all_bytecodes),
             asm: None,
-            abi: None,
+            abi: Some(abi),
         })
     }
 
@@ -614,5 +618,10 @@ impl Compiler {
     /// Get a reference to the session
     pub const fn session(&self) -> &Session {
         &self.session
+    }
+
+    /// Get a mutable reference to the session
+    pub const fn session_mut(&mut self) -> &mut Session {
+        &mut self.session
     }
 }
