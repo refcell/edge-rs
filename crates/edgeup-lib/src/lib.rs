@@ -24,7 +24,7 @@ mod installer;
 #[cfg(test)]
 mod tests;
 
-pub use installer::{GithubAsset, GithubRelease, Installer, platform_suffix};
+pub use installer::{platform_suffix, GithubAsset, GithubRelease, Installer};
 
 /// Resolve a version tag to the absolute path of the `edgec` binary.
 ///
