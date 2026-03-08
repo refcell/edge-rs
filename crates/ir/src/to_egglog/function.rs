@@ -324,8 +324,17 @@ impl AstToEgglog {
         let mut stmts: Vec<RcExpr> = Vec::new();
         for item in &block.stmts {
             let ir = match item {
-                edge_ast::BlockItem::Stmt(stmt) => self.lower_stmt(stmt)?,
-                edge_ast::BlockItem::Expr(expr) => self.lower_expr(expr)?,
+                edge_ast::BlockItem::Stmt(stmt) => {
+                    // Check for expression-statements with unused return values
+                    if let edge_ast::Stmt::Expr(expr) = stmt.as_ref() {
+                        self.check_unused_return_value(expr);
+                    }
+                    self.lower_stmt(stmt)?
+                }
+                edge_ast::BlockItem::Expr(expr) => {
+                    self.check_unused_return_value(expr);
+                    self.lower_expr(expr)?
+                }
             };
             stmts.push(ir);
         }
@@ -390,10 +399,15 @@ impl AstToEgglog {
             stmts.remove(idx);
         }
 
-        let mut result = Rc::clone(&stmts[0]);
-        for stmt in &stmts[1..] {
-            result = ast_helpers::concat(result, Rc::clone(stmt));
-        }
+        let mut result = if stmts.is_empty() {
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone())
+        } else {
+            let mut r = Rc::clone(&stmts[0]);
+            for stmt in &stmts[1..] {
+                r = ast_helpers::concat(r, Rc::clone(stmt));
+            }
+            r
+        };
 
         // Wrap the result in LetBinds for memory-backed locals (innermost first).
         // Each variable gets: Drop(var) appended to body, then wrapped in LetBind.

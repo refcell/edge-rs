@@ -334,6 +334,24 @@ fn test_trait_double_then_triple() {
 }
 
 #[test]
+fn test_trait_double_method() {
+    for_all_opt_levels(TRAITS, |h, o| {
+        let (ok, out) = h.call(calldata(selector("test_double_method()"), &[]));
+        assert!(ok, "test_double_method() reverted at O{o}");
+        assert_eq!(decode_u256(&out), 42, "test_double_method() wrong at O{o}");
+    });
+}
+
+#[test]
+fn test_trait_triple_method() {
+    for_all_opt_levels(TRAITS, |h, o| {
+        let (ok, out) = h.call(calldata(selector("test_triple_method()"), &[]));
+        assert!(ok, "test_triple_method() reverted at O{o}");
+        assert_eq!(decode_u256(&out), 30, "test_triple_method() wrong at O{o}");
+    });
+}
+
+#[test]
 fn test_operator_overload_add() {
     for_all_opt_levels(TRAITS, |h, o| {
         let (ok, out) = h.call(calldata(selector("test_add_overload()"), &[]));

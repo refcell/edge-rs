@@ -130,7 +130,7 @@ pub(crate) struct FreeFnInfo {
 /// Info about a generic type template (struct/union with type params).
 #[derive(Debug, Clone)]
 pub(crate) struct GenericTypeTemplate {
-    pub type_params: Vec<String>,
+    pub type_params: Vec<edge_ast::ty::TypeParam>,
     pub type_sig: edge_ast::ty::TypeSig,
 }
 
@@ -223,19 +223,18 @@ impl StructTypeInfo {
 /// Trait definition info.
 #[derive(Debug, Clone)]
 pub(crate) struct TraitInfo {
-    pub _type_params: Vec<edge_ast::ty::TypeParam>,
-    pub _supertraits: Vec<String>,
+    pub supertraits: Vec<String>,
     /// Required methods (no default body)
     pub required_methods: Vec<(String, edge_ast::item::FnDecl)>,
     /// Default methods (have a body)
-    pub _default_methods: Vec<(String, edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
+    pub default_methods: Vec<(String, edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
 }
 
 /// Trait implementation info.
 #[derive(Debug, Clone)]
 pub(crate) struct TraitImplInfo {
-    pub _type_params: Vec<edge_ast::ty::TypeParam>,
     pub methods: IndexMap<String, (edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
+    pub span: edge_types::span::Span,
 }
 
 /// An inherent method (from impl block without trait).
@@ -318,6 +317,8 @@ pub struct AstToEgglog {
     /// Type hint from assignment target, used for generic return-type inference.
     /// Set before lowering the RHS of a typed variable assignment, cleared after.
     pub(crate) type_hint: Option<EvmType>,
+    /// Compiler warnings collected during lowering
+    pub(crate) warnings: Vec<edge_diagnostics::Diagnostic>,
 }
 
 impl Default for AstToEgglog {
@@ -364,6 +365,7 @@ impl AstToEgglog {
             _self_type: None,
             std_ops_traits: HashSet::new(),
             type_hint: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -397,7 +399,18 @@ impl AstToEgglog {
 
         // Detect `use std::ops::X;` imports to register operator traits.
         // Only traits imported from std::ops are eligible for operator overloading.
-        let known_ops = ["Add", "Sub", "Mul", "Div", "Mod", "Eq", "Ord"];
+        let known_ops = [
+            "Add",
+            "Sub",
+            "Mul",
+            "Div",
+            "Mod",
+            "Eq",
+            "Ord",
+            "UnsafeAdd",
+            "UnsafeSub",
+            "UnsafeMul",
+        ];
         for stmt in &program.stmts {
             if let edge_ast::Stmt::ModuleImport(import) = stmt {
                 if import.root.name == "std" {
@@ -524,11 +537,7 @@ impl AstToEgglog {
                 // If the type has type params, store as generic template
                 if !_type_decl.type_params.is_empty() {
                     let template = GenericTypeTemplate {
-                        type_params: _type_decl
-                            .type_params
-                            .iter()
-                            .map(|tp| tp.name.name.clone())
-                            .collect(),
+                        type_params: _type_decl.type_params.clone(),
                         type_sig: type_sig.clone(),
                     };
                     self.generic_type_templates
@@ -590,10 +599,9 @@ impl AstToEgglog {
                     self.trait_registry.insert(
                         decl.name.name.clone(),
                         TraitInfo {
-                            _type_params: decl.type_params.clone(),
-                            _supertraits: decl.supertraits.iter().map(|s| s.name.clone()).collect(),
+                            supertraits: decl.supertraits.iter().map(|s| s.name.clone()).collect(),
                             required_methods,
-                            _default_methods: default_methods,
+                            default_methods,
                         },
                     );
                 }
@@ -612,7 +620,16 @@ impl AstToEgglog {
                         }
 
                         // Validate: all required trait methods must be provided
+                        // (default methods are auto-injected if missing)
                         if let Some(trait_info) = self.trait_registry.get(&trait_name.name) {
+                            // Auto-inject default methods that aren't overridden
+                            for (name, fn_decl, body) in &trait_info.default_methods {
+                                if !methods.contains_key(name) {
+                                    methods.insert(name.clone(), (fn_decl.clone(), body.clone()));
+                                }
+                            }
+
+                            // Check for truly missing required methods
                             let missing: Vec<&(String, edge_ast::item::FnDecl)> = trait_info
                                 .required_methods
                                 .iter()
@@ -647,8 +664,8 @@ impl AstToEgglog {
                         self.trait_impls.insert(
                             (type_name, trait_name.name.clone()),
                             TraitImplInfo {
-                                _type_params: impl_block.type_params.clone(),
                                 methods,
+                                span: impl_block.span.clone(),
                             },
                         );
                     } else {
@@ -674,6 +691,34 @@ impl AstToEgglog {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Supertrait validation: check that all supertraits are implemented
+        // (must run after all impls are registered in pass 4)
+        for ((type_name, trait_name), impl_info) in &self.trait_impls {
+            if let Some(trait_info) = self.trait_registry.get(trait_name) {
+                for supertrait in &trait_info.supertraits {
+                    if !self
+                        .trait_impls
+                        .contains_key(&(type_name.clone(), supertrait.clone()))
+                    {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "the trait `{trait_name}` requires `{supertrait}` to be implemented for `{type_name}`",
+                            ))
+                            .with_label(
+                                impl_info.span.clone(),
+                                format!(
+                                    "`{type_name}` implements `{trait_name}` but not `{supertrait}`",
+                                ),
+                            )
+                            .with_note(format!(
+                                "add `impl {type_name}: {supertrait} {{ ... }}` before this impl",
+                            )),
+                        ));
+                    }
+                }
             }
         }
 
@@ -712,7 +757,12 @@ impl AstToEgglog {
             contracts.push(synthetic);
         } else {
             // Otherwise, lower free functions standalone
+            // Skip generic functions — they're stored as templates and only
+            // lowered when monomorphized at call sites.
             for (fn_decl, body) in &fn_stmts {
+                if !fn_decl.type_params.is_empty() {
+                    continue;
+                }
                 let ir_fn = self.lower_function(fn_decl, body)?;
                 free_functions.push(ir_fn);
             }
@@ -721,6 +771,7 @@ impl AstToEgglog {
         Ok(EvmProgram {
             contracts,
             free_functions,
+            warnings: std::mem::take(&mut self.warnings),
         })
     }
 

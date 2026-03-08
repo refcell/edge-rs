@@ -255,6 +255,7 @@ pub fn lower_and_optimize(
     let mut result = EvmProgram {
         contracts: optimized_contracts,
         free_functions: ir_program.free_functions,
+        warnings: ir_program.warnings,
     };
 
     // Post-egglog: forward SStore→SLoad and eliminate dead stores in straight-line code.

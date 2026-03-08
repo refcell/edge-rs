@@ -23,12 +23,14 @@ multiple inputs or outputs implicitly operates on a tuple.
 ## Declaration
 
 ```text
+<function_param> ::= <ident> [":" <type_signature>] ;
+
 <function_declaration> ::=
     ["pub"] ["ext"] ["mut"]
     "fn" <identifier>
     ["<" <type_param> ("," <type_param>)* ">"]
     "("
-        [(<identifier> ":" <type_signature>) ("," <identifier> ":" <type_signature>)* [","]]
+        [<function_param> ("," <function_param>)* [","]]
     ")"
     ["->" "(" <type_signature> ("," <type_signature>)* [","] ")"] ;
 
@@ -58,8 +60,15 @@ pub mut fn transfer() { ... }
 pub ext mut fn swap() { ... }
 ```
 
-The `self` keyword may appear as a parameter name, in which case the
-`: Type` annotation is optional (implicit `Self` type).
+A parameter may omit its type annotation, in which case the type
+defaults to `Self`. This is intended for use with `self` in trait
+and impl methods:
+
+```edge
+// These are equivalent:
+fn add(self, rhs: Self) -> (Self);
+fn add(self: Self, rhs: Self) -> (Self);
+```
 
 ## Assignment
 

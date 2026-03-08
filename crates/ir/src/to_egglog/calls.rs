@@ -3,7 +3,7 @@
 use super::{AstToEgglog, FreeFnInfo, Scope, VarBinding};
 use crate::{
     ast_helpers,
-    schema::{DataLocation, EvmBaseType, EvmExpr, EvmType, RcExpr},
+    schema::{DataLocation, EvmBaseType, EvmBinaryOp, EvmExpr, EvmType, RcExpr},
     IrError,
 };
 
@@ -76,7 +76,9 @@ impl AstToEgglog {
                 }
 
                 // Check trait methods: Trait::method(receiver, args...)
-                if self.trait_registry.contains_key(type_or_trait) {
+                if self.trait_registry.contains_key(type_or_trait)
+                    || self.std_ops_traits.contains(type_or_trait)
+                {
                     return self.lower_qualified_trait_call(
                         type_or_trait,
                         method_name,
@@ -280,6 +282,33 @@ impl AstToEgglog {
             ));
         }
 
+        // Built-in UnsafeAdd/UnsafeSub/UnsafeMul for primitives
+        let unsafe_op = match (trait_name, method_name) {
+            ("UnsafeAdd", "unsafe_add") => Some(EvmBinaryOp::Add),
+            ("UnsafeSub", "unsafe_sub") => Some(EvmBinaryOp::Sub),
+            ("UnsafeMul", "unsafe_mul") => Some(EvmBinaryOp::Mul),
+            _ => None,
+        };
+        if let Some(op) = unsafe_op {
+            // Check if receiver is a primitive (not a user-defined type)
+            let receiver_type = self.infer_receiver_type(&args[0]);
+            if receiver_type.is_none() {
+                // Primitive type — emit unchecked op directly
+                if args.len() != 2 {
+                    return Err(IrError::Diagnostic(
+                        edge_diagnostics::Diagnostic::error(format!(
+                            "`{trait_name}::{method_name}` expects exactly 2 arguments",
+                        ))
+                        .with_label(span.clone(), "expected 2 arguments"),
+                    ));
+                }
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                return Ok(ast_helpers::bop(op, lhs, rhs));
+            }
+            // User-defined type — fall through to trait impl lookup
+        }
+
         // Try to infer receiver type
         let receiver_type = self.infer_receiver_type(&args[0]);
         if let Some(ref type_name) = receiver_type {
@@ -358,16 +387,44 @@ impl AstToEgglog {
             )?
         };
 
-        // Build mangled name
-        let concrete_types: Vec<EvmType> = template
+        // Validate trait bounds on type parameters
+        for tp in &template.type_params {
+            if !tp.constraints.is_empty() {
+                let concrete_sig = inferred.get(&tp.name.name).unwrap();
+                let concrete_name = Self::type_sig_display(concrete_sig);
+                for constraint in &tp.constraints {
+                    let key = (concrete_name.clone(), constraint.name.clone());
+                    if !self.trait_impls.contains_key(&key) {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "the trait bound `{}: {}` is not satisfied",
+                                concrete_name, constraint.name,
+                            ))
+                            .with_label(
+                                call_span.clone(),
+                                format!(
+                                    "`{}` does not implement `{}`",
+                                    concrete_name, constraint.name,
+                                ),
+                            )
+                            .with_note(format!("required by a bound in `{}`", template.name,)),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Build mangled name using source-level type names (not lowered EvmType)
+        // to distinguish struct types that lower to the same EVM representation.
+        let type_name_strs: Vec<String> = template
             .type_params
             .iter()
             .map(|tp| {
                 let sig = inferred.get(&tp.name.name).unwrap();
-                self.lower_type_sig(sig)
+                Self::type_sig_display(sig)
             })
             .collect();
-        let mangled = Self::mangle_type_name(&template.name, &concrete_types);
+        let mangled = format!("{}__{}", template.name, type_name_strs.join("_"));
 
         // Check if already monomorphized
         if let Some(mono_info) = self.monomorphized_fns.get(&mangled).cloned() {
@@ -511,11 +568,24 @@ impl AstToEgglog {
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
-            let (composite_type, composite_base) = arg_composite
+            let (mut composite_type, composite_base) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
                 .map(|(ct, cb)| (Some(ct.clone()), *cb))
                 .unwrap_or((None, None));
+
+            // If composite_type is still None, check if the param type sig names
+            // a known struct/union type — this enables trait method dispatch on
+            // generic parameters after monomorphization substitutes concrete types.
+            if composite_type.is_none() {
+                if let edge_ast::ty::TypeSig::Named(ref name, _) = param_ty {
+                    if self.struct_types.contains_key(&name.name)
+                        || self.union_types.contains_key(&name.name)
+                    {
+                        composite_type = Some(name.name.clone());
+                    }
+                }
+            }
             let binding = VarBinding {
                 value: val,
                 location: DataLocation::Stack,
@@ -566,5 +636,79 @@ impl AstToEgglog {
         }
 
         Ok(ast_helpers::call(name.to_string(), args_ir))
+    }
+
+    /// Check if an expression used as a statement is a function call whose
+    /// return value is being discarded, and emit a warning if so.
+    pub(crate) fn check_unused_return_value(&mut self, expr: &edge_ast::Expr) {
+        let (fn_name, span) = match expr {
+            edge_ast::Expr::FunctionCall(callee, _, _, span) => {
+                match callee.as_ref() {
+                    edge_ast::Expr::Ident(id) => (Some(id.name.clone()), span.clone()),
+                    edge_ast::Expr::Path(components, _) if components.len() == 2 => {
+                        // Qualified call like Trait::method or Type::method
+                        let method = &components[1].name;
+                        (Some(method.clone()), span.clone())
+                    }
+                    edge_ast::Expr::FieldAccess(_, method, _) => {
+                        // Method call like obj.method()
+                        (Some(method.name.clone()), span.clone())
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+
+        let Some(name) = fn_name else { return };
+
+        // Look up the function's return type
+        let has_return = self.fn_has_return_value(&name);
+        if has_return {
+            self.warnings.push(
+                edge_diagnostics::Diagnostic::warning(format!("unused return value of `{name}`",))
+                    .with_label(span, "return value unused"),
+            );
+        }
+    }
+
+    /// Check if a function by name has a non-void return type.
+    fn fn_has_return_value(&self, name: &str) -> bool {
+        // Check free functions
+        if let Some(info) = self.free_fn_bodies.iter().find(|f| f.name == name) {
+            return !info.returns.is_empty();
+        }
+        // Check generic function templates
+        if let Some(info) = self.generic_fn_templates.get(name) {
+            return !info.returns.is_empty();
+        }
+        // Check trait methods — search all trait impls for a method with this name
+        for ((_type_name, _trait_name), impl_info) in &self.trait_impls {
+            if let Some((fn_decl, _body)) = impl_info.methods.get(name) {
+                return !fn_decl.returns.is_empty();
+            }
+        }
+        // Check inherent methods
+        for (_type_name, methods) in &self.inherent_methods {
+            if let Some(m) = methods.iter().find(|m| m.fn_decl.name.name == name) {
+                return !m.fn_decl.returns.is_empty();
+            }
+        }
+        // Check trait registry (for default methods)
+        for (_trait_name, trait_info) in &self.trait_registry {
+            if let Some((_, fn_decl)) = trait_info.required_methods.iter().find(|(n, _)| n == name)
+            {
+                return !fn_decl.returns.is_empty();
+            }
+            if let Some((_, fn_decl, _)) = trait_info
+                .default_methods
+                .iter()
+                .find(|(n, _, _)| n == name)
+            {
+                return !fn_decl.returns.is_empty();
+            }
+        }
+        // Unknown function — don't warn
+        false
     }
 }

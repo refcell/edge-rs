@@ -1,0 +1,53 @@
+// test_supertraits.edge — Tests for supertrait enforcement
+//
+// Tests that implementing a trait with supertraits works when
+// the supertrait is also implemented.
+
+type MyVal = {
+    val: u256,
+};
+
+trait Base {
+    fn base_value(self) -> (u256);
+}
+
+trait Extended: Base {
+    fn extended_value(self) -> (u256);
+}
+
+// Implements both Base and Extended (supertrait satisfied)
+impl MyVal: Base {
+    fn base_value(self) -> (u256) {
+        return self.val;
+    }
+}
+
+impl MyVal: Extended {
+    fn extended_value(self) -> (u256) {
+        return self.val * 2;
+    }
+}
+
+contract TestSupertraits {
+    pub fn test_base_method() -> (u256) {
+        let v: MyVal = MyVal { val: 25 };
+        return Base::base_value(v);
+    }
+
+    pub fn test_extended_method() -> (u256) {
+        let v: MyVal = MyVal { val: 25 };
+        return Extended::extended_value(v);
+    }
+
+    // Method-call syntax tests
+
+    pub fn test_base_method_call() -> (u256) {
+        let v: MyVal = MyVal { val: 25 };
+        return v.base_value();
+    }
+
+    pub fn test_extended_method_call() -> (u256) {
+        let v: MyVal = MyVal { val: 25 };
+        return v.extended_value();
+    }
+}

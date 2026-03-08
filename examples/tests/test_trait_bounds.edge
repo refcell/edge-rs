@@ -1,0 +1,144 @@
+// test_trait_bounds.edge — Tests for trait bound validation on generic functions/types
+//
+// Tests that generic functions and types with trait bounds work correctly
+// when the bounds are satisfied.
+
+trait Valuable {
+    fn get_value(self) -> (u256);
+}
+
+trait Scalable {
+    fn scale(self, factor: u256) -> (u256);
+}
+
+type Wrapper = {
+    val: u256,
+};
+
+impl Wrapper: Valuable {
+    fn get_value(self) -> (u256) {
+        return self.val;
+    }
+}
+
+impl Wrapper: Scalable {
+    fn scale(self, factor: u256) -> (u256) {
+        return self.val * factor;
+    }
+}
+
+type Other = {
+    val: u256,
+};
+
+// Other returns val * 10 from get_value (different from Wrapper)
+impl Other: Valuable {
+    fn get_value(self) -> (u256) {
+        return self.val * 10;
+    }
+}
+
+impl Other: Scalable {
+    fn scale(self, factor: u256) -> (u256) {
+        return self.val * factor * 2;
+    }
+}
+
+// Single trait bound — returns constant (bound check only)
+fn pass_through<T: Valuable>(x: T) -> (u256) {
+    return 42;
+}
+
+// Multiple trait bounds: T must impl both Valuable & Scalable
+fn double_check<T: Valuable & Scalable>(x: T) -> (u256) {
+    return 99;
+}
+
+// Generic function that calls trait method on T — exercises dispatch after monomorphization
+fn extract_value<T: Valuable>(x: T) -> (u256) {
+    return Valuable::get_value(x);
+}
+
+// Generic function that calls trait method with extra arg
+fn scale_value<T: Scalable>(x: T, factor: u256) -> (u256) {
+    return Scalable::scale(x, factor);
+}
+
+// Generic type with trait bound
+type Container<T: Valuable> = {
+    item: T,
+};
+
+contract TestTraitBounds {
+    // Single bound satisfied
+    pub fn test_bound_satisfied() -> (u256) {
+        let a: Wrapper = Wrapper { val: 10 };
+        return pass_through::<Wrapper>(a);
+    }
+
+    // Multiple bounds satisfied
+    pub fn test_multiple_bounds() -> (u256) {
+        let a: Wrapper = Wrapper { val: 10 };
+        return double_check::<Wrapper>(a);
+    }
+
+    // Generic type with bound satisfied
+    pub fn test_type_bound() -> (u256) {
+        let c: Container<Wrapper> = Container { item: Wrapper { val: 77 } };
+        return c.item.val;
+    }
+
+    // Same generic function, different type — separate monomorphization
+    pub fn test_bound_other() -> (u256) {
+        let o: Other = Other { val: 5 };
+        return pass_through::<Other>(o);
+    }
+
+    // extract_value<Wrapper> — dispatches to Wrapper.get_value() = val = 25
+    pub fn test_extract_wrapper() -> (u256) {
+        let w: Wrapper = Wrapper { val: 25 };
+        return extract_value::<Wrapper>(w);
+    }
+
+    // extract_value<Other> — dispatches to Other.get_value() = val * 10 = 30
+    pub fn test_extract_other() -> (u256) {
+        let o: Other = Other { val: 3 };
+        return extract_value::<Other>(o);
+    }
+
+    // Direct method-call dispatch on Wrapper: .get_value() returns val = 25
+    pub fn test_extract_wrapper_method() -> (u256) {
+        let w: Wrapper = Wrapper { val: 25 };
+        return w.get_value();
+    }
+
+    // Direct method-call dispatch on Other: .get_value() returns val * 10 = 30
+    pub fn test_extract_other_method() -> (u256) {
+        let o: Other = Other { val: 3 };
+        return o.get_value();
+    }
+
+    // scale_value<Wrapper> — dispatches to Wrapper.scale(7, 6) = 7 * 6 = 42
+    pub fn test_scale_wrapper() -> (u256) {
+        let w: Wrapper = Wrapper { val: 7 };
+        return scale_value::<Wrapper>(w, 6);
+    }
+
+    // scale_value<Other> — dispatches to Other.scale(5, 3) = 5 * 3 * 2 = 30
+    pub fn test_scale_other() -> (u256) {
+        let o: Other = Other { val: 5 };
+        return scale_value::<Other>(o, 3);
+    }
+
+    // Multiple bounds, other type
+    pub fn test_multiple_bounds_other() -> (u256) {
+        let o: Other = Other { val: 10 };
+        return double_check::<Other>(o);
+    }
+
+    // Generic type with other type
+    pub fn test_type_bound_other() -> (u256) {
+        let c: Container<Other> = Container { item: Other { val: 8 } };
+        return c.item.val;
+    }
+}

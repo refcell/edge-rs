@@ -9,15 +9,15 @@ type Point = {
 };
 
 impl Point {
-    fn sum(self: Point) -> (u256) {
+    fn sum(self) -> (u256) {
         return self.x + self.y;
     }
 
-    fn scale(self: Point, factor: u256) -> (u256) {
+    fn scale(self, factor: u256) -> (u256) {
         return self.x * factor + self.y * factor;
     }
 
-    fn x_val(self: Point) -> (u256) {
+    fn x_val(self) -> (u256) {
         return self.x;
     }
 }
@@ -27,11 +27,11 @@ type Counter = {
 };
 
 impl Counter {
-    fn get(self: Counter) -> (u256) {
+    fn get(self) -> (u256) {
         return self.value;
     }
 
-    fn add(self: Counter, n: u256) -> (u256) {
+    fn add(self, n: u256) -> (u256) {
         return self.value + n;
     }
 }
