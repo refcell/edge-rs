@@ -1,7 +1,5 @@
 #![allow(missing_docs)]
 
-use std::path::PathBuf;
-
 use edge_typeck::{ConstValue, TypeChecker};
 
 /// Helper: parse + typecheck Edge source and return const values.
