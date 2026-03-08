@@ -17,5 +17,9 @@ tiny-keccak = { workspace = true }
 alloy-primitives = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 
+[dev-dependencies]
+edge-driver = { workspace = true }
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
