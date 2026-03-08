@@ -110,6 +110,19 @@ impl AstToEgglog {
             return self.inline_function_call(&info.params, &info.body, args);
         }
 
+        // Check non-comptime free functions — emit Call (not inline).
+        // Free functions are checked before contract functions so that a
+        // contract function calling a same-named free function resolves to
+        // the free function (not to itself, which would infinite-recurse).
+        if let Some(info) = self
+            .free_fn_bodies
+            .iter()
+            .find(|f| f.name == fn_name && !f.is_comptime)
+            .cloned()
+        {
+            return self.emit_call(&info.name, &info.params, args);
+        }
+
         // Check contract functions — emit Call (not inline)
         if let Some((name, params, _body)) = self
             .contract_functions
@@ -118,16 +131,6 @@ impl AstToEgglog {
             .cloned()
         {
             return self.emit_call(&name, &params, args);
-        }
-
-        // Check non-comptime free functions — emit Call (not inline)
-        if let Some(info) = self
-            .free_fn_bodies
-            .iter()
-            .find(|f| f.name == fn_name && !f.is_comptime)
-            .cloned()
-        {
-            return self.emit_call(&info.name, &info.params, args);
         }
 
         // Check generic function templates

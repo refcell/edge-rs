@@ -1,0 +1,12 @@
+// Regression test: contract function and free function share the same name.
+// This should produce a compile error about the name conflict.
+
+fn helper(x: u256) -> (u256) {
+    return x + 1;
+}
+
+contract NameCollision {
+    pub fn helper(a: u256) -> (u256) {
+        return helper(a);
+    }
+}

@@ -218,6 +218,19 @@ fn test_traits_contract_compiles() {
 }
 
 // =============================================================================
+// regression tests
+// =============================================================================
+
+#[test]
+fn test_name_collision_compiles() {
+    let bc = compile_contract("examples/tests/test_name_collision.edge");
+    assert!(
+        !bc.is_empty(),
+        "test_name_collision.edge produced empty bytecode"
+    );
+}
+
+// =============================================================================
 // utils/
 // =============================================================================
 
