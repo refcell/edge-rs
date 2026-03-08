@@ -1,6 +1,6 @@
 [package]
-name = "edgeup"
-description = "The Edge toolchain installer and version manager"
+name = "edgeup-lib"
+description = "Programmatic version resolution and management for the Edge toolchain"
 version = { workspace = true }
 edition = { workspace = true }
 authors = { workspace = true }
@@ -8,14 +8,11 @@ license = { workspace = true }
 repository = { workspace = true }
 homepage = { workspace = true }
 
-[[bin]]
-name = "edgeup"
-path = "src/main.rs"
+[lints]
+workspace = true
 
 [dependencies]
-edgeup-lib = { workspace = true }
-clap = { workspace = true }
 anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 dirs = { workspace = true }
+reqwest = { workspace = true }

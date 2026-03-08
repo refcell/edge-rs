@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use crate::installer::Installer;
+use crate::shell::Shell;
 
 /// The Edge toolchain installer and version manager
 #[derive(Debug, Parser)]
@@ -49,7 +50,21 @@ impl Cli {
         let installer = Installer::new()?;
 
         match self.command {
-            Commands::Install { version } => installer.install(version),
+            Commands::Install { version } => {
+                installer.install(version)?;
+                // Add the bin directory to PATH in the user's shell RC file.
+                let shell = Shell::detect()?;
+                let bin_dir = dirs::home_dir()
+                    .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
+                    .join(".edgeup")
+                    .join("bin");
+                shell.add_to_path(&bin_dir)?;
+                eprintln!(
+                    "To start using Edge toolchain, run: source {}",
+                    shell.rc_file().display()
+                );
+                Ok(())
+            }
             Commands::Update => installer.update(),
             Commands::List => installer.list(),
             Commands::Use { version } => installer.use_version(&version),
