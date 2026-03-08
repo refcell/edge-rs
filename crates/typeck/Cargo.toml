@@ -15,6 +15,7 @@ thiserror = { workspace = true }
 indexmap = { workspace = true }
 tiny-keccak = { workspace = true }
 alloy-primitives = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

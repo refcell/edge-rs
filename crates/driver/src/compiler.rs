@@ -33,6 +33,8 @@ pub struct CompileOutput {
     pub bytecodes: Option<IndexMap<String, Vec<u8>>>,
     /// Emitted assembly (if emit=asm), keyed by contract name
     pub asm: Option<Vec<(String, edge_codegen::AsmOutput)>>,
+    /// Emitted ABI JSON entries (if emit=abi)
+    pub abi: Option<Vec<edge_typeck::AbiEntry>>,
 }
 
 /// Compiler errors
@@ -125,6 +127,7 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: None,
+                abi: None,
             });
         }
 
@@ -142,16 +145,34 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: None,
+                abi: None,
             });
         }
 
         // Type check pass
-        let _checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
+        let checked = edge_typeck::TypeChecker::new().check(&ast).map_err(|e| {
             self.session
                 .emit_error(Diagnostic::error(format!("type error: {e}")));
             self.session.report_diagnostics();
             CompileError::TypeCheckErrors
         })?;
+
+        // ABI extraction — return early if that's all the user requested
+        if emit == EmitKind::Abi {
+            let mut all_entries = Vec::new();
+            for contract in &checked.contracts {
+                all_entries.extend(edge_typeck::extract_abi(contract, &checked.events));
+            }
+            return Ok(CompileOutput {
+                tokens: None,
+                ast: None,
+                ir: None,
+                bytecode: None,
+                bytecodes: None,
+                asm: None,
+                abi: Some(all_entries),
+            });
+        }
 
         // IR lowering + optimization
         let ir_program = edge_ir::lower_and_optimize(
@@ -180,6 +201,7 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: None,
+                abi: None,
             });
         }
 
@@ -192,6 +214,7 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: None,
+                abi: None,
             });
         }
 
@@ -221,6 +244,7 @@ impl Compiler {
                 bytecode: None,
                 bytecodes: None,
                 asm: Some(asm_outputs),
+                abi: None,
             });
         }
 
@@ -263,6 +287,7 @@ impl Compiler {
                 bytecode: Some(bytecode),
                 bytecodes: None,
                 asm: None,
+                abi: None,
             });
         }
 
@@ -275,6 +300,7 @@ impl Compiler {
             bytecode: last_bytecode,
             bytecodes: Some(all_bytecodes),
             asm: None,
+            abi: None,
         })
     }
 
