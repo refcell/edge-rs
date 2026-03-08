@@ -22,9 +22,11 @@ implicitly operating on a tuple.
 ## Declaration
 
 ```
-<function_declaration> ::= 
+<function_param> ::= <ident> [":" <type_signature>] ;
+
+<function_declaration> ::=
     "fn" <ident> "("
-        [(<ident> ":" <type_signature>) ("," <ident> ":" <type_signature>)* [","]]
+        [<function_param> ("," <function_param>)* [","]]
     ")" ["->" "(" <type_signature> ("," <type_signature>)* [","] ")"] ;
 ```
 
@@ -32,6 +34,16 @@ Dependencies:
 
 * `<ident>`
 * `<type_signature>`
+
+A parameter may omit its type annotation, in which case the type
+defaults to `Self`. This is intended for use with `self` in trait
+and impl methods:
+
+```edge
+// These are equivalent:
+fn add(self, rhs: Self) -> (Self);
+fn add(self: Self, rhs: Self) -> (Self);
+```
 
 ## Assignment
 

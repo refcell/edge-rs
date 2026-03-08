@@ -1,0 +1,42 @@
+// test_unsafe_arith.edge — Tests for UnsafeAdd/UnsafeSub/UnsafeMul traits
+//
+// Tests that unchecked arithmetic works correctly and wraps on overflow
+// instead of reverting.
+
+use std::ops::UnsafeAdd;
+use std::ops::UnsafeSub;
+use std::ops::UnsafeMul;
+
+contract TestUnsafeArith {
+    // Basic unchecked add
+    pub fn test_unsafe_add() -> (u256) {
+        return UnsafeAdd::unsafe_add(10, 32);
+    }
+
+    // Basic unchecked sub
+    pub fn test_unsafe_sub() -> (u256) {
+        return UnsafeSub::unsafe_sub(50, 8);
+    }
+
+    // Basic unchecked mul
+    pub fn test_unsafe_mul() -> (u256) {
+        return UnsafeMul::unsafe_mul(6, 7);
+    }
+
+    // Overflow wraps: MAX_U256 + 1 = 0
+    pub fn test_add_overflow() -> (u256) {
+        let max: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+        return UnsafeAdd::unsafe_add(max, 1);
+    }
+
+    // Underflow wraps: 0 - 1 = MAX_U256
+    pub fn test_sub_underflow() -> (u256) {
+        return UnsafeSub::unsafe_sub(0, 1);
+    }
+
+    // Mul overflow wraps
+    pub fn test_mul_overflow() -> (u256) {
+        let max: u256 = 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
+        return UnsafeMul::unsafe_mul(max, 2);
+    }
+}

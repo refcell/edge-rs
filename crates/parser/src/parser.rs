@@ -759,17 +759,15 @@ impl Parser {
         // Optional type parameters: trait Comparable<T> { ... }
         let type_params = self.parse_optional_type_params()?;
 
-        // Optional supertraits: Trait: SuperA + SuperB
+        // Optional supertraits: Trait: SuperA & SuperB
         let mut supertraits = Vec::new();
         self.skip_whitespace_and_comments();
         if self.check(&TokenKind::Colon) {
             self.advance();
             supertraits.push(self.parse_ident()?);
-            while self.check(&TokenKind::Operator(
-                edge_types::tokens::Operator::Arithmetic(
-                    edge_types::tokens::ArithmeticOperator::Add,
-                ),
-            )) {
+            while self.check(&TokenKind::Operator(edge_types::tokens::Operator::Bitwise(
+                edge_types::tokens::BitwiseOperator::And,
+            ))) {
                 self.advance();
                 supertraits.push(self.parse_ident()?);
             }

@@ -1,7 +1,9 @@
 // test_traits.edge — Execution tests for trait declarations and implementations
 //
-// Tests trait method dispatch via qualified calls (Trait::method()),
-// and operator overloading via std::ops traits.
+// Tests trait method dispatch via:
+// - Qualified calls: Trait::method(val)
+// - Method-call syntax: val.method()
+// - Operator overloading via std::ops traits
 
 use std::ops::Add;
 use std::ops::Eq;
@@ -11,58 +13,70 @@ type Wrapper = {
 };
 
 trait Doubler {
-    fn double(self: Wrapper) -> (u256);
+    fn double(self) -> (u256);
 }
 
 trait Tripler {
-    fn triple(self: Wrapper) -> (u256);
+    fn triple(self) -> (u256);
 }
 
 impl Wrapper: Doubler {
-    fn double(self: Wrapper) -> (u256) {
+    fn double(self) -> (u256) {
         return self.val * 2;
     }
 }
 
 impl Wrapper: Tripler {
-    fn triple(self: Wrapper) -> (u256) {
+    fn triple(self) -> (u256) {
         return self.val * 3;
     }
 }
 
 impl Wrapper: Add {
-    fn add(self: Wrapper, other: Wrapper) -> (Wrapper) {
+    fn add(self, other: Self) -> (Self) {
         return Wrapper { val: self.val + other.val };
     }
 }
 
 impl Wrapper: Eq {
-    fn eq(self: Wrapper, other: Wrapper) -> (bool) {
+    fn eq(self, other: Self) -> (bool) {
         return self.val == other.val;
     }
 }
 
 contract TestTraits {
-    // Test qualified trait call: Doubler::double(w) where w.val = 21
+    // Qualified call: Doubler::double(w)
     pub fn test_double() -> (u256) {
         let w: Wrapper = Wrapper { val: 21 };
         return Doubler::double(w);
     }
 
-    // Test qualified trait call: Tripler::triple(w) where w.val = 10
+    // Method-call syntax: w.double()
+    pub fn test_double_method() -> (u256) {
+        let w: Wrapper = Wrapper { val: 21 };
+        return w.double();
+    }
+
+    // Qualified call: Tripler::triple(w)
     pub fn test_triple() -> (u256) {
         let w: Wrapper = Wrapper { val: 10 };
         return Tripler::triple(w);
     }
 
-    // Test chaining trait calls
+    // Method-call syntax: w.triple()
+    pub fn test_triple_method() -> (u256) {
+        let w: Wrapper = Wrapper { val: 10 };
+        return w.triple();
+    }
+
+    // Chaining trait calls via method syntax
     pub fn test_double_then_triple() -> (u256) {
         let w: Wrapper = Wrapper { val: 5 };
-        let doubled: u256 = Doubler::double(w);
+        let doubled: u256 = w.double();
         return doubled * 3;
     }
 
-    // Test operator overloading: + dispatches to Add::add
+    // Operator overloading: + dispatches to Add::add
     pub fn test_add_overload() -> (u256) {
         let a: Wrapper = Wrapper { val: 10 };
         let b: Wrapper = Wrapper { val: 32 };
@@ -70,7 +84,7 @@ contract TestTraits {
         return c.val;
     }
 
-    // Test operator overloading: == dispatches to Eq::eq
+    // Operator overloading: == dispatches to Eq::eq
     pub fn test_eq_overload() -> (u256) {
         let a: Wrapper = Wrapper { val: 42 };
         let b: Wrapper = Wrapper { val: 42 };

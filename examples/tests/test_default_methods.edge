@@ -1,0 +1,132 @@
+// test_default_methods.edge — Tests for default trait method injection
+//
+// Tests that traits with default method bodies work correctly:
+// - Impl that omits a default method uses the default body
+// - Impl that overrides a default method uses the override
+// - Multiple default methods with chaining
+
+type Counter = {
+    val: u256,
+};
+
+trait Describable {
+    // Required method — must be implemented
+    fn value(self) -> (u256);
+
+    // Default method — implementation is optional
+    fn doubled(self) -> (u256) {
+        let v: u256 = Describable::value(self);
+        return v * 2;
+    }
+
+    // Second default method that chains on the first default
+    fn quadrupled(self) -> (u256) {
+        let d: u256 = Describable::doubled(self);
+        return d * 2;
+    }
+}
+
+// Uses both default implementations
+impl Counter: Describable {
+    fn value(self) -> (u256) {
+        return self.val;
+    }
+}
+
+type Special = {
+    val: u256,
+};
+
+// Overrides doubled() but uses default quadrupled()
+impl Special: Describable {
+    fn value(self) -> (u256) {
+        return self.val;
+    }
+
+    fn doubled(self) -> (u256) {
+        return self.val * 10;
+    }
+}
+
+type FullOverride = {
+    val: u256,
+};
+
+// Overrides everything
+impl FullOverride: Describable {
+    fn value(self) -> (u256) {
+        return self.val;
+    }
+
+    fn doubled(self) -> (u256) {
+        return self.val + 1;
+    }
+
+    fn quadrupled(self) -> (u256) {
+        return self.val + 2;
+    }
+}
+
+contract TestDefaultMethods {
+    // Default method: Counter uses default doubled() = value * 2
+    pub fn test_default_method() -> (u256) {
+        let c: Counter = Counter { val: 21 };
+        return Describable::doubled(c);
+    }
+
+    // Override: Special overrides doubled() = value * 10
+    pub fn test_override_method() -> (u256) {
+        let s: Special = Special { val: 5 };
+        return Describable::doubled(s);
+    }
+
+    // Required method still works
+    pub fn test_required_method() -> (u256) {
+        let c: Counter = Counter { val: 99 };
+        return Describable::value(c);
+    }
+
+    // Chained default: Counter.quadrupled() = value * 2 * 2
+    pub fn test_chained_default() -> (u256) {
+        let c: Counter = Counter { val: 10 };
+        return Describable::quadrupled(c);
+    }
+
+    // Override one default, other default chains: Special.quadrupled() = doubled * 2 = (val*10)*2
+    pub fn test_partial_override_chain() -> (u256) {
+        let s: Special = Special { val: 3 };
+        return Describable::quadrupled(s);
+    }
+
+    // Full override ignores defaults entirely
+    pub fn test_full_override() -> (u256) {
+        let f: FullOverride = FullOverride { val: 100 };
+        return Describable::quadrupled(f);
+    }
+
+    // Method-call syntax tests
+
+    // Default method via method-call: c.doubled()
+    pub fn test_default_method_call() -> (u256) {
+        let c: Counter = Counter { val: 21 };
+        return c.doubled();
+    }
+
+    // Override via method-call: s.doubled()
+    pub fn test_override_method_call() -> (u256) {
+        let s: Special = Special { val: 5 };
+        return s.doubled();
+    }
+
+    // Required method via method-call: c.value()
+    pub fn test_required_method_call() -> (u256) {
+        let c: Counter = Counter { val: 99 };
+        return c.value();
+    }
+
+    // Chained default via method-call: c.quadrupled()
+    pub fn test_chained_default_call() -> (u256) {
+        let c: Counter = Counter { val: 10 };
+        return c.quadrupled();
+    }
+}

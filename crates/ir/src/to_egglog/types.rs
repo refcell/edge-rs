@@ -274,23 +274,6 @@ impl AstToEgglog {
         }
     }
 
-    /// Generate a mangled name for a monomorphized type.
-    /// e.g., ("Stack", [UIntT(256)]) → "`Stack__u256`"
-    pub(crate) fn mangle_type_name(base: &str, concrete_types: &[EvmType]) -> String {
-        let type_strs: Vec<String> = concrete_types
-            .iter()
-            .map(|t| match t {
-                EvmType::Base(EvmBaseType::UIntT(bits)) => format!("u{bits}"),
-                EvmType::Base(EvmBaseType::IntT(bits)) => format!("i{bits}"),
-                EvmType::Base(EvmBaseType::AddrT) => "addr".to_owned(),
-                EvmType::Base(EvmBaseType::BoolT) => "bool".to_owned(),
-                EvmType::Base(EvmBaseType::BytesT(n)) => format!("b{n}"),
-                _ => "u256".to_owned(),
-            })
-            .collect();
-        format!("{base}__{}", type_strs.join("_"))
-    }
-
     /// Try to monomorphize a generic union from a variant constructor call.
     ///
     /// Given `Result::Ok(42)` where `Result<T> = Ok(T) | Err(u256)`:
@@ -323,7 +306,11 @@ impl AstToEgglog {
 
         // Build a substitution map by matching the variant's inner type against arg types
         let mut subst: HashMap<String, edge_ast::ty::TypeSig> = HashMap::new();
-        let tp_names: HashSet<&str> = template.type_params.iter().map(|s| s.as_str()).collect();
+        let tp_names: HashSet<&str> = template
+            .type_params
+            .iter()
+            .map(|tp| tp.name.name.as_str())
+            .collect();
 
         if let Some(ref inner_ty) = variant.inner {
             // Variant carries data — infer from the constructor arg
@@ -338,7 +325,7 @@ impl AstToEgglog {
         // Check that all type params were inferred
         let mut type_args = Vec::new();
         for param in &template.type_params {
-            match subst.get(param) {
+            match subst.get(&param.name.name) {
                 Some(ts) => type_args.push(ts.clone()),
                 None => return Ok(None), // Can't infer all params
             }
@@ -361,7 +348,7 @@ impl AstToEgglog {
             type_args.iter().map(|t| self.lower_type_sig(t)).collect();
 
         // Check cache
-        let cache_key = (generic_name.to_string(), concrete_types.clone());
+        let cache_key = (generic_name.to_string(), concrete_types);
         if let Some(mangled) = self.monomorphized_types.get(&cache_key) {
             return Ok(mangled.clone());
         }
@@ -406,15 +393,48 @@ impl AstToEgglog {
             return Err(IrError::Diagnostic(diag));
         }
 
+        // Validate trait bounds on type parameters
+        for (tp, arg) in template.type_params.iter().zip(type_args.iter()) {
+            if !tp.constraints.is_empty() {
+                let concrete_name = Self::type_sig_display(arg);
+                for constraint in &tp.constraints {
+                    let key = (concrete_name.clone(), constraint.name.clone());
+                    if !self.trait_impls.contains_key(&key) {
+                        let mut diag = edge_diagnostics::Diagnostic::error(format!(
+                            "the trait bound `{}: {}` is not satisfied",
+                            concrete_name, constraint.name,
+                        ));
+                        if let Some(s) = span {
+                            diag = diag.with_label(
+                                s.clone(),
+                                format!(
+                                    "`{}` does not implement `{}`",
+                                    concrete_name, constraint.name,
+                                ),
+                            );
+                        }
+                        diag = diag.with_note(format!(
+                            "required by a bound on type parameter `{}` in `{}`",
+                            tp.name.name, generic_name,
+                        ));
+                        return Err(IrError::Diagnostic(diag));
+                    }
+                }
+            }
+        }
+
         // Build substitution map
         let subst: HashMap<String, edge_ast::ty::TypeSig> = template
             .type_params
             .iter()
             .zip(type_args.iter())
-            .map(|(param, arg)| (param.clone(), arg.clone()))
+            .map(|(param, arg)| (param.name.name.clone(), arg.clone()))
             .collect();
 
-        let mangled = Self::mangle_type_name(generic_name, &concrete_types);
+        // Use source-level type names for mangling to distinguish struct types
+        // that lower to the same EVM representation.
+        let type_name_strs: Vec<String> = type_args.iter().map(Self::type_sig_display).collect();
+        let mangled = format!("{generic_name}__{}", type_name_strs.join("_"));
 
         // Substitute and register
         let concrete_sig = Self::substitute_type_params(&template.type_sig, &subst);
@@ -544,7 +564,7 @@ impl AstToEgglog {
     }
 
     /// Simple display for a `TypeSig` (for error messages).
-    fn type_sig_display(ty: &edge_ast::ty::TypeSig) -> String {
+    pub(crate) fn type_sig_display(ty: &edge_ast::ty::TypeSig) -> String {
         match ty {
             edge_ast::ty::TypeSig::Primitive(p) => format!("{p:?}").to_lowercase(),
             edge_ast::ty::TypeSig::Named(ident, args) => {

@@ -5,35 +5,54 @@
 //
 // Usage:
 //   use std::ops::Add;
-//   impl MyType: Add { fn add(self: MyType, rhs: MyType) -> (MyType) { ... } }
+//   impl MyType: Add { fn add(self, rhs: Self) -> (Self) { ... } }
 
 trait Add {
-    fn add(self: Self, rhs: Self) -> (Self);
+    fn add(self, rhs: Self) -> (Self);
 }
 
 trait Sub {
-    fn sub(self: Self, rhs: Self) -> (Self);
+    fn sub(self, rhs: Self) -> (Self);
 }
 
 trait Mul {
-    fn mul(self: Self, rhs: Self) -> (Self);
+    fn mul(self, rhs: Self) -> (Self);
 }
 
 trait Div {
-    fn div(self: Self, rhs: Self) -> (Self);
+    fn div(self, rhs: Self) -> (Self);
 }
 
 trait Mod {
-    fn mod_(self: Self, rhs: Self) -> (Self);
+    fn mod_(self, rhs: Self) -> (Self);
 }
 
 trait Eq {
-    fn eq(self: Self, rhs: Self) -> (bool);
+    fn eq(self, rhs: Self) -> (bool);
 }
 
 trait Ord {
-    fn lt(self: Self, rhs: Self) -> (bool);
-    fn gt(self: Self, rhs: Self) -> (bool);
-    fn le(self: Self, rhs: Self) -> (bool);
-    fn ge(self: Self, rhs: Self) -> (bool);
+    fn lt(self, rhs: Self) -> (bool);
+    fn gt(self, rhs: Self) -> (bool);
+    fn le(self, rhs: Self) -> (bool);
+    fn ge(self, rhs: Self) -> (bool);
+}
+
+// Unchecked arithmetic traits — bypass overflow/underflow checks.
+// The compiler provides built-in implementations for primitive types.
+//
+// Usage:
+//   use std::ops::UnsafeAdd;
+//   let result: u256 = UnsafeAdd::unsafe_add(a, b);
+
+trait UnsafeAdd {
+    fn unsafe_add(self, rhs: Self) -> (Self);
+}
+
+trait UnsafeSub {
+    fn unsafe_sub(self, rhs: Self) -> (Self);
+}
+
+trait UnsafeMul {
+    fn unsafe_mul(self, rhs: Self) -> (Self);
 }

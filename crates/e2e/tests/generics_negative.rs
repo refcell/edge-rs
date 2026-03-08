@@ -180,7 +180,7 @@ fn method_not_found_in_impl() {
         r#"
 type Point = { x: u256, y: u256 };
 impl Point {
-    fn sum(self: Point) -> (u256) { return self.x + self.y; }
+    fn sum(self) -> (u256) { return self.x + self.y; }
 }
 contract C {
     pub fn f() -> (u256) {

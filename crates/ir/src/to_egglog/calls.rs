@@ -3,7 +3,7 @@
 use super::{AstToEgglog, FreeFnInfo, Scope, VarBinding};
 use crate::{
     ast_helpers,
-    schema::{DataLocation, EvmBaseType, EvmExpr, EvmType, RcExpr},
+    schema::{DataLocation, EvmBaseType, EvmBinaryOp, EvmExpr, EvmType, RcExpr},
     IrError,
 };
 
@@ -76,7 +76,9 @@ impl AstToEgglog {
                 }
 
                 // Check trait methods: Trait::method(receiver, args...)
-                if self.trait_registry.contains_key(type_or_trait) {
+                if self.trait_registry.contains_key(type_or_trait)
+                    || self.std_ops_traits.contains(type_or_trait)
+                {
                     return self.lower_qualified_trait_call(
                         type_or_trait,
                         method_name,
@@ -280,6 +282,33 @@ impl AstToEgglog {
             ));
         }
 
+        // Built-in UnsafeAdd/UnsafeSub/UnsafeMul for primitives
+        let unsafe_op = match (trait_name, method_name) {
+            ("UnsafeAdd", "unsafe_add") => Some(EvmBinaryOp::Add),
+            ("UnsafeSub", "unsafe_sub") => Some(EvmBinaryOp::Sub),
+            ("UnsafeMul", "unsafe_mul") => Some(EvmBinaryOp::Mul),
+            _ => None,
+        };
+        if let Some(op) = unsafe_op {
+            // Check if receiver is a primitive (not a user-defined type)
+            let receiver_type = self.infer_receiver_type(&args[0]);
+            if receiver_type.is_none() {
+                // Primitive type — emit unchecked op directly
+                if args.len() != 2 {
+                    return Err(IrError::Diagnostic(
+                        edge_diagnostics::Diagnostic::error(format!(
+                            "`{trait_name}::{method_name}` expects exactly 2 arguments",
+                        ))
+                        .with_label(span.clone(), "expected 2 arguments"),
+                    ));
+                }
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                return Ok(ast_helpers::bop(op, lhs, rhs));
+            }
+            // User-defined type — fall through to trait impl lookup
+        }
+
         // Try to infer receiver type
         let receiver_type = self.infer_receiver_type(&args[0]);
         if let Some(ref type_name) = receiver_type {
@@ -358,16 +387,44 @@ impl AstToEgglog {
             )?
         };
 
-        // Build mangled name
-        let concrete_types: Vec<EvmType> = template
+        // Validate trait bounds on type parameters
+        for tp in &template.type_params {
+            if !tp.constraints.is_empty() {
+                let concrete_sig = inferred.get(&tp.name.name).unwrap();
+                let concrete_name = Self::type_sig_display(concrete_sig);
+                for constraint in &tp.constraints {
+                    let key = (concrete_name.clone(), constraint.name.clone());
+                    if !self.trait_impls.contains_key(&key) {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "the trait bound `{}: {}` is not satisfied",
+                                concrete_name, constraint.name,
+                            ))
+                            .with_label(
+                                call_span.clone(),
+                                format!(
+                                    "`{}` does not implement `{}`",
+                                    concrete_name, constraint.name,
+                                ),
+                            )
+                            .with_note(format!("required by a bound in `{}`", template.name,)),
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Build mangled name using source-level type names (not lowered EvmType)
+        // to distinguish struct types that lower to the same EVM representation.
+        let type_name_strs: Vec<String> = template
             .type_params
             .iter()
             .map(|tp| {
                 let sig = inferred.get(&tp.name.name).unwrap();
-                self.lower_type_sig(sig)
+                Self::type_sig_display(sig)
             })
             .collect();
-        let mangled = Self::mangle_type_name(&template.name, &concrete_types);
+        let mangled = format!("{}__{}", template.name, type_name_strs.join("_"));
 
         // Check if already monomorphized
         if let Some(mono_info) = self.monomorphized_fns.get(&mangled).cloned() {
@@ -511,11 +568,24 @@ impl AstToEgglog {
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
-            let (composite_type, composite_base) = arg_composite
+            let (mut composite_type, composite_base) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
                 .map(|(ct, cb)| (Some(ct.clone()), *cb))
                 .unwrap_or((None, None));
+
+            // If composite_type is still None, check if the param type sig names
+            // a known struct/union type — this enables trait method dispatch on
+            // generic parameters after monomorphization substitutes concrete types.
+            if composite_type.is_none() {
+                if let edge_ast::ty::TypeSig::Named(ref name, _) = param_ty {
+                    if self.struct_types.contains_key(&name.name)
+                        || self.union_types.contains_key(&name.name)
+                    {
+                        composite_type = Some(name.name.clone());
+                    }
+                }
+            }
             let binding = VarBinding {
                 value: val,
                 location: DataLocation::Stack,
