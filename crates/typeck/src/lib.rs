@@ -7,7 +7,7 @@ pub mod checker;
 pub mod error;
 
 pub use abi::{
-    extract_abi, AbiFunctionEntry, AbiEntry, AbiEventEntry, AbiEventParam, AbiParam,
+    extract_abi, AbiEntry, AbiEventEntry, AbiEventParam, AbiFunctionEntry, AbiParam,
     StateMutability,
 };
 pub use checker::{CheckedProgram, ConstValue, ContractInfo, FnInfo, StorageLayout, TypeChecker};

@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::path::PathBuf;
 
 use edge_driver::{
@@ -83,10 +85,7 @@ fn abi_serializes_to_valid_json() {
             .get("type")
             .and_then(|v| v.as_str())
             .expect("each entry must have a \"type\" field");
-        assert!(
-            ty == "function" || ty == "event",
-            "unexpected type: {ty}"
-        );
+        assert!(ty == "function" || ty == "event", "unexpected type: {ty}");
     }
 }
 
