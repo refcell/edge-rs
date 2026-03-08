@@ -143,19 +143,6 @@ pub struct ContractDecl {
     pub span: Span,
 }
 
-/// A contract implementation block
-#[derive(Debug, Clone, PartialEq)]
-pub struct ContractImpl {
-    /// Contract type name
-    pub contract_name: Ident,
-    /// Optional ABI being implemented
-    pub abi_impl: Option<Ident>,
-    /// Contract functions
-    pub functions: Vec<ContractFnDecl>,
-    /// Source span
-    pub span: Span,
-}
-
 /// A function within a contract implementation
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractFnDecl {

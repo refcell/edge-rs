@@ -6,8 +6,8 @@ use edge_types::span::Span;
 
 use crate::{
     item::{
-        AbiDecl, ConstDecl, ContractDecl, ContractImpl, EventDecl, FnDecl, ImplBlock, ModuleDecl,
-        ModuleImport, TraitDecl, TypeDecl,
+        AbiDecl, ConstDecl, ContractDecl, EventDecl, FnDecl, ImplBlock, ModuleDecl, ModuleImport,
+        TraitDecl, TypeDecl,
     },
     pattern::MatchArm,
     Ident,
@@ -64,9 +64,6 @@ pub enum Stmt {
         Span,
     ),
 
-    /// Variable assignment: x = expr
-    VarAssign(crate::Expr, crate::Expr, Span),
-
     /// Type assignment: type X = T
     TypeAssign(TypeDecl, crate::ty::TypeSig, Span),
 
@@ -84,9 +81,6 @@ pub enum Stmt {
 
     /// Contract declaration
     ContractDecl(ContractDecl),
-
-    /// Contract implementation block
-    ContractImpl(ContractImpl),
 
     /// Constant assignment: const x = expr
     ConstAssign(ConstDecl, crate::Expr, Span),
@@ -157,14 +151,12 @@ impl Stmt {
     pub fn span(&self) -> Span {
         match self {
             Self::VarDecl(_, _, _, span) => span.clone(),
-            Self::VarAssign(_, _, span) => span.clone(),
             Self::TypeAssign(_, _, span) => span.clone(),
             Self::TraitDecl(_, span) => span.clone(),
             Self::ImplBlock(item) => item.span.clone(),
             Self::FnAssign(fn_decl, _) => fn_decl.span.clone(),
             Self::AbiDecl(abi) => abi.span.clone(),
             Self::ContractDecl(contract) => contract.span.clone(),
-            Self::ContractImpl(impl_block) => impl_block.span.clone(),
             Self::ConstAssign(_, _, span) => span.clone(),
             Self::ModuleDecl(module) => module.span.clone(),
             Self::ModuleImport(import) => import.span.clone(),

@@ -80,40 +80,6 @@ impl AstToEgglog {
                 }
             }
 
-            edge_ast::Stmt::VarAssign(lhs, rhs, _span) => {
-                // Clear composite tracking before evaluating RHS
-                self.last_composite_alloc = None;
-                // Set type hint from the LHS variable's declared type
-                if let edge_ast::Expr::Ident(ident) = lhs {
-                    for scope in self.scopes.iter().rev() {
-                        if let Some(binding) = scope.bindings.get(&ident.name) {
-                            self.type_hint = Some(binding._ty.clone());
-                            break;
-                        }
-                    }
-                }
-                let rhs_ir = self.lower_expr(rhs)?;
-                self.type_hint = None;
-                // If RHS was a struct/array instantiation, wire composite info to LHS binding
-                // (skip storage fields — they already have composite_type set from lower_contract)
-                let rhs_composite = self.last_composite_alloc.clone();
-                if let Some((ref type_name, base)) = rhs_composite {
-                    if let edge_ast::Expr::Ident(ident) = lhs {
-                        for scope in self.scopes.iter_mut().rev() {
-                            if let Some(binding) = scope.bindings.get_mut(&ident.name) {
-                                if binding.storage_slot.is_none() {
-                                    binding.composite_type = Some(type_name.clone());
-                                    binding.composite_base = Some(base);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                self.last_composite_alloc = None;
-                self.lower_assignment_with_composite(lhs, rhs_ir, rhs_composite.as_ref())
-            }
-
             edge_ast::Stmt::ConstAssign(const_decl, expr, _span) => {
                 let val = self.lower_expr(expr)?;
                 let ty = const_decl
