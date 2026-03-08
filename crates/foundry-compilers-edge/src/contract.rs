@@ -1,8 +1,7 @@
 //! Contract artifact output for compiled Edge files.
 
 use alloy_json_abi::JsonAbi;
-use foundry_compilers::artifacts::BytecodeObject;
-use foundry_compilers::CompilerContract;
+use foundry_compilers::{artifacts::BytecodeObject, CompilerContract};
 
 /// A compiled Edge contract artifact.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

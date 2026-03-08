@@ -1,18 +1,18 @@
 //! The Edge compiler implementation for the Foundry compilers framework.
 
-use crate::EdgeCompilationError;
-use crate::EdgeCompilerContract;
-use crate::EdgeCompilerInput;
-use crate::EdgeLanguage;
-use crate::EdgeParser;
-use crate::EdgeSettings;
-use foundry_compilers::artifacts::sources::Source;
-use foundry_compilers::artifacts::{BytecodeObject, SourceFile};
-use foundry_compilers::compilers::CompilerOutput;
-use foundry_compilers::error::Result;
-use foundry_compilers::{Compiler, CompilerInput, CompilerVersion};
-use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
+
+use foundry_compilers::{
+    artifacts::{sources::Source, BytecodeObject, SourceFile},
+    compilers::CompilerOutput,
+    error::Result,
+    Compiler, CompilerInput, CompilerVersion,
+};
+
+use crate::{
+    EdgeCompilationError, EdgeCompilerContract, EdgeCompilerInput, EdgeLanguage, EdgeParser,
+    EdgeSettings,
+};
 
 /// The Edge compiler, implementing the Foundry [`Compiler`] trait.
 ///
@@ -57,10 +57,7 @@ impl Compiler for EdgeCompiler {
                 .map(|(path, source): (&std::path::Path, &Source)| {
                     let path_str = path.to_string_lossy().into_owned();
                     let content = Some(AsRef::<str>::as_ref(source).to_string());
-                    (
-                        path_str,
-                        edge_driver::standard_json::SourceFile { content },
-                    )
+                    (path_str, edge_driver::standard_json::SourceFile { content })
                 })
                 .collect();
 

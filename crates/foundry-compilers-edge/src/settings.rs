@@ -1,8 +1,10 @@
 //! Compiler settings for the Edge language.
 
-use foundry_compilers::artifacts::output_selection::OutputSelection;
-use foundry_compilers::{CompilerSettings, CompilerSettingsRestrictions};
 use std::path::PathBuf;
+
+use foundry_compilers::{
+    artifacts::output_selection::OutputSelection, CompilerSettings, CompilerSettingsRestrictions,
+};
 
 /// Settings for the Edge compiler.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

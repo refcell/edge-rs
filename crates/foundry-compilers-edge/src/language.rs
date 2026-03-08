@@ -1,7 +1,8 @@
 //! Edge language definition for the Foundry compilers framework.
 
-use foundry_compilers::Language;
 use std::fmt;
+
+use foundry_compilers::Language;
 
 /// The Edge language identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

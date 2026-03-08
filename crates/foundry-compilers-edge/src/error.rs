@@ -1,9 +1,11 @@
 //! Error types for the Edge compilation pipeline.
 
-use foundry_compilers::artifacts::error::SourceLocation;
-use foundry_compilers::artifacts::Severity;
-use foundry_compilers::CompilationError;
 use std::fmt;
+
+use foundry_compilers::{
+    artifacts::{error::SourceLocation, Severity},
+    CompilationError,
+};
 
 /// Errors that can occur during Edge compilation.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

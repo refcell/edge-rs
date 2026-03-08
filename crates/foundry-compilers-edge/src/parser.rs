@@ -1,13 +1,17 @@
 //! Source parser for Edge files within the Foundry compilers framework.
 
-use crate::EdgeLanguage;
-use foundry_compilers::artifacts::sources::Sources;
-use foundry_compilers::error::Result;
-use foundry_compilers::resolver::Node;
-use foundry_compilers::{ParsedSource, ProjectPathsConfig, SourceParser};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
+
+use foundry_compilers::{
+    artifacts::sources::Sources, error::Result, resolver::Node, ParsedSource, ProjectPathsConfig,
+    SourceParser,
+};
 use semver::VersionReq;
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+
+use crate::EdgeLanguage;
 
 /// A parsed Edge source file.
 #[derive(Debug, Clone)]
@@ -94,10 +98,7 @@ impl SourceParser for EdgeParser {
             .iter()
             .map(|(path, source)| {
                 let data = EdgeParsedSource::parse(source.as_ref(), path)?;
-                Ok((
-                    path.clone(),
-                    Node::new(path.clone(), source.clone(), data),
-                ))
+                Ok((path.clone(), Node::new(path.clone(), source.clone(), data)))
             })
             .collect::<Result<_>>()
     }

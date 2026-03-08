@@ -1,12 +1,17 @@
 //! Compiler input for Edge source files.
 
-use crate::EdgeLanguage;
-use crate::EdgeSettings;
-use foundry_compilers::artifacts::sources::{Source, Sources};
-use foundry_compilers::CompilerInput;
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
+
+use foundry_compilers::{
+    artifacts::sources::{Source, Sources},
+    CompilerInput,
+};
 use semver::Version;
-use std::borrow::Cow;
-use std::path::{Path, PathBuf};
+
+use crate::{EdgeLanguage, EdgeSettings};
 
 /// Input for the Edge compiler, containing resolved source files and settings.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -53,15 +58,11 @@ impl CompilerInput for EdgeCompilerInput {
     }
 
     fn strip_prefix(&mut self, base: &Path) {
-        let old: std::collections::BTreeMap<PathBuf, Source> =
-            std::mem::take(&mut self.sources.0);
+        let old: std::collections::BTreeMap<PathBuf, Source> = std::mem::take(&mut self.sources.0);
         self.sources.0 = old
             .into_iter()
             .map(|(path, source)| {
-                let stripped = path
-                    .strip_prefix(base)
-                    .unwrap_or(&path)
-                    .to_path_buf();
+                let stripped = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
                 (stripped, source)
             })
             .collect();

@@ -1,14 +1,15 @@
 #![allow(missing_docs)]
 
+use std::path::Path;
+
+use foundry_compilers::{
+    artifacts::sources::{Source, Sources},
+    compilers::{Compiler, CompilerInput},
+    CompilationError, CompilerSettings, Language, ParsedSource,
+};
 use foundry_compilers_edge::{
     EdgeCompiler, EdgeCompilerInput, EdgeLanguage, EdgeParsedSource, EdgeSettings,
 };
-
-use foundry_compilers::artifacts::sources::{Source, Sources};
-use foundry_compilers::compilers::{Compiler, CompilerInput};
-use foundry_compilers::{CompilationError, CompilerSettings, Language, ParsedSource};
-
-use std::path::Path;
 
 #[test]
 fn test_edge_language_extensions() {
