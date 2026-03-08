@@ -1,0 +1,18 @@
+// Regression test: parameter reassignment inside an if-branch.
+// Previously caused stack depth mismatch because params were stack-bound
+// (reassignment pushed orphan values). Now params are memory-backed.
+
+fn div_safe(a: u256, b: u256) -> (u256) {
+    if (b == 0) {
+        return 0;
+    }
+    // Reassigning a parameter inside a branch:
+    b = b / 2;
+    return a / b;
+}
+
+contract ParamReassign {
+    pub fn test(x: u256, y: u256) -> (u256) {
+        return div_safe(x, y);
+    }
+}

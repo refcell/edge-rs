@@ -218,6 +218,19 @@ fn test_traits_contract_compiles() {
 }
 
 // =============================================================================
+// regression tests
+// =============================================================================
+
+#[test]
+fn test_param_reassign_compiles() {
+    let bc = compile_contract("examples/tests/test_param_reassign.edge");
+    assert!(
+        !bc.is_empty(),
+        "test_param_reassign.edge produced empty bytecode"
+    );
+}
+
+// =============================================================================
 // utils/
 // =============================================================================
 
