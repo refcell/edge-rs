@@ -42,7 +42,7 @@ let input = ContractInput {
 };
 
 let bytecode = CodeGenerator::new().generate(&input).unwrap();
-println!("0x{}", hex::encode(&bytecode));
+println!("{}", hex::encode(&bytecode));
 ```
 
 ## Integration

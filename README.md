@@ -60,7 +60,7 @@ Pass a source file directly to compile it — `edgec` prints the bytecode as a h
 ```sh
 # Compile to EVM bytecode (prints hex to stdout)
 edgec examples/counter.edge
-# 0x60003560e01c8063d09de08a146100365780632baeceb7146100...
+# 60003560e01c8063d09de08a146100365780632baeceb7146100...
 
 # Write raw bytecode bytes to a file
 edgec examples/counter.edge -o counter.bin
@@ -106,7 +106,7 @@ contract Counter {
 
 ```sh
 edgec examples/counter.edge
-# 0x60003560e01c8063d09de08a14610036578063...  (127 bytes)
+# 60003560e01c8063d09de08a14610036578063...  (127 bytes)
 ```
 
 The compiled bytecode includes a selector dispatcher, storage reads/writes via `SLOAD`/`SSTORE`, and a revert fallback for unknown selectors — all verified against a live EVM in the [integration tests](./crates/e2e/).

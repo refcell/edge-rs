@@ -37,7 +37,7 @@ let mut compiler = Compiler::new(config).unwrap();
 let output = compiler.compile().unwrap();
 
 if let Some(bytecode) = output.bytecode {
-    println!("0x{}", hex::encode(&bytecode));
+    println!("{}", hex::encode(&bytecode));
 }
 ```
 
