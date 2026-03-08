@@ -1,0 +1,27 @@
+[package]
+name = "foundry-compilers-edge"
+description = "Foundry compilers plugin for the Edge language"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+homepage = { workspace = true }
+
+[dependencies]
+edge-driver = { workspace = true }
+edge-types = { workspace = true }
+foundry-compilers = { workspace = true }
+alloy-json-abi = "1.5"
+alloy-primitives = { workspace = true }
+semver = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+edge-driver = { workspace = true }
+
+[lints]
+workspace = true
