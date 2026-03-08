@@ -3,8 +3,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::installer::Installer;
-use crate::shell::Shell;
+use crate::{installer::Installer, shell::Shell};
 
 /// The Edge toolchain installer and version manager
 #[derive(Debug, Parser)]
