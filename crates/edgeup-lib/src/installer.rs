@@ -159,15 +159,16 @@ impl Installer {
 
         let release = fetch_release(query)?;
         let suffix = platform_suffix();
+        let target_name = format!("edgec-{suffix}");
 
         // Find the asset whose name contains the platform suffix.
         let asset = release
             .assets
             .iter()
-            .find(|a| a.name.contains(suffix))
+            .find(|a| a.name.contains(&target_name))
             .ok_or_else(|| {
                 anyhow!(
-                    "no release asset found for platform {suffix} in release {}",
+                    "no edgec asset found for platform {suffix} in release {}",
                     release.tag_name
                 )
             })?;

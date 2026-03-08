@@ -10,20 +10,17 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.os }}
+    name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: edge-rs
           - os: macos-latest
             target: x86_64-apple-darwin
-            binary: edge-rs
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary: edge-rs
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
@@ -33,20 +30,18 @@ jobs:
       - name: Install target
         run: rustup target add ${{ matrix.target }}
       - name: Build release
-        run: cargo build --release --target ${{ matrix.target }} --bin edge_rs
+        run: cargo build --release --target ${{ matrix.target }} --bin edgec --bin edgeup
       - name: Prepare artifacts
         run: |
           mkdir -p artifacts
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp target/${{ matrix.target }}/release/${{ matrix.binary }}.exe artifacts/
-          else
-            cp target/${{ matrix.target }}/release/${{ matrix.binary }} artifacts/
-            chmod +x artifacts/${{ matrix.binary }}
-          fi
+          for bin in edgec edgeup; do
+            cp target/${{ matrix.target }}/release/${bin} artifacts/${bin}-${{ matrix.target }}
+            chmod +x artifacts/${bin}-${{ matrix.target }}
+          done
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}-binary
+          name: ${{ matrix.target }}-binaries
           path: artifacts/
 
   release:
@@ -59,6 +54,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
