@@ -44,3 +44,6 @@ mod types_exec;
 mod utils_exec;
 #[path = "suites/warnings.rs"]
 mod warnings;
+
+#[path = "suites/large_int_literals.rs"]
+mod large_int_literals;

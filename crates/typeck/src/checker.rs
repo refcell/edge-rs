@@ -298,7 +298,15 @@ impl TypeChecker {
     fn eval_const_expr(expr: &Expr, env: &IndexMap<String, u64>) -> Option<u64> {
         match expr {
             Expr::Literal(lit) => match lit.as_ref() {
-                Lit::Int(n, _, _) => Some(*n),
+                Lit::Int(bytes, _, _) => {
+                    // Values >u64 can't be evaluated here yet — return None
+                    // rather than silently truncating. Full U256 const eval
+                    // is planned as part of issue #43.
+                    if bytes[..24].iter().any(|&b| b != 0) {
+                        return None;
+                    }
+                    Some(u64::from_be_bytes(bytes[24..32].try_into().unwrap()))
+                }
                 Lit::Bool(b, _) => Some(if *b { 1 } else { 0 }),
                 Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
                     let mut v = 0u64;

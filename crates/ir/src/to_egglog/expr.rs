@@ -316,8 +316,11 @@ impl AstToEgglog {
                         {
                             // Evaluate start index (must be a constant for now)
                             if let edge_ast::Expr::Literal(lit) = index.as_ref() {
-                                if let edge_ast::Lit::Int(start, _, _) = lit.as_ref() {
-                                    let new_base = base_offset + (*start as usize) * 32;
+                                if let edge_ast::Lit::Int(bytes, _, _) = lit.as_ref() {
+                                    let start =
+                                        u64::from_be_bytes(bytes[24..32].try_into().unwrap())
+                                            as usize;
+                                    let new_base = base_offset + start * 32;
                                     self.last_composite_alloc =
                                         Some(("__array__".to_string(), new_base));
                                     return Ok(ast_helpers::const_int(
@@ -444,16 +447,40 @@ impl AstToEgglog {
     /// Lower a literal value.
     pub(crate) fn lower_literal(&self, lit: &edge_ast::Lit) -> Result<RcExpr, IrError> {
         match lit {
-            edge_ast::Lit::Int(val, maybe_ty, _span) => {
+            edge_ast::Lit::Int(bytes, maybe_ty, _span) => {
                 let ty = maybe_ty
                     .as_ref()
                     .map(|pt| self.lower_primitive_type(pt))
                     .unwrap_or(EvmType::Base(EvmBaseType::UIntT(256)));
-                Ok(Rc::new(EvmExpr::Const(
-                    EvmConstant::SmallInt(*val as i64),
-                    ty,
-                    self.current_ctx.clone(),
-                )))
+                // Check if value fits in SmallInt (first 24 bytes are zero and high bit of remaining 8 is not set)
+                let is_small = bytes[..24].iter().all(|&b| b == 0) && (bytes[24] & 0x80) == 0;
+                if is_small {
+                    let mut val: u64 = 0;
+                    for &b in &bytes[24..] {
+                        val = (val << 8) | (b as u64);
+                    }
+                    Ok(Rc::new(EvmExpr::Const(
+                        EvmConstant::SmallInt(val as i64),
+                        ty,
+                        self.current_ctx.clone(),
+                    )))
+                } else {
+                    let hex_str: String = bytes
+                        .iter()
+                        .skip_while(|&&b| b == 0)
+                        .map(|b| format!("{b:02x}"))
+                        .collect();
+                    let hex_str = if hex_str.is_empty() {
+                        "00".to_string()
+                    } else {
+                        hex_str
+                    };
+                    Ok(Rc::new(EvmExpr::Const(
+                        EvmConstant::LargeInt(hex_str),
+                        ty,
+                        self.current_ctx.clone(),
+                    )))
+                }
             }
             edge_ast::Lit::Bool(val, _span) => {
                 Ok(ast_helpers::const_bool(*val, self.current_ctx.clone()))
