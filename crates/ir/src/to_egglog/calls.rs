@@ -637,4 +637,78 @@ impl AstToEgglog {
 
         Ok(ast_helpers::call(name.to_string(), args_ir))
     }
+
+    /// Check if an expression used as a statement is a function call whose
+    /// return value is being discarded, and emit a warning if so.
+    pub(crate) fn check_unused_return_value(&mut self, expr: &edge_ast::Expr) {
+        let (fn_name, span) = match expr {
+            edge_ast::Expr::FunctionCall(callee, _, _, span) => {
+                match callee.as_ref() {
+                    edge_ast::Expr::Ident(id) => (Some(id.name.clone()), span.clone()),
+                    edge_ast::Expr::Path(components, _) if components.len() == 2 => {
+                        // Qualified call like Trait::method or Type::method
+                        let method = &components[1].name;
+                        (Some(method.clone()), span.clone())
+                    }
+                    edge_ast::Expr::FieldAccess(_, method, _) => {
+                        // Method call like obj.method()
+                        (Some(method.name.clone()), span.clone())
+                    }
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+
+        let Some(name) = fn_name else { return };
+
+        // Look up the function's return type
+        let has_return = self.fn_has_return_value(&name);
+        if has_return {
+            self.warnings.push(
+                edge_diagnostics::Diagnostic::warning(format!("unused return value of `{name}`",))
+                    .with_label(span, "return value unused"),
+            );
+        }
+    }
+
+    /// Check if a function by name has a non-void return type.
+    fn fn_has_return_value(&self, name: &str) -> bool {
+        // Check free functions
+        if let Some(info) = self.free_fn_bodies.iter().find(|f| f.name == name) {
+            return !info.returns.is_empty();
+        }
+        // Check generic function templates
+        if let Some(info) = self.generic_fn_templates.get(name) {
+            return !info.returns.is_empty();
+        }
+        // Check trait methods — search all trait impls for a method with this name
+        for ((_type_name, _trait_name), impl_info) in &self.trait_impls {
+            if let Some((fn_decl, _body)) = impl_info.methods.get(name) {
+                return !fn_decl.returns.is_empty();
+            }
+        }
+        // Check inherent methods
+        for (_type_name, methods) in &self.inherent_methods {
+            if let Some(m) = methods.iter().find(|m| m.fn_decl.name.name == name) {
+                return !m.fn_decl.returns.is_empty();
+            }
+        }
+        // Check trait registry (for default methods)
+        for (_trait_name, trait_info) in &self.trait_registry {
+            if let Some((_, fn_decl)) = trait_info.required_methods.iter().find(|(n, _)| n == name)
+            {
+                return !fn_decl.returns.is_empty();
+            }
+            if let Some((_, fn_decl, _)) = trait_info
+                .default_methods
+                .iter()
+                .find(|(n, _, _)| n == name)
+            {
+                return !fn_decl.returns.is_empty();
+            }
+        }
+        // Unknown function — don't warn
+        false
+    }
 }

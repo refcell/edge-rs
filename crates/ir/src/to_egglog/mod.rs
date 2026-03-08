@@ -317,6 +317,8 @@ pub struct AstToEgglog {
     /// Type hint from assignment target, used for generic return-type inference.
     /// Set before lowering the RHS of a typed variable assignment, cleared after.
     pub(crate) type_hint: Option<EvmType>,
+    /// Compiler warnings collected during lowering
+    pub(crate) warnings: Vec<edge_diagnostics::Diagnostic>,
 }
 
 impl Default for AstToEgglog {
@@ -363,6 +365,7 @@ impl AstToEgglog {
             _self_type: None,
             std_ops_traits: HashSet::new(),
             type_hint: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -768,6 +771,7 @@ impl AstToEgglog {
         Ok(EvmProgram {
             contracts,
             free_functions,
+            warnings: std::mem::take(&mut self.warnings),
         })
     }
 

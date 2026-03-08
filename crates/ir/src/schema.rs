@@ -366,12 +366,14 @@ pub struct EvmContract {
 }
 
 /// A complete program (one or more contracts + free functions).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct EvmProgram {
     /// Contracts defined in the program
     pub contracts: Vec<EvmContract>,
     /// Free-standing functions (outside contracts)
     pub free_functions: Vec<RcExpr>,
+    /// Compiler warnings collected during lowering
+    pub warnings: Vec<edge_diagnostics::Diagnostic>,
 }
 
 // ============================================================

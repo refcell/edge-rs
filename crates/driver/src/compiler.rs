@@ -193,6 +193,11 @@ impl Compiler {
             CompileError::Aborted
         })?;
 
+        // Emit any warnings from IR lowering
+        for warning in &ir_program.warnings {
+            self.session.emit_warning(warning.clone());
+        }
+
         if emit == EmitKind::Ir || emit == EmitKind::PrettyIr {
             return Ok(CompileOutput {
                 tokens: None,
@@ -226,6 +231,7 @@ impl Compiler {
                     &edge_ir::EvmProgram {
                         contracts: vec![contract.clone()],
                         free_functions: Vec::new(),
+                        warnings: Vec::new(),
                     },
                     self.session.config.optimization_level,
                     self.session.config.optimize_for,
@@ -254,6 +260,7 @@ impl Compiler {
             let single_program = edge_ir::EvmProgram {
                 contracts: vec![contract.clone()],
                 free_functions: Vec::new(),
+                warnings: Vec::new(),
             };
             let bytecode = edge_codegen::compile(
                 &single_program,

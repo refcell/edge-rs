@@ -19,5 +19,4 @@ nominative subtyping, and compile time monomorphization.
 * [Function Types](/specs/syntax/types/function)
 * [Event Types](/specs/syntax/types/events)
 * [Application Binary Interface](/specs/syntax/types/abi)
-* [External Calls](/specs/syntax/types/external-calls)
 * [Contract Objects](/specs/syntax/types/contracts)
