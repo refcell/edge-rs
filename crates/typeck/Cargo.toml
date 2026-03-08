@@ -16,9 +16,12 @@ indexmap = { workspace = true }
 tiny-keccak = { workspace = true }
 alloy-primitives = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
+ruint = { workspace = true }
 
 [dev-dependencies]
 edge-driver = { workspace = true }
+edge-lexer = { workspace = true }
+edge-parser = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]
