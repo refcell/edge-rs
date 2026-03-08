@@ -193,7 +193,7 @@ impl Cli {
                         eprintln!("warning: empty bytecode produced");
                     } else {
                         let hex: String = bytecode.iter().map(|b| format!("{b:02x}")).collect();
-                        println!("0x{hex}");
+                        println!("{hex}");
 
                         if let Some(path) = output {
                             std::fs::write(&path, bytecode)?;
