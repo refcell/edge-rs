@@ -4,89 +4,121 @@ title: Branching
 
 # Branching
 
-Branching refers to blocks of code that may be executed based on a defined condition.
+Branching refers to blocks of code that may be executed based on a condition.
 
-## If Else If Branch
+## If / else if / else
 
 ```text
-<if_else_if_branch> ::= "if" "(" <expr> ")" <code_block>
-    ("else" "if" "(" <expr> ")" <code_block>)*
+<if_else_branch> ::= "if" "(" <expression> ")" <code_block>
+    ("else" "if" "(" <expression> ")" <code_block>)*
     ["else" <code_block>] ;
 ```
 
 Dependencies:
 
-* `<expr>`
+* `<expression>`
 * `<code_block>`
 
-The `<branch>` contains an "if" keyword followed by a parenthesis delimited expression
-and a code block. It may be followed by zero or more conditions under "else" "if"
-keywords followed by a parenthesis delimited expression and a code block, and finally
-it may optionally be suffixed with an "else" keyword followed by a code block.
+Produces `Stmt::IfElse(Vec<(Expr, CodeBlock)>, Option<CodeBlock>)`. Each
+condition-block pair is an element in the vector; the optional else block
+is the second field.
 
-## If Match
+## If match
 
 ```text
-<if_match_branch> ::= "if" <pattern_match> <code_block> ;
+<if_match_branch> ::= "if" <expression> "matches" <union_pattern> <code_block> ;
 ```
 
 Dependencies:
 
-* `<pattern_match>`
+* `<expression>`
+* `<union_pattern>`
 * `<code_block>`
 
-The `<if_match_branch>` contains a pattern match expression followed by an optionally
-typed identifier followed by a code block.
+:::note[Implementation detail]
+`Stmt::IfMatch` exists as a variant in the AST but is **dead code**. The
+parser never produces it directly — instead, it always emits `Stmt::IfElse`
+with an `Expr::PatternMatch` as the condition. Contributors should be aware
+that any logic gated on `Stmt::IfMatch` will not be reached under normal
+compilation.
+:::
+
+## Pattern match expression
+
+```text
+<pattern_match_expr> ::= <expression> "matches" <union_pattern> ;
+```
+
+The `matches` keyword produces `Expr::PatternMatch(expr, pattern, span)` and
+works as a boolean expression usable anywhere — including as an `if`
+condition, ternary operand, or `let` binding value:
+
+```edge
+let is_some = value matches Option::Some(x);
+```
 
 ## Match
 
 ```text
-<match_arm> ::= (<union_pattern> | <ident> | "_") "=>" <code_block> ;
+<match_pattern> ::= <union_pattern> | <identifier> | "_" ;
+
+<match_arm> ::= <match_pattern> "=>"
+    (<code_block> | <expression> | "return" [<expression>]) ;
 
 <match> ::=
-    "match" <expr> "{"
-    [<match_arm> ("," <match_arm>)* [","]]
+    "match" <expression> "{"
+        [<match_arm> ("," <match_arm>)* [","]]
     "}" ;
 ```
 
 Dependencies:
 
-* `<expr>`
+* `<expression>`
 * `<union_pattern>`
 * `<code_block>`
 
-The `<match_arm>` is a single arm of a match statement. It may optionally be
-prefixed with a union pattern and contains a lambda.
+Each `<match_pattern>` maps to a `MatchPattern` variant:
 
-The `<match>` statement is a group of match arms that may pattern match against
-an expression.
+| Pattern | AST variant |
+|---|---|
+| `Type::Variant(...)` | `MatchPattern::Union(UnionPattern)` |
+| `name` | `MatchPattern::Ident(Ident)` |
+| `_` | `MatchPattern::Wildcard` |
 
-Semantics of the match statement are defined in the control flow semantics.
+Each `<match_arm>` maps to `MatchArm { pattern, body: CodeBlock }`.
+
+:::note
+At the AST level, all arm bodies are normalized to `CodeBlock`. Bare
+expressions and `return` statements are wrapped in synthetic code blocks
+by the parser.
+:::
+
+:::warning
+Compile-time exhaustiveness checking is not yet implemented. Non-exhaustive
+match blocks do not produce a compiler error. If no arm matches at runtime
+and no default arm is present, the program reverts.
+:::
 
 ## Ternary
 
 ```text
-<ternary> ::= <expr> "?" <expr> ":" <expr> ;
+<ternary> ::= <expression> "?" <expression> ":" <expression> ;
 ```
 
 Dependencies:
 
-* `<expr>`
+* `<expression>`
 
-The `<ternary>` is a branching statement that takes an expression, followed
-by a question mark, or ternary operator, followed by two colon separated
-expressions.
+Produces `Expr::Ternary(condition, then_expr, else_expr, span)`. The ternary
+is right-associative — `a ? b : c ? d : e` parses as `a ? b : (c ? d : e)`.
 
 ## Semantics
 
-### If Else If Branch
+### If / else if
 
-The expression of the "if" statement is evaluated. The type of the expression
-must either be a boolean or it must be a value that can be cast to a boolean.
-If the result is true, the subsequent block of code is executed. Otherwise the
-next branch is checked. If the optional "else if" follows, the above process
-is repeated until either there are no more branches or the optional "else"
-follows. If no branches have resolved to true, the "else" block is executed.
+The condition expression is evaluated. If it is true, the subsequent block
+executes. Otherwise the next `else if` condition is checked. If no condition
+is true and an `else` block is present, it executes.
 
 ```edge
 fn main() {
@@ -102,12 +134,10 @@ fn main() {
 }
 ```
 
-### If Match
+### If match
 
-The "if match" statement executes as the "if" statement does, however, the
-expression to evaluate is a pattern match. While the pattern match semantics
-are specified elsewhere, the "if match" branch brings into scope the
-identifier(s) of the inner type(s) of the matched pattern.
+The `if match` branch brings into scope any identifiers bound by the
+pattern's payload bindings:
 
 ```edge
 type Union = A(u8) | B;
@@ -123,72 +153,47 @@ fn main() {
 
 ### Match
 
-Matching requires all possible patterns for a given expression's type to be
-evaluated. If any pattern is not matched in a match block, a compiler error
-is thrown. The semantics for match arms are the same as those for the "if match"
-statement.
+The `match` statement evaluates the target expression and compares it against
+each arm's pattern in order. The first matching arm's body executes.
 
-The remaining branches for a pattern match may be grouped together either with
-an identifier or if the identifier is unnecessary, an underscore. Using an
-identifier assigns a subset of the associated type into scope. The subset of
-the type contains one of the unmatched members. This does not create a new
-distinct data type, rather it infers the non-existence of the pre-matched
-branches.
+An identifier pattern (`name`) binds the matched value irrefutably.
+A wildcard pattern (`_`) discards the value. Both serve as catch-all arms.
 
 ```edge
 type Ua = A | B;
-type Ub = A | B;
 
 fn main() {
-    let u_a = Ua::B;
-    let u_b = Ub::B;
+    let u = Ua::B;
 
-    match u_a {
+    match u {
         Ua::A => {},
-        Ub::B => {},
-    }
-
-    match u_b {
-        Ua::A => {},
-        n => {
-            // `n` inferred to have type `Ub::B`
-        }
+        Ua::B => {},
     }
 }
 ```
 
+:::warning
+Type narrowing of wildcard/identifier bindings is not yet implemented.
+:::
+
 ### Ternary
 
-The ternary operator evaluates the expression, the first expression's result must
-be of type boolean, and if the expression evaluates to true, the second expression
-is evaluated, otherwise the third expression is evaluated.
+The condition must evaluate to a boolean. If true, the second expression is
+evaluated; otherwise the third.
 
 ```edge
 fn main() {
     let condition = true;
-
-    let mut a = 0;
-
-    if (condition) {
-        a = 1;
-    } else {
-        a = 2;
-    }
-
     let b = condition ? 1 : 2;
-
-    assert(a == b);
 }
 ```
 
-### Short Circuiting
+### Short circuiting
 
-For all branch statements that evaluate a boolean expression to determine which
-branches to take, the following statements hold if the expression is composed of
-multiple inner boolean expressions separated by logical operators.
+For boolean expressions composed of logical operators:
 
-* if `<expr0> && <expr1>` and `<expr0>` is `false`, short circuit to `false`
-* if `<expr0> || <expr1>` and `<expr0>` is `true`, short circuit to `true`
+- `expr0 && expr1` — if `expr0` is `false`, short-circuit to `false`
+- `expr0 || expr1` — if `expr0` is `true`, short-circuit to `true`
 
-Also, for all chains of "if else if" statements, if the first evaluates to true,
-do not evaluate the remaining chained statements.
+For `if / else if` chains, if an earlier branch is taken, subsequent
+conditions are not evaluated.

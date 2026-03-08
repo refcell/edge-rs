@@ -1,8 +1,8 @@
 ---
-title: Function Types
+title: Function types
 ---
 
-# Function Types
+# Function types
 
 The function type is a type composed of input and output types.
 
@@ -16,12 +16,9 @@ Dependencies:
 
 * `<type_signature>`
 
-The `<function_signature>` consists of an input type signature
-and an output type signature, separated by an arrow.
-
-Note: `<type_signature>` also contains a tuple signature,
-therefore a function with multiple inputs and outputs is
-implicitly operating on a tuple.
+The `<function_signature>` maps to `TypeSig::Function(input, output)`.
+Since `<type_signature>` includes tuple signatures, a function with
+multiple inputs or outputs implicitly operates on a tuple.
 
 ## Declaration
 
@@ -29,15 +26,39 @@ implicitly operating on a tuple.
 <function_param> ::= <ident> [":" <type_signature>] ;
 
 <function_declaration> ::=
-    "fn" <ident> "("
+    ["pub"] ["ext"] ["mut"]
+    "fn" <identifier>
+    ["<" <type_param> ("," <type_param>)* ">"]
+    "("
         [<function_param> ("," <function_param>)* [","]]
-    ")" ["->" "(" <type_signature> ("," <type_signature>)* [","] ")"] ;
+    ")"
+    ["->" "(" <type_signature> ("," <type_signature>)* [","] ")"] ;
+
+<type_param> ::= <identifier> [":" <identifier> ("+" <identifier>)*] ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 * `<type_signature>`
+
+The `<function_declaration>` maps to `FnDecl` in the AST with these fields:
+
+- `name: Ident`
+- `type_params: Vec<TypeParam>`
+- `params: Vec<(Ident, TypeSig)>`
+- `returns: Vec<TypeSig>`
+- `is_pub: bool`, `is_ext: bool`, `is_mut: bool`
+
+The `pub`, `ext`, and `mut` keywords are **independent** — each sets a
+separate boolean flag. They may appear in any combination:
+
+```edge
+pub fn read() -> u256 { ... }
+pub ext fn deposit() { ... }
+pub mut fn transfer() { ... }
+pub ext mut fn swap() { ... }
+```
 
 A parameter may omit its type annotation, in which case the type
 defaults to `Self`. This is intended for use with `self` in trait
@@ -59,44 +80,62 @@ Dependencies:
 
 * `<code_block>`
 
-The `<function_assignment>` is defined as the "fn" keyword followed
-by its identifier, followed by optional comma separated pairs of
-identifiers and type signatures, delimited by parenthesis, then
-optionally followed by an arrow and a list of comma separated return
-types signatures delimited by parenthesis, then finally the code
-block of the function body.
+The `<function_assignment>` is a function declaration followed by a code
+block body. It produces `Stmt::FnAssign(FnDecl, CodeBlock)`.
 
-## Arrow Functions
+## Arrow functions
 
-```edge
-<arrow_function> ::= (<ident> | ("(" <ident> ("," <ident>)* [","] ")")) "=>" <code_block> ;
+```text
+<arrow_function> ::= (<identifier> | "(" [<identifier> ("," <identifier>)* [","]] ")") "=>" <code_block> ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 * `<code_block>`
 
-The `<arrow_function>` is defined as either a single identifier
-or a comma separated, parenthesis delimited list of identifiers,
-followed by the "=>" bigram, followed by a code block.
+Arrow functions produce `Expr::ArrowFunction(params, body, span)`. The body
+must be a brace-delimited code block. Supported forms:
+
+```edge
+x => { x + 1 }
+(x, y) => { x + y }
+() => { 42 }
+```
 
 ## Call
 
-```edge
-<function_call> ::= <ident> "(" [<expr> ("," <expr>) [","]] ")" ;
+```text
+<function_call> ::=
+    <expression>
+    ["::" "<" <type_signature> ("," <type_signature>)* ">"]
+    "(" [<expression> ("," <expression>)* [","]] ")" ;
 ```
 
 Dependencies:
 
-* `<ident>`
-* `<expr>`
+* `<expression>`
+* `<type_signature>`
 
-The `<function_call>` is an identifier followed by a comma
-separated list of expressions delimited by parenthesis.
+The `<function_call>` produces `Expr::FunctionCall(callee, args, type_args, span)`.
+The callee is any expression — supporting method calls (`obj.method()`),
+higher-order calls (`get_fn()()`), and turbofish instantiations
+(`foo::<u32>(...)`).
+
+## Compile-time functions
+
+```text
+<comptime_function_assignment> ::= "comptime" <function_assignment> ;
+```
+
+The `comptime` keyword before a function assignment declares a compile-time
+function. This produces `Stmt::ComptimeFn(FnDecl, CodeBlock)`, which is
+distinct from `Stmt::FnAssign`. See [compile-time functions](/specs/syntax/compile/functions).
 
 ## Semantics
 
-:::note
-Todo: the function-type semantics section is still under construction.
+:::warning
+The function-type semantics section is still under construction. Runtime
+calling conventions, ABI encoding, and stack-frame layout are not yet
+documented.
 :::

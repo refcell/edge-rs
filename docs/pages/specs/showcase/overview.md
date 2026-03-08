@@ -2,90 +2,94 @@
 title: Syntax Showcase
 ---
 
-# Syntax Showcase
+# Syntax showcase
 
-The following are Edge Language source code examples, organized by category.
-Full source files are in the [`examples/`](https://github.com/refcell/edge2/tree/main/examples) directory.
+The following are Edge language source code examples, organized by category.
+Full source files are in the [`examples/`](https://github.com/refcell/edge-rs/tree/main/examples) directory, with standard library modules in [`std/`](https://github.com/refcell/edge-rs/tree/main/std).
 
 ## Basics
 
-* [Basics](/specs/showcase/basics): Basic Edge constructs — variables, functions, contracts, storage
-* [ERC20](/specs/showcase/erc20): Sugared and desugared ERC-20 examples
+* [Basics](/specs/showcase/basics): Core Edge constructs — variables, functions, contracts, storage, types, operators
+* [ERC20](/specs/showcase/erc20): A complete ERC-20 token walkthrough
 
-## Introductory Examples
+## Introductory examples
 
 These top-level example files cover the fundamentals of Edge syntax:
 
 | Example | What it covers |
 |---------|----------------|
-| `counter.edge` | `abi`, `contract`, `&s` storage pointers, `pub fn` visibility |
-| `erc20.edge` | `event`, `indexed`, `map<K,V>` storage mappings, `emit` |
-| `expressions.edge` | All arithmetic, comparison, bitwise, and logical operators |
-| `types.edge` | Primitive types (`u8`..`u256`, `i128`, `b32`, `addr`, `bool`), data locations (`&s`, `&cd`), `type` aliases, `const` |
+| `examples/counter.edge` | `abi`, `contract`, `&s` storage pointers, `pub fn` visibility |
+| `examples/erc20.edge` | `event`, `indexed`, `map<K,V>` storage mappings, `emit` |
+| `examples/expressions.edge` | Arithmetic, comparison, and bitwise operators |
+| `examples/types.edge` | Primitive types (`u8`..`u256`, `i128`, `b32`, `addr`, `bool`, `bit`), data locations (`&s`, `&t`, `&m`), `type` aliases, `const` |
+| `examples/transient.edge` | Transient storage (`&t`) with EIP-1153 TLOAD/TSTORE |
 
-## Token Standards
+## Token standards
 
-Full implementations of ERC token standards:
+Full and partial implementations of ERC token standards:
 
-| Example | Standard |
-|---------|----------|
-| `tokens/erc20.edge` | ERC-20 with `trait` hooks, `mod`/`use` imports, `_mint`/`_burn`/`_transfer` |
-| `tokens/erc721.edge` | ERC-721 with `IERC721Receiver` callback and `abi`/`trait`/`impl` |
-| `tokens/erc4626.edge` | ERC-4626 tokenized vault with multi-module composition |
-| `tokens/weth.edge` | Wrapped ETH demonstrating `@caller()`, `@callvalue()` builtins |
+| File | Standard |
+|------|----------|
+| `examples/tokens/erc20.edge` | ERC-20 airdrop contract with `mod`/`use` imports |
+| `examples/tokens/erc721.edge` | ERC-721 NFT collection with stdlib trait usage |
+| `examples/tokens/erc4626.edge` | ERC-4626 tokenized vault with multi-module composition |
+| `std/tokens/erc20.edge` | Full ERC-20 reference implementation (solmate pattern) |
+| `std/tokens/erc721.edge` | ERC-721 base contract with `abi`/`trait` definitions |
+| `std/tokens/erc1155.edge` | ERC-1155 multi-token standard |
+| `std/tokens/weth.edge` | Wrapped ETH with `@caller()`, `@callvalue()` builtins |
 
-## Library Primitives
+## Library primitives
 
 Foundational modules imported by other examples:
 
-| Example | Purpose |
-|---------|---------|
-| `lib/math.edge` | WAD/RAY fixed-point math, safe arithmetic |
-| `lib/auth.edge` | Ownership traits (`IOwned`, `IAuth`) and contracts (`Owned`, `Auth`) |
-| `lib/safe_transfer.edge` | Safe ERC-20 and ETH transfer helpers |
+| File | Purpose |
+|------|---------|
+| `std/math.edge` | WAD/RAY fixed-point math, safe arithmetic |
+| `std/auth.edge` | Ownership traits (`IOwned`, `IAuth`) and contracts (`Owned`, `Auth`) |
+| `std/tokens/safe_transfer.edge` | Safe ERC-20 and ETH transfer helpers |
 
-## Utility Libraries
+## Utility libraries
 
 Stateless utility functions:
 
-| Example | Purpose |
-|---------|---------|
-| `utils/merkle.edge` | Merkle proof verification with fixed arrays and bitwise ops |
-| `utils/bits.edge` | Bit manipulation: popcount, leading/trailing zeros |
-| `utils/bytes.edge` | Bytes32 utilities: address extraction, packing, masking |
+| File | Purpose |
+|------|---------|
+| `std/utils/merkle.edge` | Merkle proof verification with fixed arrays and bitwise ops |
+| `std/utils/bits.edge` | Bit manipulation: popcount, leading/trailing zeros |
+| `std/utils/bytes.edge` | Bytes32 utilities: address extraction, packing, masking |
 
-## Access Control
+## Access control
 
-| Example | Pattern |
-|---------|---------|
-| `access/ownable.edge` | Single-owner with 2-step transfer, `trait`/`impl` |
-| `access/roles.edge` | Role-based access control with nested `map<addr, map<b32, bool>>` |
-| `access/pausable.edge` | Pausable pattern with `bool` state machine |
+| File | Pattern |
+|------|---------|
+| `std/access/ownable.edge` | Single-owner with 2-step transfer, `trait`/`impl` |
+| `std/access/roles.edge` | Role-based access control with nested `map<b32, map<addr, bool>>` |
+| `std/access/pausable.edge` | Pausable pattern with `bool` state machine |
 
 ## Finance / DeFi
 
-| Example | Pattern |
-|---------|---------|
-| `finance/amm.edge` | Constant product AMM (x * y = k) |
-| `finance/staking.edge` | ERC-20 staking with per-second rewards |
-| `finance/multisig.edge` | N-of-M multisig with sum types and `match` |
+| File | Pattern |
+|------|---------|
+| `std/finance/amm.edge` | Constant product AMM (x · y = k) |
+| `std/finance/staking.edge` | ERC-20 staking with per-second rewards |
+| `std/finance/multisig.edge` | N-of-M multisig with sum types and `match` |
 
-## Design Patterns
+## Design patterns
 
-| Example | Pattern |
-|---------|---------|
-| `patterns/reentrancy_guard.edge` | Reentrancy protection with `&s`/`&t` and `comptime if @hardFork()` |
-| `patterns/timelock.edge` | Time-locked operations with sum types carrying data |
-| `patterns/factory.edge` | CREATE2 deterministic deployment factory |
+| File | Pattern |
+|------|---------|
+| `std/patterns/reentrancy_guard.edge` | Reentrancy protection with `&t` transient storage |
+| `std/patterns/timelock.edge` | Time-locked operations with sum types carrying data |
+| `std/patterns/factory.edge` | CREATE2 deterministic deployment factory |
 
-## Type System Deep Dives
+## Type system deep dives
 
 Dedicated examples for each major type system feature:
 
-| Example | Feature |
-|---------|---------|
-| `types/structs.edge` | Product types: structs, packed structs, tuples, generic structs |
-| `types/enums.edge` | Sum types: enums, unions with data, `Option<T>`, `Result<T>` |
-| `types/generics.edge` | Generics, trait constraints, monomorphization |
-| `types/arrays.edge` | Fixed arrays, packed arrays, slices, iteration |
-| `types/comptime.edge` | Compile-time evaluation: `const`, `comptime fn`, `@hardFork()`, `@bitsize()` |
+| File | Feature |
+|------|---------|
+| `examples/types/structs.edge` | Product types: structs, packed structs, tuples, generic structs |
+| `examples/types/enums.edge` | Sum types: enums, unions with data, `Option<T>`, `Result<T>` |
+| `examples/types/generics.edge` | Generics, trait constraints, monomorphization |
+| `examples/types/arrays.edge` | Fixed arrays, packed arrays, slices, iteration |
+| `examples/types/comptime.edge` | Compile-time evaluation: `const`, `comptime fn` |

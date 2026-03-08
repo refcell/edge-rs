@@ -14,6 +14,12 @@ be accessed directly by their identifier with no other annotations.
 
 Files are implicitly modules.
 
+:::warning
+The examples below use `mod`, `pub use`, and path syntax (`super::moduleA::TypeA`)
+to illustrate scoping concepts. These features are **planned but not yet
+implemented** in the parser — see [Modules](/specs/syntax/modules) for details.
+:::
+
 ```edge
 mod moduleA {
     // `TypeA` declared.
@@ -89,7 +95,7 @@ impl MyStruct<T: Add>: TryPlusOne {
 
 ## Function
 
-The function scope implicitly import items from parent scopes up to
+The function scope implicitly imports items from parent scopes up to
 the parent module. Items may be explicitly declared or imported from
 external modules.
 
@@ -119,5 +125,27 @@ fn func() -> u8 {
 
 Code blocks, branch blocks, loop blocks, and match blocks
 implicitly import items from the parent scopes up until the
-parent module. Items may be imported from external module
+parent module. Items may be imported from external modules
 explicitly and items may be defined in each.
+
+## IR lowering and name uniqueness
+
+When source code is lowered to the Edge IR, all scoped names are resolved to
+unique flat strings. The IR uses plain string identifiers for all `LetBind`
+variables, `Function` definitions, and `Call` targets — there is no nested
+scope structure in the IR.
+
+The frontend lowering pass is responsible for:
+
+- Resolving module paths (`super::moduleA::TypeA`) to their canonical names.
+- Ensuring local variables declared in different scopes (or after function
+  inlining) have unique names by appending suffixes as needed.
+- Lowering inner functions (e.g., `fn innerFunc()` declared inside `fn func()`)
+  to top-level named `Function` nodes in the IR.
+
+At optimization level O1+, the inliner renames all local variables in inlined
+function bodies (appending a unique suffix like `_s0`) to prevent collisions
+with variables at the call site.
+
+See [Visibility](/specs/semantics/visibility) for how `pub`, `pub ext`, and
+`pub mut` interact with scope boundaries and EVM dispatch.
