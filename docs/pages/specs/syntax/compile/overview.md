@@ -1,13 +1,13 @@
 ---
-title: Compile Time
+title: Compile time
 ---
 
-# Compile Time
+# Compile time
 
-Compile time, also referred to as comptime, is an expression, function,
-branch, or macro, that may be resolved during compilation. Comptime
-expressions and functions resolve to constant values at compile time,
-while comptime branches provide conditional compilation.
+Compile time, also referred to as comptime, covers expressions, functions,
+and branches that are resolved during compilation. Comptime expressions and
+functions resolve to constant values at compile time, while comptime branches
+provide conditional compilation.
 
 * [Literals](/specs/syntax/compile/literals)
 * [Constants](/specs/syntax/compile/constants)

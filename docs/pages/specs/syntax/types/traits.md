@@ -1,8 +1,8 @@
 ---
-title: Trait Constraints
+title: Trait constraints
 ---
 
-# Trait Constraints
+# Trait constraints
 
 Traits are interface-like declarations that constrain generic types to
 implement specific methods or contain specific properties.
@@ -11,13 +11,13 @@ implement specific methods or contain specific properties.
 
 ```text
 <trait_declaration> ::=
-    ["pub"] "trait" <ident> [<type_parameters>] [<trait_constraints>] "{"
+    ["pub"] "trait" <identifier> [<type_parameters>] [":" <identifier> ("+" <identifier>)*] "{"
     (
-        | <type_declaration>
-        | <type_assignment>
-        | <constant_declaration>
-        | <constant_assignment>
-        | <function_declaration>
+        | <type_declaration> ";"
+        | <type_assignment> ";"
+        | <constant_declaration> ";"
+        | <constant_assignment> ";"
+        | <function_declaration> ";"
         | <function_assignment>
     )*
     "}" ;
@@ -25,7 +25,7 @@ implement specific methods or contain specific properties.
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 * `<type_parameters>`
 * `<type_declaration>`
 * `<type_assignment>`
@@ -34,44 +34,50 @@ Dependencies:
 * `<function_declaration>`
 * `<function_assignment>`
 
-The `<trait_declaration>` is a declaration of a set of associated
-types, constants, and functions that may itself take type parameters
-and may be constrained to a super type. Semantics of the declaration
-are listed under trait solving rules.
+The `<trait_declaration>` maps to `TraitDecl` in the AST. It contains a name,
+optional type parameters, optional supertraits, and a body of trait items.
+The `is_pub` flag tracks visibility.
 
-## Constraints
+Each body item maps to a `TraitItem` variant:
+
+| Syntax | AST variant |
+|---|---|
+| `type Name;` | `TraitItem::TypeDecl` |
+| `type Name = T;` | `TraitItem::TypeAssign` |
+| `const NAME: T;` | `TraitItem::ConstDecl` |
+| `const NAME: T = expr;` | `TraitItem::ConstAssign` |
+| `fn name(...) -> T;` | `TraitItem::FnDecl` |
+| `fn name(...) -> T { ... }` | `TraitItem::FnAssign` |
+
+## Supertrait constraints
 
 ```text
-<trait_constraints> ::= ":" <ident> ("&" <ident>)* ;
+<supertrait_constraints> ::= ":" <identifier> ("+" <identifier>)* ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 
-The `<trait_constraints>` contains a colon followed by an
-ampersand separated list of identifiers of implemented traits.
-The ampersand is meant to indicate that all of the trait
-identifiers are implemented for the type.
+Supertraits are separated by `+`, indicating that all listed traits must be
+implemented. This matches the `+` separator used for type parameter bounds
+(e.g. `fn f<T: Bar + Baz>()`).
+
+Supertraits are stored as `supertraits: Vec<Ident>` in `TraitDecl`.
 
 ## Semantics
 
-Traits can be defined with associated types, constants,
-and functions. The trait declaration itself allows for
-optional assignment for each item as a default. Any
-declarations in the trait that are not assigned in the
-trait declaration must be assigned in the implementation
-of the trait for the data type. Additionally, any assignments
-in the trait declaration can be overridden in the trait
-implementation.
+Traits can be defined with associated types, constants, and functions. The
+trait declaration allows optional assignment for each item as a default.
+Declarations without a default assignment must be provided in the
+implementation. Default assignments can be overridden in trait
+implementations.
 
-While types can depend on trait constraints, traits can
-also depend on other trait constraints. These assert that
-types that implement a given trait also implement its
-"super traits".
+Types can depend on trait constraints, and traits can also depend on other
+traits (supertraits). Supertraits assert that types implementing a given
+trait also implement all of its parent traits.
 
-## Solving
-
-:::note
-Todo: trait-solving semantics are still being drafted.
+:::warning
+Trait-solving semantics are still being drafted. The compiler does not yet
+validate trait implementations or enforce supertrait constraints.
 :::

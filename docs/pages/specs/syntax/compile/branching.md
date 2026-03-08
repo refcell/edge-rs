@@ -1,39 +1,28 @@
 ---
-title: Compile Time Branching
+title: Compile-time branching
 ---
 
-# Compile Time Branching
+# Compile-time branching
 
 ```text
-<comptime_branch> ::=
-    "comptime" (
-        | <if_else_if_branch>
-        | <if_match>
-        | <match>
-        | <ternary>
-    ) ;
+<comptime_branch> ::= "comptime" <stmt> ;
 ```
 
 Dependencies:
 
-* `<if_else_if_branch>`
-* `<if_match>`
-* `<match>`
-* `<ternary>`
+* `<stmt>`
 
-The `<comptime_branch>` is a branch that is evaluated at compile
-time where only the truthy branch is compiled. It is defined as
-the "comptime" keyword followed by any of the branches.
+The `<comptime_branch>` produces `Stmt::ComptimeBranch(Box<Stmt>)`. The
+`comptime` keyword may precede any statement, but meaningful conditional
+compilation only occurs with branching statements (`if`, `if matches`,
+`match`).
 
 ## Semantics
 
-Since comptime must be resolved at compile time, the branching
-expression must be resolvable at compile time and of type bool.
-That is to say the expression must itself be a literal, constant,
-or another expression resolvable at compile time.
-
-In the case of compile time branching, branches that are not
-matched will be removed from the code at compile time.
+Since comptime must be resolved at compile time, the branching expression
+must itself be a literal, constant, or expression resolvable at compile
+time. Branches that are not matched will be removed from the compiled
+output.
 
 ```edge
 use std::{
@@ -41,34 +30,20 @@ use std::{
     op::{tstore, tload, sstore, sload},
 };
 
-const LOCK_SLOT: u256 = keccak256("mutex").into() - 1;
+const SLOT: u256 = 0;
 
-enum Lock {
-    Locked,
-    Unlocked,
-}
-
-fn reader() -> (u256 -> u256) {
-    match @hardFork() {
-        HardFork::Cancun => tload,
-        _ => sload,
+fn store(value: u256) {
+    comptime if (@hardFork() == HardFork::Cancun) {
+        tstore(SLOT, value);
+    } else {
+        sstore(SLOT, value);
     }
 }
 
-fn writer() -> ((u256, u256) -> ()) {
-    match @hardFork() {
-        HardFork::Cancun => tstore,
-        _ => sstore,
+fn load() -> u256 {
+    comptime match @hardFork() {
+        HardFork::Cancun => tload(SLOT),
+        _ => sload(SLOT),
     }
-}
-
-fn nonreentrant(action: T -> U) {
-    if reader()(LOCK_SLOT) matches Lock::Locked {
-        revert();
-    }
-    writer()(LOCK_SLOT, Lock::Locked);
-    let res = action();
-    writer()(LOCK_SLOT, Lock::Unlocked);
-    return res;
 }
 ```

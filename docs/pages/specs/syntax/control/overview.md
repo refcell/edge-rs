@@ -1,11 +1,11 @@
 ---
-title: Control Flow
+title: Control flow
 ---
 
-# Control Flow
+# Control flow
 
-Control flow is composed of loops, branches, and pattern matching.
+Control flow is composed of code blocks, loops, branches, and pattern matching.
 
+* [Code blocks](/specs/syntax/control/code)
 * [Loops](/specs/syntax/control/loops)
-* [Code Block](/specs/syntax/control/code)
 * [Branching](/specs/syntax/control/branching)

@@ -1,61 +1,78 @@
 ---
-title: Built-In
+title: Built-in
 ---
 
-# Built-In
+# Built-in
 
-Built-in functionality refers to functionality that is only available
-during the compiler runtime and not the EVM runtime that is otherwise
-inaccessible through the language's syntax.
+Built-in functionality refers to features available during compilation that
+are otherwise inaccessible through the language's regular syntax.
 
-Macros contain their own syntax and semantics, however, comptime
-functionality and built-in assistants cover most of the use cases for
-macros without leaving the language's native syntax.
+The parser accepts any `@identifier` form without validation; unknown builtin
+names are caught during IR lowering (semantic analysis), not parsing.
 
-## Types
+## EVM environment builtins
 
-### PrimitiveType
+These builtins read EVM execution context values. Each compiles to a single
+`EnvRead` IR node and a corresponding EVM opcode:
+
+| Builtin | EVM opcode | Returns |
+|---------|------------|---------|
+| `@caller` | `CALLER` | Address of the direct caller |
+| `@callvalue` | `CALLVALUE` | Wei sent with the call |
+| `@value` | `CALLVALUE` | Alias for `@callvalue` |
+| `@calldatasize` | `CALLDATASIZE` | Size of calldata in bytes |
+| `@origin` | `ORIGIN` | Transaction originator address |
+| `@gasprice` | `GASPRICE` | Gas price of the transaction |
+| `@coinbase` | `COINBASE` | Current block's beneficiary address |
+| `@timestamp` | `TIMESTAMP` | Current block's timestamp |
+| `@number` | `NUMBER` | Current block number |
+| `@gaslimit` | `GASLIMIT` | Current block's gas limit |
+| `@chainid` | `CHAINID` | Chain ID (EIP-155) |
+| `@selfbalance` | `SELFBALANCE` | Balance of the executing contract |
+| `@basefee` | `BASEFEE` | Current block's base fee (EIP-1559) |
+| `@gas` | `GAS` | Remaining gas |
+| `@address` | `ADDRESS` | Address of the executing contract |
+| `@codesize` | `CODESIZE` | Size of the executing contract's code |
+| `@returndatasize` | `RETURNDATASIZE` | Size of the last call's return data |
+
+All EVM environment builtins are zero-argument. Parentheses are optional:
+both `@caller` and `@caller()` are valid. Arguments passed to them are
+currently ignored.
+
+```edge
+fn checkCaller() {
+    if @caller == 0x0000000000000000000000000000000000000000 {
+        revert();
+    }
+}
+```
+
+## Comptime builtins
+
+These builtins execute at compile time and are used for type introspection,
+compile-time assertions, and code generation.
+
+### Types
 
 ```edge
 type PrimitiveType;
-```
-
-### StructType
-
-```edge
 type StructType;
-```
-
-### EnumType
-
-```edge
-type EnumType;
-```
-
-### UnionType
-
-```edge
 type UnionType;
-```
-
-### FunctionType
-
-```edge
 type FunctionType;
-```
 
-### TypeInfo
-
-```edge
 type TypeInfo =
     | Primitive(PrimitiveType)
     | Struct(StructType)
-    | Enum(EnumType)
     | Union(UnionType)
     | Function(FunctionType);
 ```
 
-### HardFork
+:::note
+`TypeInfo` does not include an `Enum` variant. In Edge, enums are a subset of
+union types (unions where no variant carries data). They are represented as
+`Union(UnionType)` in the type system — there is no distinct enum concept at the
+AST or IR level.
+:::
 
 ```edge
 type HardFork =
@@ -80,50 +97,57 @@ type HardFork =
 
 ### Functions
 
+#### `@typeInfo`
+
 ```edge
-@typeInfo
 @typeInfo(typeSignature) -> TypeInfo;
 ```
 
-The typeInfo function takes a single `<type_signature>` as an argument and returns
-a union of types, TypeInfo.
+Takes a single type signature as an argument and returns a `TypeInfo` union
+describing the kind of the type.
+
+#### `@bitsize`
 
 ```edge
-@bitsize
 @bitsize(typeSignature) -> u256;
 ```
 
-The bitsize function takes a single `<type_signature>` as an argument and returns
-an integer indicating the bitsize of the underlying type.
+Takes a single type signature as an argument and returns the bitsize of the
+underlying type.
+
+#### `@fields`
 
 ```edge
-@fields
 @fields(structType) -> [T, N];
 ```
 
-The fields function takes a single StructType as an argument and returns an array
-of type signatures of length N where N is the number of fields in the struct.
+Takes a single `StructType` as an argument and returns an array of type
+signatures of length N, where N is the number of fields in the struct.
+
+#### `@compilerError`
 
 ```edge
-@compilerError
 @compilerError(errorMessage);
 ```
 
-The compilerError function takes a single string as an argument and throws an
-error at compile time with the provided message.
+Emits a compile-time error with the provided message. Useful in `comptime`
+branches to enforce invariants.
+
+#### `@hardFork`
 
 ```edge
-@hardFork
 @hardFork() -> HardFork;
 ```
 
-The hardFork function returns an enumeration of the built in HardFork type.
-This is derived from the compiler configuration.
+Returns the target hard fork from the compiler configuration as a `HardFork`
+union value.
+
+#### `@bytecode`
 
 ```edge
-@bytecode
 @bytecode(T -> U) -> Bytes;
 ```
 
-The bytecode function takes an arbitrary function and returns its bytecode
-in Bytes.
+Takes an arbitrary function and returns its compiled bytecode as a `Bytes`
+value. `Bytes` is an opaque compiler-internal type representing a sequence of
+raw bytes; it is not a user-definable Edge type.
