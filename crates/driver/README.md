@@ -20,10 +20,10 @@ source -> lexer -> parser -> AST -> typeck -> IR -> codegen -> driver -> bytecod
 ## Key Types
 
 - **`Compiler`** -- Main entry point; constructed with a `CompilerConfig`, drives `compile()`
-- **`CompileOutput`** -- Holds optional tokens, AST, or bytecode depending on emit mode
+- **`CompileOutput`** -- Holds optional tokens, AST, ABI, or bytecode depending on emit mode
 - **`CompileError`** -- Covers I/O, lex, parse, type-check, IR lowering, and codegen failures
 - **`CompilerConfig`** -- Input file path, output path, emit kind, optimization level, verbose flag
-- **`EmitKind`** -- What the compiler should produce: `Tokens`, `Ast`, or `Bytecode`
+- **`EmitKind`** -- What the compiler should produce: `Tokens`, `Ast`, `Abi`, or `Bytecode`
 - **`Session`** -- Per-compilation state: config, source text, and accumulated diagnostics
 
 ## Usage
@@ -38,6 +38,10 @@ let output = compiler.compile().unwrap();
 
 if let Some(bytecode) = output.bytecode {
     println!("0x{}", hex::encode(&bytecode));
+}
+
+if let Some(abi) = &output.abi {
+    println!("{}", serde_json::to_string_pretty(abi).unwrap());
 }
 ```
 
