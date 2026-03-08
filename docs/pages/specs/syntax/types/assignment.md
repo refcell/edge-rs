@@ -1,61 +1,76 @@
 ---
-title: Type Assignment
+title: Type assignment
 ---
 
-# Type Assignment
+# Type assignment
 
 ## Signature
 
 ```text
 <type_signature> ::=
+    | <primitive_data_type>
     | <array_signature>
     | <struct_signature>
     | <tuple_signature>
     | <union_signature>
     | <function_signature>
-    | <ident>
-    | (<ident> [<type_parameters>]) ;
+    | <event_signature>
+    | <pointer_signature>
+    | <identifier>
+    | <identifier> "<" <type_signature> ("," <type_signature>)* ">" ;
+
+<pointer_signature> ::= <data_location> <type_signature> ;
 ```
 
 Dependencies:
 
+* `<primitive_data_type>`
 * `<array_signature>`
 * `<struct_signature>`
 * `<tuple_signature>`
 * `<union_signature>`
 * `<function_signature>`
-* `<ident>`
-* `<type_parameters>`
+* `<event_signature>`
+* `<data_location>`
+* `<identifier>`
 
-Type assignments assign identifiers to type signatures. It may have a struct, tuple, union,
-or function signature as well as an identifier followed by optional type parameters.
+The `<type_signature>` enumerates every form a type can take. It maps
+directly to the `TypeSig` enum in the AST. A bare `<identifier>` produces
+`TypeSig::Named(ident, [])`, while an identifier with angle-bracketed type
+arguments produces `TypeSig::Named(ident, args)`.
+
+The `<pointer_signature>` wraps any type with a data location annotation,
+producing `TypeSig::Pointer(location, inner)`.
 
 ## Declaration
 
 ```text
-<type_declaration> ::= ["pub"] "type" <ident> [<type_parameters>]
+<type_declaration> ::= ["pub"] "type" <identifier> [<type_parameters>] ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 * `<type_parameters>`
 
-The `<type_declaration>` is prefixed with "type" and contains an identifier with optional type parameters.
+The `<type_declaration>` maps to `TypeDecl` in the AST. It contains a name,
+optional type parameters, and a `is_pub` flag.
 
 ## Assignment
 
 ```text
-<type_assignment> ::= <type_declaration> "=" <type_signature> ;
+<type_assignment> ::= <type_declaration> "=" (<type_signature> | <union_signature>) ";" ;
 ```
 
-The `<type_assignment>` is a type declaration followed by a type signature separated by an assignment operator.
+The `<type_assignment>` binds a type declaration to a type signature.
+When the right-hand side is a `<union_signature>`, the parser uses
+`parse_type_sig_or_union()` to accept pipe-separated union variants.
 
 ## Semantics
 
-Type assignment entails creating an identifier associated with a certain data structure or existing type.
-If the assignment is to an existing data type, it contains the same fields or members, if any, and exposes the
-same associated items, if any.
+Type assignment creates an identifier associated with a data structure or
+existing type. If the assignment targets an existing type, the alias shares
+the same fields, members, and associated items.
 
 ```edge
 type MyCustomType = packed (u8, u8, u8);
@@ -69,8 +84,9 @@ increment(MyCustomType(1, 2, 3));
 increment(MyCustomAlias(1, 2, 3));
 ```
 
-A way to create a wrapper around an existing type without exposing the existing type's external interface,
-the type may be wrapped in parenthesis, creating a "tuple" of one element, which comes without overhead.
+To create a wrapper around an existing type without exposing its external
+interface, the type may be wrapped in parentheses, creating a single-element
+tuple with no overhead:
 
 ```edge
 type MyCustomType = packed (u8, u8, u8);

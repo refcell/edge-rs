@@ -1,8 +1,8 @@
 ---
-title: Compile Time Functions
+title: Compile-time functions
 ---
 
-# Compile Time Functions
+# Compile-time functions
 
 ```text
 <comptime_function> ::= "comptime" <function_assignment> ;
@@ -12,13 +12,18 @@ Dependencies:
 
 * `<function_assignment>`
 
-The `<comptime_function>` is a function that is evaluated at
-compile time. It is defined as the "comptime" keyword followed
-by a `<function_assignment>`.
+The `<comptime_function>` produces `Stmt::ComptimeFn(FnDecl, CodeBlock)`,
+which is distinct from `Stmt::FnAssign`. This distinction affects how later
+compiler phases evaluate and inline the function.
+
+## Scope restrictions
+
+`comptime fn` is only valid at module/top-level scope. It cannot appear
+inside `contract`, `impl`, or `trait` bodies.
 
 ## Semantics
 
-Since comptime must be resolved at compile time, the function
+Since comptime functions must be resolved at compile time, the function body
 must contain only expressions resolvable at compile time.
 
 ```edge

@@ -1,73 +1,86 @@
 ---
-title: Sum Types
+title: Sum types
 ---
 
-# Sum Types
+# Sum types
 
-The sum type is a union of multiple types where the data type represents
-one of the inner types.
+The sum type is a union of multiple types where the value represents
+exactly one of the inner variants.
 
 ## Signature
 
 ```text
-<union_member_signature> ::= <ident> ["(" <type_signature> ")"] ;
+<union_member_signature> ::= <identifier> ["(" <type_signature> ")"] ;
 <union_signature> ::= ["|"] <union_member_signature> ("|" <union_member_signature>)* ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 * `<type_signature>`
 
-The `<union_declaration>` is a declaration of a sum type, or data structure
-that contains one of its internally declared members. Each `<union_member>`
-is named by an identifier, optionally followed by a number of comma separated
-types delimited by parenthesis.
+The `<union_signature>` declares a sum type — a data structure that holds
+one of its declared members. Each `<union_member_signature>` is named by an
+identifier, optionally followed by exactly one payload type in parentheses.
+A leading `|` is permitted for formatting convenience.
+
+Each member maps to `UnionMember { name, inner: Option<TypeSig> }` in the AST.
+The overall signature maps to `TypeSig::Union(Vec<UnionMember>)`.
 
 ## Instantiation
 
 ```text
-<union_instantiation> ::= <ident> "::" <ident> "(" [<expr> ("," <expr>)* [","]] ")" ;
+<union_instantiation> ::= <identifier> "::" <identifier> "(" [<expression> ("," <expression>)* [","]] ")" ;
 ```
 
 Dependencies:
 
-* `<ident>`
-* `<expr>`
+* `<identifier>`
+* `<expression>`
 
-The `<union_instantiation>` instantiates, or creates, the sum type. This
-consists of the union's identifier, followed by the member's identifier,
-followed by an optional comma separated list of expressions.
+The `<union_instantiation>` creates a union value. It consists of the union
+type name, `::`, the variant name, and arguments in parentheses. This produces
+`Expr::UnionInstantiation(type_name, variant_name, args, span)`.
 
-Behavior of instantiation is defined in the data location rule.
+:::note
+Although each variant carries at most one type in its signature, the
+instantiation syntax accepts multiple comma-separated expressions. For
+variants with a tuple payload, these expressions correspond to the tuple
+elements.
+:::
 
-## Union Pattern
+## Union pattern
 
 ```text
-<union_pattern> ::= <ident> "::" <ident> ["(" <ident> ("," <ident>)* [","] ")"];
+<union_pattern> ::= <identifier> "::" <identifier> ["(" <identifier> ("," <identifier>)* [","] ")"] ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<identifier>`
 
-The `<union_pattern>` is a pattern consisting of the union's name and
-a member's name separated by a double colon.
+The `<union_pattern>` matches a specific variant by type name and member name,
+optionally binding payload values to identifiers. It maps to
+`UnionPattern { union_name, member_name, bindings }` in the AST.
 
-## Pattern Match
+## Pattern match expression
 
 ```text
-<pattern_match> ::= <ident> "matches" <union_pattern> ;
+<pattern_match> ::= <expression> "matches" <union_pattern> ;
 ```
 
 Dependencies:
 
-* `<ident>`
+* `<expression>`
+* `<union_pattern>`
+
+The `matches` keyword produces `Expr::PatternMatch(expr, pattern, span)` and
+can be used anywhere an expression is valid.
 
 ## Semantics
 
-All unions have a Unions where no member has its own internal type is
-effectively an enumeration over integers.
+A union where no member has an internal type is effectively an enumeration
+over integers:
 
 ```edge
 type Mutex = Locked | Unlocked;
@@ -77,10 +90,7 @@ type Mutex = Locked | Unlocked;
 ```
 
 Unions where any members have an internal type become proper type unions.
-The only case in which a union can exist on the stack rather than another
-data location is if the largest of the internal types has a bitsize of 248
-or less. If any member's internal type is greater than 248, a data location
-must be specified.
+Each variant may carry **at most one** payload type:
 
 ```edge
 type StackUnion = A(u8) | B(u248);
@@ -88,9 +98,16 @@ type StackUnion = A(u8) | B(u248);
 type MemoryUnion = A(u256) | B | C(u8);
 ```
 
-A union pattern consists of its identifier and the member identifier
-separated by colons. This pattern may be used both in match statements
-and if statements.
+:::note
+Data-carrying variants are heap-allocated: the discriminant is stored at the
+base memory address and the single payload is stored at `base + 32`. The union
+value for a data-carrying variant is the base memory pointer, not an inline
+integer. Unit variants (no payload) are represented as an inline integer
+discriminant.
+:::
+
+A union pattern consists of the type name and the member name separated by
+`::`. This pattern may be used in both `match` statements and `if` conditions:
 
 ```edge
 type Option<T> = None | Some(T);
