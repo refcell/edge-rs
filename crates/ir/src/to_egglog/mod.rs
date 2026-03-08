@@ -109,11 +109,12 @@ impl Scope {
     }
 }
 
-/// A contract function: (name, params, body).
+/// A contract function: (name, params, returns, body).
 pub(crate) type ContractFunction = (
-    String,
-    Vec<(String, edge_ast::ty::TypeSig)>,
-    edge_ast::CodeBlock,
+    String,                               // name
+    Vec<(String, edge_ast::ty::TypeSig)>, // params
+    Vec<edge_ast::ty::TypeSig>,           // returns
+    edge_ast::CodeBlock,                  // body
 );
 
 /// A free/comptime function with metadata.
@@ -900,8 +901,12 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                self.contract_functions
-                    .push((fn_decl.name.name.clone(), params, body.clone()));
+                self.contract_functions.push((
+                    fn_decl.name.name.clone(),
+                    params,
+                    fn_decl.returns.clone(),
+                    body.clone(),
+                ));
             }
         }
 

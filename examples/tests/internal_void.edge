@@ -1,0 +1,11 @@
+contract VoidTest {
+    let value: &s u256;
+
+    pub fn set_value(x: u256) {
+        value = x;
+    }
+
+    pub fn get_value() -> (u256) {
+        return value;
+    }
+}

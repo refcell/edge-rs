@@ -111,13 +111,13 @@ impl AstToEgglog {
         }
 
         // Check contract functions — emit Call (not inline)
-        if let Some((name, params, _body)) = self
+        if let Some((name, params, returns, _body)) = self
             .contract_functions
             .iter()
-            .find(|(name, _, _)| *name == fn_name)
+            .find(|(name, _, _, _)| *name == fn_name)
             .cloned()
         {
-            return self.emit_call(&name, &params, args);
+            return self.emit_call(&name, &params, &returns, args);
         }
 
         // Check non-comptime free functions — emit Call (not inline)
@@ -127,7 +127,7 @@ impl AstToEgglog {
             .find(|f| f.name == fn_name && !f.is_comptime)
             .cloned()
         {
-            return self.emit_call(&info.name, &info.params, args);
+            return self.emit_call(&info.name, &info.params, &info.returns, args);
         }
 
         // Check generic function templates
@@ -619,6 +619,7 @@ impl AstToEgglog {
         &mut self,
         name: &str,
         params: &[(String, edge_ast::ty::TypeSig)],
+        returns: &[edge_ast::ty::TypeSig],
         args: &[edge_ast::Expr],
     ) -> Result<RcExpr, IrError> {
         let args_ir: Vec<RcExpr> = args
@@ -632,7 +633,7 @@ impl AstToEgglog {
             .iter()
             .any(|f| matches!(f.as_ref(), EvmExpr::Function(n, _, _, _) if n == name))
         {
-            self.lower_internal_function_body(name, params)?;
+            self.lower_internal_function_body(name, params, returns)?;
         }
 
         Ok(ast_helpers::call(name.to_string(), args_ir))

@@ -1,0 +1,9 @@
+contract MathTest {
+    fn double(x: u256) -> (u256) {
+        return x * 2;
+    }
+
+    pub fn get_double(x: u256) -> (u256) {
+        return double(x);
+    }
+}

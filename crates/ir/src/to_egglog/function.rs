@@ -441,6 +441,7 @@ impl AstToEgglog {
         &mut self,
         name: &str,
         params: &[(String, edge_ast::ty::TypeSig)],
+        returns: &[edge_ast::ty::TypeSig],
     ) -> Result<(), IrError> {
         let saved_ctx = self.current_ctx.clone();
         let saved_state = Rc::clone(&self.current_state);
@@ -465,7 +466,7 @@ impl AstToEgglog {
                 })
                 .collect::<Vec<_>>(),
         );
-        let out_ty = EvmType::Base(EvmBaseType::UIntT(256)); // TODO: derive from return type
+        let out_ty = self.returns_to_type(returns);
 
         // Bind parameters via Arg/Get
         self.scopes.push(Scope::new());
@@ -499,8 +500,8 @@ impl AstToEgglog {
         let body = self
             .contract_functions
             .iter()
-            .find(|(n, _, _)| n == name)
-            .map(|(_, _, b)| b.clone())
+            .find(|(n, _, _, _)| n == name)
+            .map(|(_, _, _, b)| b.clone())
             .or_else(|| {
                 self.free_fn_bodies
                     .iter()
