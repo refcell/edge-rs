@@ -17,6 +17,8 @@ pub enum EmitKind {
     PrettyIr,
     /// Emit post-optimization assembly (disassembly with labeled blocks)
     Asm,
+    /// Emit Ethereum-compatible ABI JSON
+    Abi,
     /// Emit EVM bytecode (default)
     #[default]
     Bytecode,

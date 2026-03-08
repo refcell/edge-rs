@@ -43,6 +43,15 @@ edgec parse examples/counter.edge
 edgec check examples/counter.edge
 ```
 
+## ABI Output
+
+Passing `--emit abi` prints the contract ABI as JSON to stdout, compatible with the Ethereum ABI specification. This is useful for generating interface files consumed by frontends, deployment scripts, and other tooling.
+
+```sh
+edgec --emit abi examples/counter.edge
+# [{"type":"function","name":"increment","inputs":[],"outputs":[],"stateMutability":"view"}, ...]
+```
+
 ## Explore the Reference Programs
 
 The repository includes a growing set of example contracts under

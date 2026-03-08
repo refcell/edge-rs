@@ -80,6 +80,10 @@ edgec parse examples/counter.edge
 
 # Type-check only (no codegen)
 edgec check examples/counter.edge
+
+# Print the contract ABI as JSON
+edgec --emit abi examples/counter.edge
+# [{"type":"function","name":"increment","inputs":[],"outputs":[],"stateMutability":"view"}, ...]
 ```
 
 ### Example: counter contract

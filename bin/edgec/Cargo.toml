@@ -17,6 +17,7 @@ clap = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+serde_json = { workspace = true }
 edge-codegen = { workspace = true }
 edge-driver = { workspace = true }
 edge-ir = { workspace = true }

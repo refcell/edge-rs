@@ -45,6 +45,8 @@ pub struct FnInfo {
     pub returns: Vec<TypeSig>,
     /// Whether the function is public (callable externally)
     pub is_pub: bool,
+    /// Whether the function mutates state
+    pub is_mut: bool,
     /// Function body (None for ABI-only declarations)
     pub body: Option<edge_ast::stmt::CodeBlock>,
 }
@@ -67,6 +69,8 @@ pub struct ContractInfo {
 pub struct CheckedProgram {
     /// All contracts in the program
     pub contracts: Vec<ContractInfo>,
+    /// All event declarations in the program
+    pub events: Vec<edge_ast::item::EventDecl>,
 }
 
 /// The type checker
@@ -82,12 +86,19 @@ impl TypeChecker {
     /// Check a parsed program and return structured type information
     pub fn check(&self, program: &Program) -> Result<CheckedProgram, crate::TypeCheckError> {
         let mut contracts = Vec::new();
+        let mut events = Vec::new();
 
-        // Find all contract declarations in the program
+        // Find all contract declarations and event declarations in the program
         for stmt in &program.stmts {
-            if let Stmt::ContractDecl(contract_decl) = stmt {
-                let contract_info = self.check_contract(contract_decl)?;
-                contracts.push(contract_info);
+            match stmt {
+                Stmt::ContractDecl(contract_decl) => {
+                    let contract_info = self.check_contract(contract_decl)?;
+                    contracts.push(contract_info);
+                }
+                Stmt::EventDecl(event_decl) => {
+                    events.push(event_decl.clone());
+                }
+                _ => {}
             }
         }
 
@@ -101,7 +112,7 @@ impl TypeChecker {
             }
         }
 
-        Ok(CheckedProgram { contracts })
+        Ok(CheckedProgram { contracts, events })
     }
 
     /// Extract top-level functions and synthesize a virtual contract
@@ -130,6 +141,7 @@ impl TypeChecker {
                     params,
                     returns,
                     is_pub: true,
+                    is_mut: fn_decl.is_mut,
                     body: Some(body.clone()),
                 });
             }
@@ -230,6 +242,7 @@ impl TypeChecker {
 
         let body = fn_decl.body.clone();
         let is_pub = fn_decl.is_pub;
+        let is_mut = fn_decl.is_mut;
 
         FnInfo {
             name,
@@ -237,6 +250,7 @@ impl TypeChecker {
             params,
             returns,
             is_pub,
+            is_mut,
             body,
         }
     }
@@ -260,7 +274,7 @@ impl TypeChecker {
     }
 
     /// Convert an Edge type to its ABI type string
-    fn type_to_abi_string(ty: &TypeSig) -> String {
+    pub fn type_to_abi_string(ty: &TypeSig) -> String {
         match ty {
             TypeSig::Primitive(prim) => Self::primitive_to_abi_string(prim),
             TypeSig::Pointer(_loc, inner) => Self::type_to_abi_string(inner),
@@ -325,7 +339,7 @@ impl TypeChecker {
     }
 
     /// Convert a primitive type to its ABI string
-    fn primitive_to_abi_string(prim: &PrimitiveType) -> String {
+    pub fn primitive_to_abi_string(prim: &PrimitiveType) -> String {
         match prim {
             PrimitiveType::UInt(n) => format!("uint{n}"),
             PrimitiveType::Int(n) => format!("int{n}"),

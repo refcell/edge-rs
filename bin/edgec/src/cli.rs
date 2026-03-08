@@ -23,8 +23,8 @@ pub struct Cli {
     #[arg(short, long, requires = "file")]
     pub output: Option<PathBuf>,
 
-    /// What to emit: tokens, ast, ir, pretty-ir, asm, bytecode
-    #[arg(long, value_parser = ["tokens", "ast", "ir", "pretty-ir", "asm", "bytecode"], default_value = "bytecode")]
+    /// What to emit: tokens, ast, ir, pretty-ir, asm, abi, bytecode
+    #[arg(long, value_parser = ["tokens", "ast", "ir", "pretty-ir", "asm", "abi", "bytecode"], default_value = "bytecode")]
     pub emit: String,
 
     /// Optimization level (0-3)
@@ -106,6 +106,7 @@ impl Cli {
             "ir" => EmitKind::Ir,
             "pretty-ir" => EmitKind::PrettyIr,
             "asm" => EmitKind::Asm,
+            "abi" => EmitKind::Abi,
             "bytecode" => EmitKind::Bytecode,
             _ => EmitKind::Bytecode,
         };
@@ -185,6 +186,11 @@ impl Cli {
                             edge_codegen::pretty_asm::pretty_print_asm(asm_out, name)
                         );
                     }
+                }
+            }
+            EmitKind::Abi => {
+                if let Some(ref abi) = result.abi {
+                    println!("{}", serde_json::to_string_pretty(abi).unwrap());
                 }
             }
             EmitKind::Bytecode => {
