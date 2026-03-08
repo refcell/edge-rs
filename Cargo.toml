@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.package]
 description = "Edge Language Compiler Workspace"
-version = "0.1.18"
+version = "0.1.19"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -64,6 +64,7 @@ edge-ir = { path = "crates/ir" }
 edge-codegen = { path = "crates/codegen" }
 edge-driver = { path = "crates/driver" }
 edge-lsp = { path = "crates/lsp" }
+edgeup-lib = { path = "crates/edgeup-lib" }
 anyhow = "1.0.79"
 inquire = "0.6.2"
 tracing = "0.1.40"
