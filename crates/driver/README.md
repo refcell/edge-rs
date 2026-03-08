@@ -1,6 +1,6 @@
 # edge-driver
 
-Compiler driver that orchestrates the full Edge compilation pipeline. Reads source files and runs each phase in sequence: lex, parse, type-check, lower to IR, and emit EVM bytecode.
+Compiler driver that orchestrates the full Edge compilation pipeline. Reads source files and runs each phase in sequence: lex, parse, type-check, lower to IR, and emit EVM bytecode. The `standard_json` module provides a Solidity-compatible standard JSON I/O interface so that build tools like Foundry can drive `edgec` with a single JSON blob on stdin.
 
 ## Pipeline Position
 
@@ -25,6 +25,9 @@ source -> lexer -> parser -> AST -> typeck -> IR -> codegen -> driver -> bytecod
 - **`CompilerConfig`** -- Input file path, output path, emit kind, optimization level, verbose flag
 - **`EmitKind`** -- What the compiler should produce: `Tokens`, `Ast`, `Abi`, or `Bytecode`
 - **`Session`** -- Per-compilation state: config, source text, and accumulated diagnostics
+- **`StandardJsonInput`** -- Deserialized standard JSON request (sources, settings)
+- **`StandardJsonOutput`** -- Serialized standard JSON response (contracts, errors)
+- **`compile_standard_json`** -- Compiles all sources from a `StandardJsonInput` and returns a `StandardJsonOutput`
 
 ## Usage
 
@@ -43,6 +46,17 @@ if let Some(bytecode) = output.bytecode {
 if let Some(abi) = &output.abi {
     println!("{}", serde_json::to_string_pretty(abi).unwrap());
 }
+```
+
+The `compile_standard_json` function accepts a `StandardJsonInput` and returns a `StandardJsonOutput` containing ABI and bytecode for every contract in the input. Errors are reported inside the output rather than as Rust-level failures.
+
+```rust,no_run
+use edge_driver::standard_json::{compile_standard_json, StandardJsonInput};
+
+let json_str = r#"{"language":"Edge","sources":{"counter.edge":{"content":"..."}}}"#;
+let input: StandardJsonInput = serde_json::from_str(json_str).unwrap();
+let output = compile_standard_json(input);
+println!("{}", serde_json::to_string_pretty(&output).unwrap());
 ```
 
 ## Integration
