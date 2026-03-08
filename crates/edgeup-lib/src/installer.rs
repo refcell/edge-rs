@@ -32,7 +32,7 @@ pub struct GithubAsset {
 /// Return the platform suffix matching the current OS and architecture.
 ///
 /// These correspond to the Rust target triples used in the release workflow.
-pub fn platform_suffix() -> &'static str {
+pub const fn platform_suffix() -> &'static str {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     {
         "x86_64-unknown-linux-gnu"
@@ -119,7 +119,7 @@ impl Installer {
     /// Create an installer rooted at an arbitrary directory.
     ///
     /// Useful for testing without touching `~/.edgeup`.
-    pub fn with_dir(install_dir: PathBuf) -> Self {
+    pub const fn with_dir(install_dir: PathBuf) -> Self {
         Self { install_dir }
     }
 
