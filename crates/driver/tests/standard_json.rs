@@ -6,7 +6,7 @@ use edge_driver::standard_json::{
     compile_standard_json, SourceFile, StandardJsonInput, StandardJsonOutput,
 };
 
-/// Helper: build a StandardJsonInput from a single source entry.
+/// Helper: build a [`StandardJsonInput`] from a single source entry.
 fn single_source_input(path: &str, content: &str) -> StandardJsonInput {
     let mut sources = BTreeMap::new();
     sources.insert(
@@ -24,8 +24,8 @@ fn single_source_input(path: &str, content: &str) -> StandardJsonInput {
 
 /// Helper: compile examples/counter.edge through standard JSON.
 fn compile_counter() -> StandardJsonOutput {
-    let source =
-        std::fs::read_to_string("../../examples/counter.edge").expect("failed to read counter.edge");
+    let source = std::fs::read_to_string("../../examples/counter.edge")
+        .expect("failed to read counter.edge");
     let input = single_source_input("counter.edge", &source);
     compile_standard_json(input)
 }
@@ -122,10 +122,7 @@ fn standard_json_bytecode_no_0x_prefix() {
         .bytecode
         .object;
 
-    assert!(
-        !obj.starts_with("0x"),
-        "bytecode should not start with 0x"
-    );
+    assert!(!obj.starts_with("0x"), "bytecode should not start with 0x");
     assert!(
         obj.chars().all(|c| c.is_ascii_hexdigit()),
         "bytecode should contain only hex digits, got: {obj}"
