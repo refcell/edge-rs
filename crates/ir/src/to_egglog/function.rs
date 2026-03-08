@@ -436,7 +436,7 @@ impl AstToEgglog {
 
     /// Lower an internal function body once as a Function node.
     /// Uses `inline_depth` > 0 so `return` produces just the value (not `ReturnOp`).
-    /// Parameters are bound via Arg/Get so the body works as a standalone subroutine.
+    /// Parameters are memory-backed (LetBind) so reassignment emits VarStore.
     pub(crate) fn lower_internal_function_body(
         &mut self,
         name: &str,
@@ -467,25 +467,31 @@ impl AstToEgglog {
         );
         let out_ty = EvmType::Base(EvmBaseType::UIntT(256)); // TODO: derive from return type
 
-        // Bind parameters via Arg/Get
+        // Bind parameters as memory-backed variables so that reassignment
+        // (e.g. `x = x / 2`) emits VarStore (pushes nothing) instead of
+        // replacing the binding value (which pushes a value onto the stack
+        // and causes stack depth mismatches between if-branches).
         self.scopes.push(Scope::new());
         let arg_expr = Rc::new(EvmExpr::Arg(in_ty.clone(), self.current_ctx.clone()));
+        let mut param_var_names = Vec::new();
         for (i, (param_name, param_ty)) in params.iter().enumerate() {
             let ty = self.lower_type_sig(param_ty);
-            let param_val = if params.len() == 1 {
+            let var_name = format!("{name}__param_{param_name}");
+            let binding = VarBinding {
+                value: ast_helpers::var(var_name.clone()),
+                location: DataLocation::Memory,
+                storage_slot: None,
+                _ty: ty,
+                let_bind_name: Some(var_name.clone()),
+                composite_type: None,
+                composite_base: None,
+            };
+            let init = if params.len() == 1 {
                 Rc::clone(&arg_expr)
             } else {
                 ast_helpers::get(Rc::clone(&arg_expr), i)
             };
-            let binding = VarBinding {
-                value: param_val,
-                location: DataLocation::Stack,
-                storage_slot: None,
-                _ty: ty,
-                let_bind_name: None,
-                composite_type: None,
-                composite_base: None,
-            };
+            param_var_names.push((var_name, init));
             self.scopes
                 .last_mut()
                 .expect("scope stack empty")
@@ -495,22 +501,32 @@ impl AstToEgglog {
 
         // Lower body with inline_depth > 0 so return produces value, not ReturnOp
         self.inline_depth += 1;
-        // Find the body from contract_functions or free_fn_bodies
+        // Find the body — prefer free_fn_bodies over contract_functions.
+        // If both contain a function with the same name, the free function
+        // is the intended callee (the contract function is the *caller*
+        // whose body we're currently lowering, so picking it would recurse).
         let body = self
-            .contract_functions
+            .free_fn_bodies
             .iter()
-            .find(|(n, _, _)| n == name)
-            .map(|(_, _, b)| b.clone())
+            .find(|f| f.name == name)
+            .map(|f| f.body.clone())
             .or_else(|| {
-                self.free_fn_bodies
+                self.contract_functions
                     .iter()
-                    .find(|f| f.name == name)
-                    .map(|f| f.body.clone())
+                    .find(|(n, _, _)| n == name)
+                    .map(|(_, _, b)| b.clone())
             })
             .ok_or_else(|| IrError::Unsupported(format!("internal function not found: {name}")))?;
-        let body_ir = self.lower_code_block(&body)?;
+        let mut body_ir = self.lower_code_block(&body)?;
         self.inline_depth -= 1;
         self.scopes.pop();
+
+        // Wrap body in LetBind nodes for each parameter (innermost first).
+        // inline_depth was > 0 during lowering, so skip Drop (same as
+        // lower_code_block's pattern for inlined locals).
+        for (var_name, init) in param_var_names.into_iter().rev() {
+            body_ir = ast_helpers::let_bind(var_name, init, body_ir);
+        }
 
         self.current_ctx = saved_ctx;
         self.current_state = saved_state;
