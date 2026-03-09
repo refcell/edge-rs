@@ -69,9 +69,7 @@ fn ensure_atexit() {
 }
 
 fn calldata_intrinsic_gas(cd: &[u8]) -> u64 {
-    cd.iter()
-        .map(|&b| if b == 0 { 4u64 } else { 16u64 })
-        .sum()
+    cd.iter().map(|&b| if b == 0 { 4u64 } else { 16u64 }).sum()
 }
 
 fn execution_gas(gas_used: u64, cd: &[u8]) -> u64 {
@@ -376,10 +374,7 @@ impl EvmHandle {
 // Test runners
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) fn for_all_opt_levels(
-    contract_path: &str,
-    test_fn: impl Fn(&mut EvmHandle, u8) + Sync,
-) {
+pub(crate) fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8) + Sync) {
     let label = label_from_path(contract_path);
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..=3)

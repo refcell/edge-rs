@@ -27,7 +27,11 @@ fn test_erc20_initial_supply() {
 
     let res = evm.call(calldata(selector("totalSupply()"), &[]));
     assert!(res.success, "totalSupply() reverted on fresh contract");
-    assert_eq!(decode_u256(&res.output), 0, "initial totalSupply should be 0");
+    assert_eq!(
+        decode_u256(&res.output),
+        0,
+        "initial totalSupply should be 0"
+    );
 }
 
 #[test]
@@ -47,10 +51,7 @@ fn test_erc20_mint_and_balance() {
     assert!(res.success, "mint(alice, 1000) reverted");
 
     // Query balance of alice
-    let bal_cd = calldata(
-        selector("balanceOf(address)"),
-        &[encode_address(alice)],
-    );
+    let bal_cd = calldata(selector("balanceOf(address)"), &[encode_address(alice)]);
 
     let res = evm.call(bal_cd);
     assert!(res.success, "balanceOf(alice) reverted");
@@ -83,7 +84,11 @@ fn test_erc20_transfer() {
         &[encode_address(bob), encode_u256(300)],
     ));
     assert!(res.success, "transfer(bob, 300) reverted");
-    assert_eq!(decode_u256(&res.output), 1, "transfer should return true (1)");
+    assert_eq!(
+        decode_u256(&res.output),
+        1,
+        "transfer should return true (1)"
+    );
 
     // Check CALLER balance (should be 700)
     let res = evm.call(calldata(
@@ -135,7 +140,11 @@ fn test_erc20_approve_and_transferfrom() {
         &[encode_address(caller_addr), encode_u256(500)],
     ));
     assert!(res.success, "approve(caller, 500) reverted");
-    assert_eq!(decode_u256(&res.output), 1, "approve should return true (1)");
+    assert_eq!(
+        decode_u256(&res.output),
+        1,
+        "approve should return true (1)"
+    );
 
     // Check allowance: CALLER→CALLER should be 500
     let res = evm.call(calldata(
@@ -159,7 +168,11 @@ fn test_erc20_approve_and_transferfrom() {
         ],
     ));
     assert!(res.success, "transferFrom(caller, charlie, 300) reverted");
-    assert_eq!(decode_u256(&res.output), 1, "transferFrom should return true (1)");
+    assert_eq!(
+        decode_u256(&res.output),
+        1,
+        "transferFrom should return true (1)"
+    );
 
     // Check updated allowance: CALLER→CALLER should be 200 (500 - 300)
     let res = evm.call(calldata(

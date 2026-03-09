@@ -5,10 +5,7 @@
 
 #![allow(missing_docs)]
 
-use std::{
-    collections::HashMap,
-    path::PathBuf,
-};
+use std::{collections::HashMap, path::PathBuf};
 
 use alloy_primitives::{Address, Bytes, Log, U256};
 use edge_driver::{

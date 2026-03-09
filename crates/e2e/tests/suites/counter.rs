@@ -1,6 +1,5 @@
 #![allow(missing_docs)]
 
-use crate::helpers::*;
 use revm::{
     context::{Context, TxEnv},
     database::{CacheDB, EmptyDB},
@@ -8,6 +7,8 @@ use revm::{
     state::AccountInfo,
     ExecuteCommitEvm, MainBuilder, MainContext,
 };
+
+use crate::helpers::*;
 
 // =============================================================================
 // Tests

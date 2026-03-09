@@ -78,7 +78,11 @@ fn test_enum_result_ok_value() {
     for_all_opt_levels(ENUMS, |h, o| {
         let r = h.call(calldata(selector("result_ok_value()"), &[]));
         assert!(r.success, "result_ok_value() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "result_ok_value() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "result_ok_value() wrong at O{o}"
+        );
     });
 }
 
@@ -87,7 +91,11 @@ fn test_enum_result_err_value() {
     for_all_opt_levels(ENUMS, |h, o| {
         let r = h.call(calldata(selector("result_err_value()"), &[]));
         assert!(r.success, "result_err_value() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 99, "result_err_value() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            99,
+            "result_err_value() wrong at O{o}"
+        );
     });
 }
 
@@ -194,7 +202,11 @@ fn test_inline_weighted_sum() {
         let r = h.call(calldata(selector("weighted_sum_val()"), &[]));
         assert!(r.success, "weighted_sum_val() reverted at O{o}");
         // 4*3 + 6*5 = 12 + 30 = 42
-        assert_eq!(decode_u256(&r.output), 42, "weighted_sum_val() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "weighted_sum_val() wrong at O{o}"
+        );
     });
 }
 
@@ -217,7 +229,11 @@ fn test_inline_in_branch() {
             &[encode_u256(20)],
         ));
         assert!(r.success, "inline_in_branch(20) reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 40, "inline_in_branch(20) wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            40,
+            "inline_in_branch(20) wrong at O{o}"
+        );
 
         // x=5 <= 10: add_offset(5, 1) = 5 + 1 + 10 = 16
         let r = h.call(calldata(
@@ -225,7 +241,11 @@ fn test_inline_in_branch() {
             &[encode_u256(5)],
         ));
         assert!(r.success, "inline_in_branch(5) reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 16, "inline_in_branch(5) wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            16,
+            "inline_in_branch(5) wrong at O{o}"
+        );
     });
 }
 
@@ -293,7 +313,11 @@ fn test_merkle_verify_single_proof() {
             ],
         ));
         assert!(r.success, "verify() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 1, "verify() should return true at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            1,
+            "verify() should return true at O{o}"
+        );
     });
 }
 

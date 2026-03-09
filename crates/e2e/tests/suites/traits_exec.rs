@@ -56,7 +56,11 @@ fn test_type_bound() {
     for_all_opt_levels(TRAIT_BOUNDS, |h, o| {
         let r = h.call(calldata(selector("test_type_bound()"), &[]));
         assert!(r.success, "test_type_bound() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 77, "test_type_bound() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            77,
+            "test_type_bound() wrong at O{o}"
+        );
     });
 }
 
@@ -67,7 +71,11 @@ fn test_bound_other() {
     for_all_opt_levels(TRAIT_BOUNDS, |h, o| {
         let r = h.call(calldata(selector("test_bound_other()"), &[]));
         assert!(r.success, "test_bound_other() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_bound_other() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_bound_other() wrong at O{o}"
+        );
     });
 }
 
@@ -91,7 +99,11 @@ fn test_extract_other() {
         let r = h.call(calldata(selector("test_extract_other()"), &[]));
         assert!(r.success, "test_extract_other() reverted at O{o}");
         // Other.get_value() = val * 10 = 3 * 10 = 30
-        assert_eq!(decode_u256(&r.output), 30, "test_extract_other() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            30,
+            "test_extract_other() wrong at O{o}"
+        );
     });
 }
 
@@ -128,7 +140,11 @@ fn test_scale_wrapper() {
         let r = h.call(calldata(selector("test_scale_wrapper()"), &[]));
         assert!(r.success, "test_scale_wrapper() reverted at O{o}");
         // Wrapper.scale(7, 6) = 7 * 6 = 42
-        assert_eq!(decode_u256(&r.output), 42, "test_scale_wrapper() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_scale_wrapper() wrong at O{o}"
+        );
     });
 }
 
@@ -138,7 +154,11 @@ fn test_scale_other() {
         let r = h.call(calldata(selector("test_scale_other()"), &[]));
         assert!(r.success, "test_scale_other() reverted at O{o}");
         // Other.scale(5, 3) = 5 * 3 * 2 = 30
-        assert_eq!(decode_u256(&r.output), 30, "test_scale_other() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            30,
+            "test_scale_other() wrong at O{o}"
+        );
     });
 }
 
@@ -180,7 +200,11 @@ fn test_default_method() {
     for_all_opt_levels(DEFAULT_METHODS, |h, o| {
         let r = h.call(calldata(selector("test_default_method()"), &[]));
         assert!(r.success, "test_default_method() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_default_method() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_default_method() wrong at O{o}"
+        );
     });
 }
 
@@ -244,7 +268,11 @@ fn test_full_override() {
         let r = h.call(calldata(selector("test_full_override()"), &[]));
         assert!(r.success, "test_full_override() reverted at O{o}");
         // FullOverride.quadrupled() = val + 2 = 102
-        assert_eq!(decode_u256(&r.output), 102, "test_full_override() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            102,
+            "test_full_override() wrong at O{o}"
+        );
     });
 }
 
@@ -313,7 +341,11 @@ fn test_supertrait_base() {
     for_all_opt_levels(SUPERTRAITS, |h, o| {
         let r = h.call(calldata(selector("test_base_method()"), &[]));
         assert!(r.success, "test_base_method() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 25, "test_base_method() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            25,
+            "test_base_method() wrong at O{o}"
+        );
     });
 }
 
@@ -369,7 +401,11 @@ fn test_unsafe_add() {
     for_all_opt_levels(UNSAFE_ARITH, |h, o| {
         let r = h.call(calldata(selector("test_unsafe_add()"), &[]));
         assert!(r.success, "test_unsafe_add() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_unsafe_add() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_unsafe_add() wrong at O{o}"
+        );
     });
 }
 
@@ -378,7 +414,11 @@ fn test_unsafe_sub() {
     for_all_opt_levels(UNSAFE_ARITH, |h, o| {
         let r = h.call(calldata(selector("test_unsafe_sub()"), &[]));
         assert!(r.success, "test_unsafe_sub() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_unsafe_sub() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_unsafe_sub() wrong at O{o}"
+        );
     });
 }
 
@@ -387,7 +427,11 @@ fn test_unsafe_mul() {
     for_all_opt_levels(UNSAFE_ARITH, |h, o| {
         let r = h.call(calldata(selector("test_unsafe_mul()"), &[]));
         assert!(r.success, "test_unsafe_mul() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_unsafe_mul() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_unsafe_mul() wrong at O{o}"
+        );
     });
 }
 

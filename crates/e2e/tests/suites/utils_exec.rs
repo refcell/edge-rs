@@ -26,7 +26,11 @@ fn test_math_safe_add() {
         &[encode_u256(10), encode_u256(20)],
     ));
     assert!(r.success, "safe_add reverted");
-    assert_eq!(decode_u256(&r.output), 30, "safe_add(10, 20) should return 30");
+    assert_eq!(
+        decode_u256(&r.output),
+        30,
+        "safe_add(10, 20) should return 30"
+    );
 }
 
 #[test]
@@ -38,7 +42,11 @@ fn test_math_safe_sub() {
         &[encode_u256(30), encode_u256(10)],
     ));
     assert!(r.success, "safe_sub reverted");
-    assert_eq!(decode_u256(&r.output), 20, "safe_sub(30, 10) should return 20");
+    assert_eq!(
+        decode_u256(&r.output),
+        20,
+        "safe_sub(30, 10) should return 20"
+    );
 }
 
 #[test]
@@ -119,7 +127,11 @@ fn test_math_clamp_within_range() {
         &[encode_u256(15), encode_u256(10), encode_u256(20)],
     ));
     assert!(r.success, "clamp reverted");
-    assert_eq!(decode_u256(&r.output), 15, "clamp(15, 10, 20) should return 15");
+    assert_eq!(
+        decode_u256(&r.output),
+        15,
+        "clamp(15, 10, 20) should return 15"
+    );
 }
 
 #[test]
@@ -198,7 +210,11 @@ fn test_math_mul_div_up_exact() {
         &[encode_u256(6), encode_u256(4), encode_u256(3)],
     ));
     assert!(r.success, "mul_div_up reverted");
-    assert_eq!(decode_u256(&r.output), 8, "mul_div_up(6, 4, 3) should return 8");
+    assert_eq!(
+        decode_u256(&r.output),
+        8,
+        "mul_div_up(6, 4, 3) should return 8"
+    );
 }
 
 #[test]
@@ -313,7 +329,10 @@ fn test_bits_is_power_of_two_true() {
             &[encode_u256(input)],
         ));
         assert!(r.success, "is_power_of_two({input}) reverted");
-        assert!(decode_bool(&r.output), "is_power_of_two({input}) should be true");
+        assert!(
+            decode_bool(&r.output),
+            "is_power_of_two({input}) should be true"
+        );
     }
 }
 
@@ -394,7 +413,11 @@ fn test_bits_toggle_bit() {
         &[encode_u256(5), encode_u256(2)],
     ));
     assert!(r.success, "toggle_bit reverted");
-    assert_eq!(decode_u256(&r.output), 1, "toggle_bit(5, 2) should return 1");
+    assert_eq!(
+        decode_u256(&r.output),
+        1,
+        "toggle_bit(5, 2) should return 1"
+    );
 }
 
 #[test]
