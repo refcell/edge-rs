@@ -179,6 +179,7 @@ impl Compiler {
         }
 
         // IR lowering + optimization
+        let t_ir = std::time::Instant::now();
         let ir_program = edge_ir::lower_and_optimize(
             &ast,
             self.session.config.optimization_level,
@@ -196,6 +197,8 @@ impl Compiler {
             self.session.report_diagnostics();
             CompileError::Aborted
         })?;
+
+        tracing::info!("IR lowering + optimization: {:?}", t_ir.elapsed());
 
         // Emit any warnings from IR lowering
         for warning in &ir_program.warnings {
@@ -262,6 +265,7 @@ impl Compiler {
         }
 
         // Code generation — compile each contract individually
+        let t_codegen = std::time::Instant::now();
         let mut all_bytecodes: IndexMap<String, Vec<u8>> = IndexMap::new();
         for contract in &ir_program.contracts {
             let single_program = edge_ir::EvmProgram {
@@ -304,6 +308,8 @@ impl Compiler {
                 abi: None,
             });
         }
+
+        tracing::info!("Codegen: {:?}", t_codegen.elapsed());
 
         let last_bytecode = all_bytecodes.values().last().cloned();
 

@@ -551,7 +551,7 @@ impl AstToEgglog {
 
         // Before pushing a new scope, look up composite info for args that are identifiers
         // (needed for method calls where `self` refers to a struct variable)
-        let mut arg_composite: Vec<Option<(String, Option<usize>)>> = Vec::new();
+        let mut arg_composite: Vec<Option<(String, Option<RcExpr>)>> = Vec::new();
         for arg in args {
             if let edge_ast::Expr::Ident(ident) = arg {
                 let info = self.lookup_composite_info(&ident.name);
@@ -571,7 +571,7 @@ impl AstToEgglog {
             let (mut composite_type, composite_base) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
-                .map(|(ct, cb)| (Some(ct.clone()), *cb))
+                .map(|(ct, cb)| (Some(ct.clone()), cb.clone()))
                 .unwrap_or((None, None));
 
             // If composite_type is still None, check if the param type sig names

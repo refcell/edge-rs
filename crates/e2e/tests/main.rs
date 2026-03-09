@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+#[path = "suites/helpers.rs"]
+mod helpers;
+
 #[path = "suites/access_exec.rs"]
 mod access_exec;
 #[path = "suites/calldata_args.rs"]

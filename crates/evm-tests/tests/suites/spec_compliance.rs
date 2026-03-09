@@ -713,3 +713,116 @@ fn const_mixed_literals() {
     assert!(r.success);
     assert_eq!(decode(&r.output), u(5042));
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// test_fn_return_types — single function returning a tuple of
+// (u256, addr, bool, u256, [u256;3], [u256;2]) covering packed structs,
+// storage arrays, and memory arrays. Arrays are expanded inline.
+// ═══════════════════════════════════════════════════════════════════
+
+fn deploy_fn_return_types() -> EvmTestHost {
+    EvmTestHost::deploy_edge("../../examples/tests/test_fn_return_types.edge", 0)
+}
+
+#[test]
+fn fnret_multi_return() {
+    let mut h = deploy_fn_return_types();
+
+    // First populate storage array
+    let r = h.call_fn("setup()", &[]);
+    assert!(r.success);
+
+    // Call get_all() — 4 scalars + 3 storage array + 2 memory array = 9 slots
+    let r = h.call_fn("get_all()", &[]);
+    assert!(r.success);
+
+    // Output should be 9 * 32 = 288 bytes
+    assert_eq!(r.output.len(), 288);
+
+    // Decode each 32-byte slot
+    let slot = |i: usize| abi_decode_u256(&r.output[i * 32..(i + 1) * 32]);
+
+    // slot 0: u256 = 7 * 3 = 21
+    assert_eq!(slot(0), u(21));
+
+    // slot 1: addr = caller address (non-zero)
+    assert_ne!(slot(1), U256::ZERO);
+
+    // slot 2: bool = (21 > 10) = true = 1
+    assert_eq!(slot(2), u(1));
+
+    // slot 3: packed struct field sum = 10 + 20 + 30 = 60
+    assert_eq!(slot(3), u(60));
+
+    // slots 4-6: storage array [u256; 3] = [100, 200, 300]
+    assert_eq!(slot(4), u(100));
+    assert_eq!(slot(5), u(200));
+    assert_eq!(slot(6), u(300));
+
+    // slots 7-8: memory array [u256; 2] = [42, 99]
+    assert_eq!(slot(7), u(42));
+    assert_eq!(slot(8), u(99));
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// test_mem_region_return — MemRegion-based tuple return with u256,
+// addr, packed struct sum, and 10-element memory array.
+// Verifies that symbolic memory regions don't overlap each other
+// or the return buffer.
+// ═══════════════════════════════════════════════════════════════════
+
+fn deploy_mem_region_return(opt: u8) -> EvmTestHost {
+    EvmTestHost::deploy_edge("../../examples/tests/test_mem_region_return.edge", opt)
+}
+
+fn mem_region_return_check(opt: u8) {
+    let mut h = deploy_mem_region_return(opt);
+
+    let multiplier = 5u64;
+    let r = h.call_fn("build_and_return(uint256)", &encode(multiplier));
+    assert!(r.success, "O{opt}: build_and_return reverted");
+
+    // 13 return slots: 1 u256 + 1 addr + 1 packed_sum + 10 array = 13 * 32 = 416 bytes
+    assert_eq!(r.output.len(), 416, "O{opt}: unexpected output length");
+
+    let slot = |i: usize| abi_decode_u256(&r.output[i * 32..(i + 1) * 32]);
+
+    // slot 0: val = multiplier * 7 = 35
+    assert_eq!(slot(0), u(multiplier * 7), "O{opt}: slot 0 (val)");
+
+    // slot 1: addr = caller (non-zero)
+    assert_ne!(
+        slot(1),
+        U256::ZERO,
+        "O{opt}: slot 1 (addr) should be non-zero"
+    );
+
+    // slot 2: packed struct sum = 11 + 22 + 33 = 66
+    assert_eq!(slot(2), u(66), "O{opt}: slot 2 (packed_sum)");
+
+    // slots 3-12: 10-element array = [100+m, 200+m, ..., 1000+m]
+    for i in 0..10 {
+        let expected = (i as u64 + 1) * 100 + multiplier;
+        assert_eq!(
+            slot(3 + i),
+            u(expected),
+            "O{opt}: slot {} (arr[{i}])",
+            3 + i
+        );
+    }
+}
+
+#[test]
+fn mem_region_return_o0() {
+    mem_region_return_check(0);
+}
+
+#[test]
+fn mem_region_return_o1() {
+    mem_region_return_check(1);
+}
+
+#[test]
+fn mem_region_return_o2() {
+    mem_region_return_check(2);
+}

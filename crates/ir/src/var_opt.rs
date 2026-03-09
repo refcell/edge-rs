@@ -138,7 +138,8 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => {}
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
                 collect_allocations(input, result);
@@ -340,7 +341,8 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => Rc::clone(expr),
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs.iter().map(optimize_expr).collect();
             if new_inputs
@@ -447,7 +449,8 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
         | EvmExpr::Drop(_)
-        | EvmExpr::StorageField(..) => {}
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
                 analyze_var_inner(name, input, in_loop, info);
@@ -573,7 +576,8 @@ fn is_pure(expr: &RcExpr) -> bool {
         | EvmExpr::EnvRead(..)
         | EvmExpr::EnvRead1(..)
         | EvmExpr::Function(..)
-        | EvmExpr::StorageField(..) => true,
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => true,
         EvmExpr::Bop(op, a, b) => {
             use crate::schema::EvmBinaryOp::*;
             match op {
@@ -681,7 +685,8 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => {}
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
                 collect_immutable_vars_rec(input, out);
@@ -820,7 +825,8 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
         | EvmExpr::Arg(..)
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => false,
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => false,
         EvmExpr::InlineAsm(inputs, ..) => inputs.iter().any(|i| references_var(i, name)),
     }
 }
@@ -856,7 +862,8 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
         | EvmExpr::Drop(_)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => Rc::clone(expr),
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs
                 .iter()

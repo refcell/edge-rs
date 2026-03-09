@@ -303,7 +303,8 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
         | EvmExpr::Var(..)
         | EvmExpr::Drop(..)
         | EvmExpr::Selector(..)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => Rc::clone(expr),
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs
                 .iter()
@@ -1063,7 +1064,8 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
         | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => Rc::clone(expr),
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs.iter().map(forward_stores_expr).collect();
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))

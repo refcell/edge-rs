@@ -1,0 +1,48 @@
+// test_fn_return_types.edge — Return multiple values of different types
+//
+// A single public function returns a tuple containing a u256, an address,
+// a bool, a packed struct field sum, a storage array [u256; 3], and a
+// memory array [u256; 2]. Arrays are expanded inline in the return encoding.
+
+type Rgb = packed {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+abi ITestFnReturnTypes {
+    fn get_all() -> (u256, addr, bool, u256, u256, u256, u256, u256, u256);
+    fn setup();
+}
+
+contract TestFnReturnTypes {
+    let values: &s [u256; 3];
+
+    pub fn setup() {
+        values[0] = 100;
+        values[1] = 200;
+        values[2] = 300;
+    }
+
+    pub fn get_all() -> (u256, addr, bool, u256, u256, u256, u256, u256, u256) {
+        // 1. u256: simple arithmetic
+        let a: u256 = 7 * 3;
+
+        // 2. addr: caller address
+        let b: addr = @caller();
+
+        // 3. bool: comparison result
+        let c: bool = a > 10;
+
+        // 4. packed struct: field sum
+        let color: Rgb;
+        color = Rgb { r: 10, g: 20, b: 30 };
+        let d: u256 = color.r + color.g + color.b;
+
+        // 5. storage array [u256; 3]: expanded into 3 return slots
+        // 6. memory array [u256; 2]: expanded into 2 return slots
+        let local_arr: [u256; 2] = [42, 99];
+
+        return (a, b, c, d, values, local_arr);
+    }
+}

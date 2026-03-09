@@ -25,6 +25,7 @@
 pub mod ast_helpers;
 pub mod cleanup;
 pub mod costs;
+pub mod mem_region;
 pub mod optimizations;
 pub mod pretty;
 pub mod schedule;
@@ -119,31 +120,51 @@ pub fn lower_and_optimize(
     optimization_level: u8,
     optimize_for: OptimizeFor,
 ) -> Result<EvmProgram, IrError> {
+    let pipeline_start = std::time::Instant::now();
+
     // 1. Lower AST -> IR structs
+    let t = std::time::Instant::now();
     let mut lowering = to_egglog::AstToEgglog::new();
     let mut ir_program = lowering.lower_program(program)?;
+    tracing::debug!("  lowering: {:?}", t.elapsed());
 
     // 2. Variable optimizations (store-forwarding, dead elim, inlining, const prop)
     // Runs at ALL optimization levels since these are cheap deterministic transforms.
     // Monomorphization only at O1+ (egglog decides inlining); at O0 keep original calls.
+    let t = std::time::Instant::now();
     var_opt::optimize_program(&mut ir_program, optimization_level);
+    tracing::debug!("  var_opt: {:?}", t.elapsed());
 
     // 3. Storage optimizations:
     //    a) Hoist storage ops out of loops (LICM) — egglog can't model iteration
+    let t = std::time::Instant::now();
     storage_hoist::hoist_program(&mut ir_program);
+    tracing::debug!("  storage_hoist: {:?}", t.elapsed());
+
+    // 4. Resolve symbolic MemRegion nodes to concrete offsets.
+    // Runs before egglog so that Add(Const, Const) patterns from
+    // region+field offsets get folded by egglog's constant folding.
+    let t = std::time::Instant::now();
+    mem_region::assign_program_offsets(&mut ir_program);
+    tracing::debug!("  mem_region: {:?}", t.elapsed());
 
     if optimization_level == 0 {
         //    b) At O0 only: forward SStore→SLoad in straight-line code (no egglog)
+        let t = std::time::Instant::now();
         storage_hoist::forward_stores_program(&mut ir_program);
+        tracing::debug!("  forward_stores: {:?}", t.elapsed());
+        tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
         return Ok(ir_program);
     }
     // At O1+, egglog handles SStore→SLoad forwarding via cross-slot rules in storage.egg
 
     // 2. Optimize each contract's runtime through egglog equality saturation
+    let t_egglog_total = std::time::Instant::now();
     let schedule = schedule::make_schedule(optimization_level);
     let mut optimized_contracts = Vec::new();
 
     for contract in &ir_program.contracts {
+        let t_contract = std::time::Instant::now();
         let runtime_sexp = sexp::expr_to_sexp(&contract.runtime);
 
         // Collect immutable variable names for bound propagation in egglog
@@ -170,10 +191,12 @@ pub fn lower_and_optimize(
             schedule
         );
 
+        let t_egg = std::time::Instant::now();
         let mut egraph = create_egraph();
         let outputs = egraph
             .parse_and_run_program(None, &egglog_program)
             .map_err(|e| IrError::Egglog(format!("{e}")))?;
+        tracing::debug!("    egglog run ({}): {:?}", contract.name, t_egg.elapsed());
 
         // The last output is the extracted expression from (extract __runtime)
         let extracted_sexp = outputs
@@ -242,6 +265,11 @@ pub fn lower_and_optimize(
             optimized_functions.push(optimized_func);
         }
 
+        tracing::debug!(
+            "    contract {} total: {:?}",
+            contract.name,
+            t_contract.elapsed()
+        );
         optimized_contracts.push(EvmContract {
             name: contract.name.clone(),
             storage_fields: contract.storage_fields.clone(),
@@ -251,6 +279,7 @@ pub fn lower_and_optimize(
             memory_high_water: contract.memory_high_water,
         });
     }
+    tracing::debug!("  egglog total: {:?}", t_egglog_total.elapsed());
 
     let mut result = EvmProgram {
         contracts: optimized_contracts,
@@ -262,6 +291,8 @@ pub fn lower_and_optimize(
     // Egglog's storage-opt rules only handle state-threaded SStore chains, not Concat-chained
     // SStores (which use Arg(StateT) as state). This pass handles the Concat case.
     storage_hoist::forward_stores_program(&mut result);
+
+    tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
 
     Ok(result)
 }
