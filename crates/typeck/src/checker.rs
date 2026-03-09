@@ -14,6 +14,7 @@ use edge_ast::{
     Program,
 };
 use indexmap::IndexMap;
+use ruint::aliases::U256;
 use tiny_keccak::{Hasher, Keccak};
 
 /// Storage slot assignment for contract fields
@@ -28,8 +29,8 @@ pub struct StorageLayout {
 pub struct ConstValue {
     /// Constant name
     pub name: String,
-    /// Resolved u256 value (fits in u64 for simple literals)
-    pub value: u64,
+    /// Resolved value as big-endian 256-bit bytes
+    pub value: [u8; 32],
 }
 
 /// A function's type information
@@ -179,12 +180,12 @@ impl TypeChecker {
             .collect();
 
         // Process constants (evaluate simple literal/arithmetic expressions)
-        let mut const_env: IndexMap<String, u64> = IndexMap::new();
+        let mut const_env: IndexMap<String, [u8; 32]> = IndexMap::new();
         let consts = contract
             .consts
             .iter()
             .map(|(decl, expr)| {
-                let value = Self::eval_const_expr(expr, &const_env).unwrap_or(0);
+                let value = Self::eval_const_expr(expr, &const_env).unwrap_or([0u8; 32]);
                 const_env.insert(decl.name.name.clone(), value);
                 ConstValue {
                     name: decl.name.name.clone(),
@@ -293,46 +294,103 @@ impl TypeChecker {
         }
     }
 
-    /// Evaluate a constant expression to a u64 value.
+    /// Evaluate a constant expression to a 256-bit value.
     /// Supports literals and simple arithmetic over previously-defined constants.
-    fn eval_const_expr(expr: &Expr, env: &IndexMap<String, u64>) -> Option<u64> {
+    /// Uses U256 arithmetic to match EVM semantics (256-bit wrapping).
+    fn eval_const_expr(expr: &Expr, env: &IndexMap<String, [u8; 32]>) -> Option<[u8; 32]> {
         match expr {
             Expr::Literal(lit) => match lit.as_ref() {
-                Lit::Int(n, _, _) => Some(*n),
-                Lit::Bool(b, _) => Some(if *b { 1 } else { 0 }),
-                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
-                    let mut v = 0u64;
-                    for &b in bytes.iter().take(8) {
-                        v = (v << 8) | (b as u64);
+                Lit::Int(bytes, _, _) => Some(*bytes),
+                Lit::Bool(b, _) => {
+                    let mut result = [0u8; 32];
+                    if *b {
+                        result[31] = 1;
                     }
-                    Some(v)
+                    Some(result)
+                }
+                Lit::Hex(bytes, _) | Lit::Bin(bytes, _) => {
+                    let mut result = [0u8; 32];
+                    let len = bytes.len().min(32);
+                    result[32 - len..].copy_from_slice(&bytes[..len]);
+                    Some(result)
                 }
                 Lit::Str(_, _) => None,
             },
             Expr::Ident(id) => env.get(&id.name).copied(),
             Expr::Paren(inner, _) => Self::eval_const_expr(inner, env),
             Expr::Binary(lhs, op, rhs, _) => {
-                let l = Self::eval_const_expr(lhs, env)?;
-                let r = Self::eval_const_expr(rhs, env)?;
-                match op {
-                    BinOp::Add => Some(l.wrapping_add(r)),
-                    BinOp::Sub => Some(l.wrapping_sub(r)),
-                    BinOp::Mul => Some(l.wrapping_mul(r)),
-                    BinOp::Div if r != 0 => Some(l / r),
-                    BinOp::Mod if r != 0 => Some(l % r),
-                    BinOp::BitwiseAnd => Some(l & r),
-                    BinOp::BitwiseOr => Some(l | r),
-                    BinOp::BitwiseXor => Some(l ^ r),
-                    BinOp::Shl => Some(l << (r & 63)),
-                    BinOp::Shr => Some(l >> (r & 63)),
-                    BinOp::Eq => Some(if l == r { 1 } else { 0 }),
-                    BinOp::Neq => Some(if l != r { 1 } else { 0 }),
-                    BinOp::Lt => Some(if l < r { 1 } else { 0 }),
-                    BinOp::Gt => Some(if l > r { 1 } else { 0 }),
-                    BinOp::Lte => Some(if l <= r { 1 } else { 0 }),
-                    BinOp::Gte => Some(if l >= r { 1 } else { 0 }),
-                    _ => None,
-                }
+                let l_bytes = Self::eval_const_expr(lhs, env)?;
+                let r_bytes = Self::eval_const_expr(rhs, env)?;
+                let l = U256::from_be_bytes(l_bytes);
+                let r = U256::from_be_bytes(r_bytes);
+                let result = match op {
+                    BinOp::Add => l.wrapping_add(r),
+                    BinOp::Sub => l.wrapping_sub(r),
+                    BinOp::Mul => l.wrapping_mul(r),
+                    BinOp::Div if !r.is_zero() => l / r,
+                    BinOp::Mod if !r.is_zero() => l % r,
+                    BinOp::BitwiseAnd => l & r,
+                    BinOp::BitwiseOr => l | r,
+                    BinOp::BitwiseXor => l ^ r,
+                    BinOp::Shl => {
+                        if r >= U256::from(256) {
+                            U256::ZERO
+                        } else {
+                            l << r.to::<usize>()
+                        }
+                    }
+                    BinOp::Shr => {
+                        if r >= U256::from(256) {
+                            U256::ZERO
+                        } else {
+                            l >> r.to::<usize>()
+                        }
+                    }
+                    BinOp::Eq => {
+                        if l == r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    BinOp::Neq => {
+                        if l != r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    BinOp::Lt => {
+                        if l < r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    BinOp::Gt => {
+                        if l > r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    BinOp::Lte => {
+                        if l <= r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    BinOp::Gte => {
+                        if l >= r {
+                            U256::from(1)
+                        } else {
+                            U256::ZERO
+                        }
+                    }
+                    _ => return None,
+                };
+                Some(result.to_be_bytes())
             }
             _ => None,
         }

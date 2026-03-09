@@ -10,7 +10,7 @@ use crate::ty::PrimitiveType;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lit {
     /// Integer literal: 42, 42u8, etc.
-    Int(u64, Option<PrimitiveType>, Span),
+    Int([u8; 32], Option<PrimitiveType>, Span),
     /// String literal: "hello"
     Str(String, Span),
     /// Boolean literal: true or false

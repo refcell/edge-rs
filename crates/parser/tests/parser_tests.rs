@@ -1,5 +1,6 @@
 //! Integration tests for the Edge language parser.
 
+use edge_ast::Lit;
 use edge_parser::parse;
 
 // ─── Empty Program ──────────────────────────────────────────────────
@@ -460,4 +461,50 @@ fn parse_match_statement() {
         result.unwrap().stmts[0],
         edge_ast::Stmt::Match(..)
     ));
+}
+
+// ─── Large Integer Literals (Issue #40) ─────────────────────────────
+
+/// Helper: parse "let x: u256 = <literal>;" and extract the Lit from the initializer.
+fn parse_int_literal(literal: &str) -> [u8; 32] {
+    let src = format!("let x: u256 = {literal};");
+    let program = parse(&src).unwrap_or_else(|e| panic!("parse failed: {e:?}"));
+    assert_eq!(program.stmts.len(), 1);
+    if let edge_ast::Stmt::VarDecl(_, _, Some(init), _) = &program.stmts[0] {
+        {
+            if let edge_ast::Expr::Literal(lit) = init.as_ref() {
+                if let Lit::Int(bytes, _, _) = lit.as_ref() {
+                    return *bytes;
+                }
+            }
+        }
+    }
+    panic!("expected Lit::Int in initializer");
+}
+
+#[test]
+fn int_literal_two_pow_64_not_truncated() {
+    // 2^64 = 18446744073709551616; must NOT be truncated to 0
+    let bytes = parse_int_literal("18446744073709551616");
+    // 2^64 in big-endian [u8;32]: byte[23] = 0x01, rest zeros
+    let mut expected = [0u8; 32];
+    expected[23] = 1;
+    assert_eq!(bytes, expected, "2^64 was truncated!");
+}
+
+#[test]
+fn int_literal_u256_max() {
+    // 2^256 - 1: all bytes 0xff
+    let bytes = parse_int_literal(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+    assert_eq!(bytes, [0xffu8; 32], "2^256-1 bytes should all be 0xff");
+}
+
+#[test]
+fn int_literal_small_value_preserved() {
+    let bytes = parse_int_literal("42");
+    let mut expected = [0u8; 32];
+    expected[31] = 42;
+    assert_eq!(bytes, expected);
 }

@@ -1678,12 +1678,10 @@ impl Parser {
         match kind {
             TokenKind::Literal(lit_bytes) => {
                 let token = self.advance();
-                // Extract the actual integer value from the literal bytes
-                let mut value: u128 = 0;
-                for byte in &lit_bytes {
-                    value = (value << 8) | (*byte as u128);
-                }
-                let lit = Lit::Int(value as u64, None, token.span);
+                let mut bytes = [0u8; 32];
+                let len = lit_bytes.len().min(32);
+                bytes[32 - len..].copy_from_slice(&lit_bytes[lit_bytes.len() - len..]);
+                let lit = Lit::Int(bytes, None, token.span);
                 Ok(Expr::Literal(Box::new(lit)))
             }
             TokenKind::StringLiteral(s) => {

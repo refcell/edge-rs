@@ -456,7 +456,9 @@ impl AstToEgglog {
     fn try_const_index(expr: &edge_ast::Expr) -> Option<u64> {
         match expr {
             edge_ast::Expr::Literal(lit) => match lit.as_ref() {
-                edge_ast::lit::Lit::Int(val, _, _) => Some(*val),
+                edge_ast::lit::Lit::Int(bytes, _, _) => {
+                    Some(u64::from_be_bytes(bytes[24..32].try_into().unwrap()))
+                }
                 _ => None,
             },
             edge_ast::Expr::Paren(inner, _) => Self::try_const_index(inner),

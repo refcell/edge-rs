@@ -60,8 +60,9 @@ impl AstToEgglog {
     /// Extract fixed array length from a type expression (literal integer).
     pub(crate) fn extract_array_length(len_expr: &edge_ast::Expr) -> Option<usize> {
         if let edge_ast::Expr::Literal(lit) = len_expr {
-            if let edge_ast::Lit::Int(n, _, _) = lit.as_ref() {
-                return Some(*n as usize);
+            if let edge_ast::Lit::Int(bytes, _, _) = lit.as_ref() {
+                let n = u64::from_be_bytes(bytes[24..32].try_into().unwrap());
+                return Some(n as usize);
             }
         }
         None
