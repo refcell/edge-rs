@@ -44,3 +44,41 @@
 (rewrite (Bop (OpMLoad) offset (Log n topics doff dsz state))
          (Bop (OpMLoad) offset state)
          :subsume :ruleset memory-opt)
+
+;; ============================================================
+;; MemRegion Non-Interference
+;; ============================================================
+;; Different MemRegion IDs are guaranteed to be non-overlapping.
+;; MLoad through MStore to a DIFFERENT region is safe to forward.
+
+;; MLoad at (MemRegion r1 s1) through MStore at (MemRegion r2 s2) when r1 != r2
+(rule ((= e (Bop (OpMLoad)
+              (MemRegion r1 s1)
+              (Top (OpMStore) (MemRegion r2 s2) val state)))
+       (!= r1 r2))
+      ((union e (Bop (OpMLoad) (MemRegion r1 s1) state)))
+      :ruleset memory-opt)
+
+;; MLoad at (Add (MemRegion r1 s1) off1) through MStore at (MemRegion r2 s2) when r1 != r2
+(rule ((= e (Bop (OpMLoad)
+              (Bop (OpAdd) (MemRegion r1 s1) off1)
+              (Top (OpMStore) (MemRegion r2 s2) val state)))
+       (!= r1 r2))
+      ((union e (Bop (OpMLoad) (Bop (OpAdd) (MemRegion r1 s1) off1) state)))
+      :ruleset memory-opt)
+
+;; MLoad at (MemRegion r1 s1) through MStore at (Add (MemRegion r2 s2) off2) when r1 != r2
+(rule ((= e (Bop (OpMLoad)
+              (MemRegion r1 s1)
+              (Top (OpMStore) (Bop (OpAdd) (MemRegion r2 s2) off2) val state)))
+       (!= r1 r2))
+      ((union e (Bop (OpMLoad) (MemRegion r1 s1) state)))
+      :ruleset memory-opt)
+
+;; MLoad at (Add (MemRegion r1) off1) through MStore at (Add (MemRegion r2) off2) when r1 != r2
+(rule ((= e (Bop (OpMLoad)
+              (Bop (OpAdd) (MemRegion r1 s1) off1)
+              (Top (OpMStore) (Bop (OpAdd) (MemRegion r2 s2) off2) val state)))
+       (!= r1 r2))
+      ((union e (Bop (OpMLoad) (Bop (OpAdd) (MemRegion r1 s1) off1) state)))
+      :ruleset memory-opt)

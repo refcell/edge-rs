@@ -154,6 +154,7 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             }
             format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
         }
+        EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
     }
 }
 
@@ -260,6 +261,7 @@ const fn ternop_sexp(op: &EvmTernaryOp) -> &'static str {
         EvmTernaryOp::Keccak256 => "(OpKeccak256)",
         EvmTernaryOp::Select => "(OpSelect)",
         EvmTernaryOp::CalldataCopy => "(OpCalldataCopy)",
+        EvmTernaryOp::Mcopy => "(OpMcopy)",
     }
 }
 
@@ -541,6 +543,11 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let num_outputs = atom_i64(&items[3])? as i32;
                     Ok(Rc::new(EvmExpr::InlineAsm(inputs, hex, num_outputs)))
                 }
+                "MemRegion" => {
+                    let id = atom_i64(&items[1])?;
+                    let size = atom_i64(&items[2])?;
+                    Ok(Rc::new(EvmExpr::MemRegion(id, size)))
+                }
                 other => Err(IrError::Extraction(format!(
                     "unknown expression constructor: {other}"
                 ))),
@@ -738,6 +745,7 @@ fn sexp_to_ternop(sexp: &Sexp) -> Result<EvmTernaryOp, IrError> {
                 "OpKeccak256" => Ok(EvmTernaryOp::Keccak256),
                 "OpSelect" => Ok(EvmTernaryOp::Select),
                 "OpCalldataCopy" => Ok(EvmTernaryOp::CalldataCopy),
+                "OpMcopy" => Ok(EvmTernaryOp::Mcopy),
                 other => Err(IrError::Extraction(format!("unknown ternary op: {other}"))),
             }
         }
@@ -976,7 +984,7 @@ fn is_leaf_form(tree: &STree) -> bool {
                     | "OpAnd" | "OpOr" | "OpXor" | "OpShl" | "OpShr" | "OpSar" | "OpByte"
                     | "OpLogAnd" | "OpLogOr" | "OpSLoad" | "OpTLoad" | "OpMLoad" | "OpCalldataLoad"
                     | "OpIsZero" | "OpNot" | "OpNeg" | "OpSignExtend"
-                    | "OpSStore" | "OpTStore" | "OpMStore" | "OpMStore8" | "OpKeccak256" | "OpSelect" | "OpCalldataCopy"
+                    | "OpSStore" | "OpTStore" | "OpMStore" | "OpMStore8" | "OpKeccak256" | "OpSelect" | "OpCalldataCopy" | "OpMcopy"
                     // Types
                     | "UIntT" | "IntT" | "BytesT" | "AddrT" | "BoolT" | "UnitT" | "StateT"
                     | "Base" | "TupleT" | "TLCons" | "TLNil"
@@ -985,7 +993,7 @@ fn is_leaf_form(tree: &STree) -> bool {
                     // Context
                     | "InFunction"
                     // Leaves
-                    | "Selector" | "Var" | "VarStore" | "StorageField"
+                    | "Selector" | "Var" | "VarStore" | "StorageField" | "MemRegion"
                     // Empty/Arg (no sub-expressions)
                     | "Arg" | "Empty" | "Const"
                 )
