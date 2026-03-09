@@ -62,6 +62,8 @@ fn ensure_atexit() {
         extern "C" {
             fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
         }
+        // SAFETY: `flush_gas_snapshot` is an extern "C" fn with no captures;
+        // registering it with libc `atexit` is safe.
         unsafe {
             atexit(flush_gas_snapshot);
         }
@@ -331,6 +333,7 @@ impl EvmHandle {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn call_fn(&mut self, sig: &str, args: &[[u8; 32]]) -> CallResult {
         let cd = calldata(selector(sig), args);
         let tx = TxEnv::builder()
