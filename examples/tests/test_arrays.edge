@@ -1,16 +1,33 @@
 // test_arrays.edge — Execution tests for array features
 //
-// A contract with public functions that exercise array instantiation,
-// element access, iteration, and storage arrays.
+// Covers: memory arrays, storage arrays, bounds checking (const + dynamic),
+// element access, iteration, mutation, slices, and multi-word layouts.
 
 contract TestArrays {
     let values: &s [u256; 5];
+    let small: &s [u256; 3];
 
+    // ── Memory array: basic element access ──────────────────────────
     pub fn element_access() -> (u256) {
         let arr: [u256; 3] = [10, 20, 30];
         return arr[1];
     }
 
+    // ── Memory array: read all elements ─────────────────────────────
+    pub fn read_all() -> (u256) {
+        let arr: [u256; 4] = [100, 200, 300, 400];
+        return arr[0] + arr[1] + arr[2] + arr[3];
+    }
+
+    // ── Memory array: write then read ───────────────────────────────
+    pub fn write_then_read() -> (u256) {
+        let arr: [u256; 3] = [1, 2, 3];
+        arr[0] = 99;
+        arr[2] = 77;
+        return arr[0] + arr[1] + arr[2];
+    }
+
+    // ── Memory array: iteration sum ─────────────────────────────────
     pub fn sum_array() -> (u256) {
         let arr: [u256; 4] = [10, 20, 30, 40];
         let total: u256 = 0;
@@ -20,6 +37,35 @@ contract TestArrays {
         return total;
     }
 
+    // ── Memory array: write via loop then sum ───────────────────────
+    pub fn loop_write_sum() -> (u256) {
+        let arr: [u256; 5] = [0, 0, 0, 0, 0];
+        for (let i: u256 = 0; i < 5; i = i + 1) {
+            arr[i] = i * 10;
+        }
+        return arr[0] + arr[1] + arr[2] + arr[3] + arr[4];
+    }
+
+    // ── Memory array: find max ──────────────────────────────────────
+    pub fn find_max() -> (u256) {
+        let arr: [u256; 5] = [30, 10, 50, 20, 40];
+        let max_val: u256 = arr[0];
+        for (let i: u256 = 1; i < 5; i = i + 1) {
+            if (arr[i] > max_val) {
+                max_val = arr[i];
+            }
+        }
+        return max_val;
+    }
+
+    // ── Slice access ────────────────────────────────────────────────
+    pub fn slice_sum() -> (u256) {
+        let arr: [u256; 5] = [10, 20, 30, 40, 50];
+        let slice: [u256; 2] = arr[1:3];
+        return slice[0] + slice[1];
+    }
+
+    // ── Storage array: set/get ──────────────────────────────────────
     pub fn set(index: u256, value: u256) {
         values[index] = value;
     }
@@ -28,9 +74,21 @@ contract TestArrays {
         return values[index];
     }
 
-    pub fn slice_sum() -> (u256) {
-        let arr: [u256; 5] = [10, 20, 30, 40, 50];
-        let slice: [u256; 2] = arr[1:3];
-        return slice[0] + slice[1];
+    // ── Storage array: sum all ──────────────────────────────────────
+    pub fn storage_sum() -> (u256) {
+        let total: u256 = 0;
+        for (let i: u256 = 0; i < 5; i = i + 1) {
+            total = total + values[i];
+        }
+        return total;
+    }
+
+    // ── Storage array: set on smaller array ─────────────────────────
+    pub fn set_small(index: u256, value: u256) {
+        small[index] = value;
+    }
+
+    pub fn get_small(index: u256) -> (u256) {
+        return small[index];
     }
 }

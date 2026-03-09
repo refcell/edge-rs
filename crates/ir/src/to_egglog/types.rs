@@ -139,7 +139,8 @@ impl AstToEgglog {
 
     /// Lower a type signature to an EVM IR type.
     pub(crate) fn lower_type_sig(&self, ty: &edge_ast::ty::TypeSig) -> EvmType {
-        match ty {
+        let resolved = self.resolve_type_alias(ty).clone();
+        match &resolved {
             edge_ast::ty::TypeSig::Primitive(prim) => {
                 EvmType::Base(self.lower_primitive_base_type(prim))
             }
@@ -149,12 +150,21 @@ impl AstToEgglog {
                     .iter()
                     .map(|t| match self.lower_type_sig(t) {
                         EvmType::Base(b) => b,
-                        EvmType::TupleT(_) => EvmBaseType::UIntT(256), // flatten nested tuples
+                        EvmType::TupleT(_) | EvmType::ArrayT(..) => EvmBaseType::UIntT(256),
                     })
                     .collect();
                 EvmType::TupleT(base_types)
             }
-            _ => EvmType::Base(EvmBaseType::UIntT(256)), // fallback for unhandled types
+            edge_ast::ty::TypeSig::Array(elem, len_expr)
+            | edge_ast::ty::TypeSig::PackedArray(elem, len_expr) => {
+                let elem_base = match self.lower_type_sig(elem) {
+                    EvmType::Base(b) => b,
+                    _ => EvmBaseType::UIntT(256),
+                };
+                let len = Self::extract_array_length(len_expr).unwrap_or(0);
+                EvmType::ArrayT(elem_base, len)
+            }
+            _ => EvmType::Base(EvmBaseType::UIntT(256)),
         }
     }
 
@@ -192,7 +202,7 @@ impl AstToEgglog {
                     .iter()
                     .map(|(_, ty)| match self.lower_type_sig(ty) {
                         EvmType::Base(b) => b,
-                        EvmType::TupleT(_) => EvmBaseType::UIntT(256),
+                        EvmType::TupleT(_) | EvmType::ArrayT(..) => EvmBaseType::UIntT(256),
                     })
                     .collect();
                 EvmType::TupleT(base_types)
@@ -210,7 +220,7 @@ impl AstToEgglog {
                     .iter()
                     .map(|ty| match self.lower_type_sig(ty) {
                         EvmType::Base(b) => b,
-                        EvmType::TupleT(_) => EvmBaseType::UIntT(256),
+                        EvmType::TupleT(_) | EvmType::ArrayT(..) => EvmBaseType::UIntT(256),
                     })
                     .collect();
                 EvmType::TupleT(base_types)

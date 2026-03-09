@@ -1167,7 +1167,7 @@ impl<'a> ExprCompiler<'a> {
         match ty {
             EvmType::TupleT(elems) => elems.len(),
             EvmType::Base(EvmBaseType::UnitT) | EvmType::Base(EvmBaseType::StateT) => 0,
-            EvmType::Base(_) => 1,
+            EvmType::Base(_) | EvmType::ArrayT(..) => 1,
         }
     }
 

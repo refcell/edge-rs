@@ -31,7 +31,9 @@
   ;; A primitive type
   (Base EvmBaseType)
   ;; A typed tuple
-  (TupleT EvmTypeList))
+  (TupleT EvmTypeList)
+  ;; A fixed-size array type: (ArrayT element_type length)
+  (ArrayT EvmBaseType i64))
 
 (constructor TLNil () EvmTypeList)
 (constructor TLCons (EvmBaseType EvmTypeList) EvmTypeList)

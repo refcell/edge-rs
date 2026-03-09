@@ -176,6 +176,9 @@ fn type_sexp(ty: &EvmType) -> String {
             });
             format!("(TupleT {list})")
         }
+        EvmType::ArrayT(elem, len) => {
+            format!("(ArrayT {} {})", basetype_sexp(elem), len)
+        }
     }
 }
 
@@ -586,6 +589,13 @@ fn sexp_to_type(sexp: &Sexp) -> Result<EvmType, IrError> {
                 "TupleT" => {
                     let types = sexp_to_type_list(&items[1])?;
                     Ok(EvmType::TupleT(types))
+                }
+                "ArrayT" => {
+                    let elem = sexp_to_basetype(&items[1])?;
+                    let len = atom_str(&items[2])?
+                        .parse::<usize>()
+                        .map_err(|e| IrError::Extraction(format!("bad array length: {e}")))?;
+                    Ok(EvmType::ArrayT(elem, len))
                 }
                 other => Err(IrError::Extraction(format!("unknown type: {other}"))),
             }
