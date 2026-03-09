@@ -489,13 +489,10 @@ impl AstToEgglog {
         let len_ir = ast_helpers::const_int(array_len as i64, self.current_ctx.clone());
         let in_bounds = ast_helpers::bop(EvmBinaryOp::Lt, Rc::clone(idx_ir), len_ir);
         let zero = ast_helpers::const_int(0, self.current_ctx.clone());
-        let revert = ast_helpers::revert(
-            zero.clone(),
-            zero,
-            Rc::clone(&self.current_state),
-        );
+        let revert = ast_helpers::revert(Rc::clone(&zero), zero, Rc::clone(&self.current_state));
         let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
-        let inputs = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         let bounds_check = ast_helpers::if_then_else(in_bounds, inputs, empty, revert);
         self.current_state = Rc::clone(&bounds_check);
         Ok(Some(bounds_check))
