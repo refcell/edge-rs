@@ -133,7 +133,9 @@
   ;; Select: (Select cond true_val false_val) -> val
   (OpSelect)
   ;; Calldata copy: (CalldataCopy dest_offset cd_offset size) -> state
-  (OpCalldataCopy))
+  (OpCalldataCopy)
+  ;; Memory copy: (Mcopy dest src size) -> state
+  (OpMcopy))
 
 ;; Operator constructors
 (constructor Bop (EvmBinaryOp EvmExpr EvmExpr) EvmExpr)
@@ -240,6 +242,11 @@
 ;; Input expressions are compiled before the asm body.
 ;; Opaque to egglog — no rewrite rules should match this.
 (constructor InlineAsm (ListExpr String i64) EvmExpr)
+
+;; Memory region allocation: (MemRegion region_id size_words) -> base address
+;; Symbolic memory allocation resolved to concrete offset after egglog extraction.
+;; Different region IDs are guaranteed non-overlapping.
+(constructor MemRegion (i64 i64) EvmExpr)
 
 ;; ============================================================
 ;; Rulesets

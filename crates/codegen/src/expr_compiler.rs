@@ -146,6 +146,15 @@ impl<'a> ExprCompiler<'a> {
                 }
                 // Multi-arg Arg should be accessed via Get(Arg, i), not bare.
             }
+            EvmExpr::MemRegion(id, _size) => {
+                // MemRegion should have been resolved to a concrete offset by
+                // assign_memory_offsets(). If we get here, it's a bug.
+                panic!(
+                    "MemRegion({id}) reached codegen without being resolved to a concrete offset. \
+                     Run assign_memory_offsets() after egglog extraction."
+                );
+            }
+
             EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
                 // Empty: unit — no value on stack.
                 // StorageField: declarations don't emit code.
@@ -959,6 +968,15 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit_op(Opcode::CallDataCopy);
                 self.stack_depth -= 3; // pops 3, pushes 0
             }
+            EvmTernaryOp::Mcopy => {
+                // Mcopy(dest, src, size)
+                // EVM stack order: MCOPY(dest, src, length) — pops 3, pushes 0
+                self.compile_expr(c); // size
+                self.compile_expr(b); // src
+                self.compile_expr(a); // dest
+                self.asm.emit_op(Opcode::MCopy);
+                self.stack_depth -= 3; // pops 3, pushes 0
+            }
             EvmTernaryOp::Select => {
                 // Select(cond, true_val, false_val) → if cond then true_val else false_val
                 let else_label = self.asm.fresh_label("select_else");
@@ -1184,7 +1202,8 @@ impl<'a> ExprCompiler<'a> {
                 | EvmTernaryOp::TStore
                 | EvmTernaryOp::MStore
                 | EvmTernaryOp::MStore8
-                | EvmTernaryOp::CalldataCopy => 0,
+                | EvmTernaryOp::CalldataCopy
+                | EvmTernaryOp::Mcopy => 0,
                 EvmTernaryOp::Keccak256 | EvmTernaryOp::Select => 1,
             },
             // If: both branches should push the same count

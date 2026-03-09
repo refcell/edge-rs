@@ -1,0 +1,47 @@
+// test_mem_region_return.edge — Verify MemRegion-based memory allocation
+// for tuple returns containing a mix of types:
+//   u256, addr, packed struct, and a 10-element memory array.
+//
+// The return tuple is: (u256, addr, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256)
+// = 1 u256 + 1 addr + 1 packed_sum + 10 array elements = 13 slots.
+
+type Color = packed {
+    r: u8,
+    g: u8,
+    b: u8,
+};
+
+abi IMemRegionReturn {
+    fn build_and_return(multiplier: u256) -> (u256, addr, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256);
+}
+
+contract MemRegionReturn {
+    pub fn build_and_return(multiplier: u256) -> (u256, addr, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256, u256) {
+        // 1. u256: simple computation
+        let val: u256 = multiplier * 7;
+
+        // 2. addr: caller
+        let who: addr = @caller();
+
+        // 3. packed struct: sum of fields
+        let c: Color;
+        c = Color { r: 11, g: 22, b: 33 };
+        let packed_sum: u256 = c.r + c.g + c.b;
+
+        // 4. 10-element memory array with distinct values
+        let arr: [u256; 10] = [
+            100 + multiplier,
+            200 + multiplier,
+            300 + multiplier,
+            400 + multiplier,
+            500 + multiplier,
+            600 + multiplier,
+            700 + multiplier,
+            800 + multiplier,
+            900 + multiplier,
+            1000 + multiplier,
+        ];
+
+        return (val, who, packed_sum, arr);
+    }
+}

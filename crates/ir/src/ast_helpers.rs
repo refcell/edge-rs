@@ -258,9 +258,22 @@ pub fn calldatacopy(dest: RcExpr, cd_offset: RcExpr, size: RcExpr) -> RcExpr {
     top(EvmTernaryOp::CalldataCopy, dest, cd_offset, size)
 }
 
+/// Memory copy: (`dest`, `src`, `size`) -> state effect.
+/// Copies `size` bytes from memory at `src` to memory at `dest`.
+pub fn mcopy(dest: RcExpr, src: RcExpr, size: RcExpr) -> RcExpr {
+    top(EvmTernaryOp::Mcopy, dest, src, size)
+}
+
 /// Keccak256 hash: (offset, size, state) -> hash.
 /// The state parameter captures the memory dependency so that
 /// keccak256 calls with different memory contents are distinguishable.
 pub fn keccak256(offset: RcExpr, size: RcExpr, state: RcExpr) -> RcExpr {
     top(EvmTernaryOp::Keccak256, offset, size, state)
+}
+
+/// Symbolic memory region allocation.
+/// Returns an expression that evaluates to the base address of the region.
+/// `region_id` must be unique per allocation site; `size_words` is the number of 32-byte words.
+pub fn mem_region(region_id: i64, size_words: i64) -> RcExpr {
+    Rc::new(EvmExpr::MemRegion(region_id, size_words))
 }

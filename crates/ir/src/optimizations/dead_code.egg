@@ -73,6 +73,9 @@
 ;; Drop (lifetime marker) is pure — no side effects
 (rule ((= e (Drop name)))                  ((IsPure e)) :ruleset dead-code)
 
+;; MemRegion (symbolic allocation) is pure — just a compile-time constant
+(rule ((= e (MemRegion id sz)))            ((IsPure e)) :ruleset dead-code)
+
 ;; Concat of pure expressions is pure (enables cascading DCE)
 (rule ((= e (Concat a b)) (IsPure a) (IsPure b))
       ((IsPure e)) :ruleset dead-code)
