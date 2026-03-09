@@ -5,7 +5,7 @@ use std::rc::Rc;
 use super::AstToEgglog;
 use crate::{
     ast_helpers,
-    schema::{EvmBaseType, EvmType, RcExpr},
+    schema::{EvmBaseType, EvmBinaryOp, EvmType, RcExpr},
     IrError,
 };
 
@@ -445,6 +445,59 @@ impl AstToEgglog {
         None
     }
 
+    /// Extract the array length from a `__array__N` composite type string.
+    fn extract_array_len_from_composite(type_name: &str) -> Option<usize> {
+        type_name
+            .strip_prefix("__array__")
+            .and_then(|s| s.parse::<usize>().ok())
+    }
+
+    /// Try to extract a compile-time constant integer from an AST expression.
+    fn try_const_index(expr: &edge_ast::Expr) -> Option<u64> {
+        match expr {
+            edge_ast::Expr::Literal(lit) => match lit.as_ref() {
+                edge_ast::lit::Lit::Int(val, _, _) => Some(*val),
+                _ => None,
+            },
+            edge_ast::Expr::Paren(inner, _) => Self::try_const_index(inner),
+            _ => None,
+        }
+    }
+
+    /// Validate array bounds. For const indices, emits a compile error if out of bounds.
+    /// For non-const indices, emits a runtime bounds check that reverts on OOB.
+    fn check_array_bounds(
+        &mut self,
+        index: &edge_ast::Expr,
+        array_len: usize,
+        idx_ir: &RcExpr,
+    ) -> Result<Option<RcExpr>, IrError> {
+        if let Some(const_idx) = Self::try_const_index(index) {
+            if const_idx >= array_len as u64 {
+                return Err(IrError::LoweringSpanned {
+                    message: format!(
+                        "array index {const_idx} is out of bounds for array of length {array_len}"
+                    ),
+                    span: index.span(),
+                });
+            }
+            // Const index is in bounds — no runtime check needed
+            return Ok(None);
+        }
+
+        // Non-const index: emit `if (index >= len) { revert(0, 0) }`
+        let len_ir = ast_helpers::const_int(array_len as i64, self.current_ctx.clone());
+        let in_bounds = ast_helpers::bop(EvmBinaryOp::Lt, Rc::clone(idx_ir), len_ir);
+        let zero = ast_helpers::const_int(0, self.current_ctx.clone());
+        let revert = ast_helpers::revert(Rc::clone(&zero), zero, Rc::clone(&self.current_state));
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+        let inputs =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
+        let bounds_check = ast_helpers::if_then_else(in_bounds, inputs, empty, revert);
+        self.current_state = Rc::clone(&bounds_check);
+        Ok(Some(bounds_check))
+    }
+
     /// Try to lower an array element read for memory-backed arrays.
     /// Returns None if the base is not a memory-backed array.
     pub(crate) fn try_lower_array_element_read(
@@ -454,8 +507,18 @@ impl AstToEgglog {
     ) -> Result<Option<RcExpr>, IrError> {
         if let edge_ast::Expr::Ident(ident) = base {
             // Check for fixed-offset composite (array/struct with known base)
-            if let Some((_type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
+            if let Some((type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
                 let idx_ir = self.lower_expr(index)?;
+                if let Some(array_len) = Self::extract_array_len_from_composite(&type_name) {
+                    let check = self.check_array_bounds(index, array_len, &idx_ir)?;
+                    if let Some(bounds_ir) = check {
+                        let word_size = ast_helpers::const_int(32, self.current_ctx.clone());
+                        let offset =
+                            ast_helpers::add(base_expr, ast_helpers::mul(idx_ir, word_size));
+                        let load = ast_helpers::mload(offset, Rc::clone(&self.current_state));
+                        return Ok(Some(ast_helpers::concat(bounds_ir, load)));
+                    }
+                }
                 let word_size = ast_helpers::const_int(32, self.current_ctx.clone());
                 let offset = ast_helpers::add(base_expr, ast_helpers::mul(idx_ir, word_size));
                 return Ok(Some(ast_helpers::mload(
@@ -486,8 +549,23 @@ impl AstToEgglog {
         value: &RcExpr,
     ) -> Result<Option<RcExpr>, IrError> {
         if let edge_ast::Expr::Ident(ident) = base {
-            if let Some((_type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
+            if let Some((type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
                 let idx_ir = self.lower_expr(index)?;
+                if let Some(array_len) = Self::extract_array_len_from_composite(&type_name) {
+                    let check = self.check_array_bounds(index, array_len, &idx_ir)?;
+                    if let Some(bounds_ir) = check {
+                        let word_size = ast_helpers::const_int(32, self.current_ctx.clone());
+                        let offset =
+                            ast_helpers::add(base_expr, ast_helpers::mul(idx_ir, word_size));
+                        let mstore = ast_helpers::mstore(
+                            offset,
+                            Rc::clone(value),
+                            Rc::clone(&self.current_state),
+                        );
+                        self.current_state = Rc::clone(&mstore);
+                        return Ok(Some(ast_helpers::concat(bounds_ir, mstore)));
+                    }
+                }
                 let word_size = ast_helpers::const_int(32, self.current_ctx.clone());
                 let offset = ast_helpers::add(base_expr, ast_helpers::mul(idx_ir, word_size));
                 let mstore =
@@ -517,12 +595,16 @@ impl AstToEgglog {
         index: &edge_ast::Expr,
     ) -> Result<Option<RcExpr>, IrError> {
         if let edge_ast::Expr::Ident(ident) = base {
-            if let Some(&(base_slot, _len)) = self.storage_array_fields.get(&ident.name) {
+            if let Some(&(base_slot, len)) = self.storage_array_fields.get(&ident.name) {
                 let idx_ir = self.lower_expr(index)?;
+                let check = self.check_array_bounds(index, len, &idx_ir)?;
                 let base_slot_ir =
                     ast_helpers::const_int(base_slot as i64, self.current_ctx.clone());
                 let slot = ast_helpers::add(base_slot_ir, idx_ir);
                 let load = ast_helpers::sload(slot, Rc::clone(&self.current_state));
+                if let Some(bounds_ir) = check {
+                    return Ok(Some(ast_helpers::concat(bounds_ir, load)));
+                }
                 return Ok(Some(load));
             }
         }
@@ -538,14 +620,18 @@ impl AstToEgglog {
         value: &RcExpr,
     ) -> Result<Option<RcExpr>, IrError> {
         if let edge_ast::Expr::Ident(ident) = base {
-            if let Some(&(base_slot, _len)) = self.storage_array_fields.get(&ident.name) {
+            if let Some(&(base_slot, len)) = self.storage_array_fields.get(&ident.name) {
                 let idx_ir = self.lower_expr(index)?;
+                let check = self.check_array_bounds(index, len, &idx_ir)?;
                 let base_slot_ir =
                     ast_helpers::const_int(base_slot as i64, self.current_ctx.clone());
                 let slot = ast_helpers::add(base_slot_ir, idx_ir);
                 let store =
                     ast_helpers::sstore(slot, Rc::clone(value), Rc::clone(&self.current_state));
                 self.current_state = Rc::clone(&store);
+                if let Some(bounds_ir) = check {
+                    return Ok(Some(ast_helpers::concat(bounds_ir, store)));
+                }
                 return Ok(Some(store));
             }
         }

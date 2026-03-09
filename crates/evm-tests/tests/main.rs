@@ -1,5 +1,7 @@
 #![allow(missing_docs)]
 
+#[path = "suites/arrays.rs"]
+mod arrays;
 #[path = "suites/checked_elision.rs"]
 mod checked_elision;
 #[path = "suites/counter.rs"]
