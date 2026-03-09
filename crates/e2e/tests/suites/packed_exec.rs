@@ -138,63 +138,63 @@ const PACKED: &str = "examples/tests/test_packed_structs.edge";
 #[test]
 fn test_packed_rgb_r() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_rgb_r()"), &[]));
-        assert!(ok, "packed_rgb_r() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 1, "packed_rgb_r() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_rgb_r()"), &[]));
+        assert!(r.success,"packed_rgb_r() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 1, "packed_rgb_r() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_rgb_g() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_rgb_g()"), &[]));
-        assert!(ok, "packed_rgb_g() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 2, "packed_rgb_g() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_rgb_g()"), &[]));
+        assert!(r.success,"packed_rgb_g() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 2, "packed_rgb_g() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_rgb_b() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_rgb_b()"), &[]));
-        assert!(ok, "packed_rgb_b() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 3, "packed_rgb_b() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_rgb_b()"), &[]));
+        assert!(r.success,"packed_rgb_b() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 3, "packed_rgb_b() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_pair_a() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_pair_a()"), &[]));
-        assert!(ok, "packed_pair_a() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 42, "packed_pair_a() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_pair_a()"), &[]));
+        assert!(r.success,"packed_pair_a() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 42, "packed_pair_a() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_pair_b() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_pair_b()"), &[]));
-        assert!(ok, "packed_pair_b() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 99, "packed_pair_b() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_pair_b()"), &[]));
+        assert!(r.success,"packed_pair_b() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 99, "packed_pair_b() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_field_sum() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_field_sum()"), &[]));
-        assert!(ok, "packed_field_sum() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 60, "packed_field_sum() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_field_sum()"), &[]));
+        assert!(r.success,"packed_field_sum() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 60, "packed_field_sum() wrong at O{o}");
     });
 }
 
 #[test]
 fn test_packed_two_structs() {
     for_all_opt_levels(PACKED, |h, o| {
-        let (ok, out) = h.call(calldata(selector("packed_two_structs()"), &[]));
-        assert!(ok, "packed_two_structs() reverted at O{o}");
-        assert_eq!(decode_u256(&out), 31, "packed_two_structs() wrong at O{o}");
+        let r = h.call(calldata(selector("packed_two_structs()"), &[]));
+        assert!(r.success,"packed_two_structs() reverted at O{o}");
+        assert_eq!(decode_u256(&r.output), 31, "packed_two_structs() wrong at O{o}");
     });
 }
 
