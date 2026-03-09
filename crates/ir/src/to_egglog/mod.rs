@@ -110,7 +110,7 @@ impl Scope {
     }
 }
 
-/// A contract function: (name, params, body).
+/// A contract function: (name, params, returns, body).
 pub(crate) type ContractFunction = (
     String,
     Vec<(String, edge_ast::ty::TypeSig)>,
