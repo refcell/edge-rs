@@ -1,0 +1,65 @@
+use std::ops::UnsafeAdd;
+use std::ops::UnsafeSub;
+use std::ops::UnsafeMul;
+
+fn _mulmod(a: u256, b: u256, n: u256) -> (u256) {
+    let result: u256 = asm (a, b, n) -> (r) {
+        mulmod
+    };
+    return result;
+}
+
+fn _div_512(a: u256, b: u256, denominator: u256, prod0: u256, prod1: u256) -> (u256) {
+    let remainder: u256 = _mulmod(a, b, denominator);
+    let borrow2: u256 = 0;
+    if remainder > prod0 {
+        borrow2 = 1;
+    }
+    let p1: u256 = UnsafeSub::unsafe_sub(prod1, borrow2);
+    let p0: u256 = UnsafeSub::unsafe_sub(prod0, remainder);
+    let neg_denom: u256 = UnsafeSub::unsafe_sub(0, denominator);
+    let twos: u256 = neg_denom & denominator;
+    let d: u256 = denominator / twos;
+    p0 = p0 / twos;
+    let twos_inv: u256 = UnsafeAdd::unsafe_add(UnsafeSub::unsafe_sub(0, twos) / twos, 1);
+    p0 = p0 | UnsafeMul::unsafe_mul(p1, twos_inv);
+    let inv: u256 = UnsafeMul::unsafe_mul(3, d) ^ 2;
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    inv = UnsafeMul::unsafe_mul(inv, UnsafeSub::unsafe_sub(2, UnsafeMul::unsafe_mul(d, inv)));
+    let result: u256 = UnsafeMul::unsafe_mul(p0, inv);
+    return result;
+}
+
+fn _mul_div(a: u256, b: u256, denominator: u256) -> (u256) {
+    let max_u256: u256 = ~0;
+    let mm: u256 = _mulmod(a, b, max_u256);
+    let prod0: u256 = UnsafeMul::unsafe_mul(a, b);
+    let borrow: u256 = 0;
+    if mm < prod0 {
+        borrow = 1;
+    }
+    let prod1: u256 = UnsafeSub::unsafe_sub(UnsafeSub::unsafe_sub(mm, prod0), borrow);
+    let result: u256 = 0;
+    if prod1 == 0 {
+        if denominator == 0 {
+            revert();
+        }
+        result = prod0 / denominator;
+    } else {
+        if denominator <= prod1 {
+            revert();
+        }
+        result = _div_512(a, b, denominator, prod0, prod1);
+    }
+    return result;
+}
+
+contract Test {
+    pub fn mul_div(a: u256, b: u256, denominator: u256) -> (u256) {
+        return _mul_div(a, b, denominator);
+    }
+}

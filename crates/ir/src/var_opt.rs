@@ -159,10 +159,12 @@ pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_le
         if optimization_level >= 1 {
             // Inline: substitute args, rename locals, splice body at call site.
             // Include both internal and free functions.
-            let all_functions: Vec<_> = contract
-                .internal_functions
+            // Free functions first so internal functions (value-only, no
+            // MSTORE/RETURN epilogue) overwrite in the HashMap when names match.
+            let all_functions: Vec<_> = program
+                .free_functions
                 .iter()
-                .chain(program.free_functions.iter())
+                .chain(contract.internal_functions.iter())
                 .cloned()
                 .collect();
             inline_calls(&mut contract.runtime, &all_functions);
@@ -170,9 +172,9 @@ pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_le
         // Insert early Drops in halting branches for better dead-var-elim
         contract.runtime = insert_early_drops(&contract.runtime);
         contract.constructor = insert_early_drops(&contract.constructor);
-        // Tighten Drop placement: move Drops to right after last use
-        contract.runtime = tighten_drops(&contract.runtime);
-        contract.constructor = tighten_drops(&contract.constructor);
+        // NOTE: tighten_drops runs LATER in the pipeline (after store forwarding
+        // at O0, or after egglog at O1+) because store forwarding can expose new
+        // Var references that were previously hidden in state chains.
         // Optimize internal function bodies
         for func in &mut contract.internal_functions {
             *func = optimize_expr(func);
@@ -962,9 +964,16 @@ fn prepend_drop(expr: &RcExpr, var: &str) -> RcExpr {
 // This reduces variable lifetimes, lowering peak live variables and
 // enabling more stack-eligible allocations (3 gas DUP vs 6 gas MLOAD).
 
-/// Tighten Drop placement in all LetBinds throughout the expression tree.
-pub fn tighten_drops(expr: &RcExpr) -> RcExpr {
-    tighten_drops_rec(expr)
+/// Tighten Drop placement for all contracts in a program.
+/// Must be called AFTER store forwarding (which can expose new Var references).
+pub fn tighten_drops_program(program: &mut crate::schema::EvmProgram) {
+    for contract in &mut program.contracts {
+        contract.runtime = tighten_drops_rec(&contract.runtime);
+        contract.constructor = tighten_drops_rec(&contract.constructor);
+        for func in &mut contract.internal_functions {
+            *func = tighten_drops_rec(func);
+        }
+    }
 }
 
 fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
@@ -1007,137 +1016,216 @@ fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
     }
 }
 
-/// Try to move Drop(name) earlier in a LetBind body.
-///
-/// Works on the tree structure directly (not flattening), so it can
-/// reach Drop(name) nodes buried inside nested LetBinds.
+/// Flatten a Concat chain into a Vec of statements (left-to-right execution order).
+/// Non-Concat nodes become single elements. Nested LetBinds are kept as opaque elements.
+fn flatten_concat(expr: &RcExpr, out: &mut Vec<RcExpr>) {
+    match expr.as_ref() {
+        EvmExpr::Concat(a, b) => {
+            flatten_concat(a, out);
+            flatten_concat(b, out);
+        }
+        _ => out.push(Rc::clone(expr)),
+    }
+}
+
+/// Rebuild a left-leaning Concat chain from a Vec of statements.
+fn rebuild_concat(stmts: &[RcExpr]) -> RcExpr {
+    assert!(!stmts.is_empty());
+    let mut result = Rc::clone(&stmts[0]);
+    for stmt in &stmts[1..] {
+        result = Rc::new(EvmExpr::Concat(result, Rc::clone(stmt)));
+    }
+    result
+}
+
+/// Try to move Drop(name) closer to the last use in a LetBind body.
 ///
 /// Algorithm:
-/// 1. Remove Drop(name) from wherever it sits in the body tree
-/// 2. Insert Drop(name) right after the last sequential use of the variable
-/// 3. If the last use is inside an If with one halting branch, push Drop
-///    into the non-halting branch
+/// 1. Flatten the body into a linear statement list
+/// 2. Find and remove Drop(name) from the list
+/// 3. Scan the entire list to find the last dataflow use
+/// 4. Insert Drop(name) right after that use
+/// 5. Rebuild the Concat chain
 fn tighten_letbind_drop(name: &str, init: &RcExpr, body: &RcExpr) -> RcExpr {
-    // Step 1: Remove Drop(name) from the body tree.
-    let (new_body, found) = remove_drop_from_tree(name, body);
-    if !found {
-        // No Drop(name) found — nothing to tighten.
+    // Flatten the body into a linear list of statements.
+    let mut stmts = Vec::new();
+    flatten_concat(body, &mut stmts);
+
+    // Find and remove Drop(name). It might be a bare Drop or inside a LetBind tail.
+    let _drop_idx = find_and_remove_drop(name, &mut stmts);
+    let Some(_drop_idx) = _drop_idx else {
+        // No Drop found — nothing to tighten.
         return Rc::new(EvmExpr::LetBind(
             name.to_owned(),
             Rc::clone(init),
             Rc::clone(body),
         ));
+    };
+
+    // Find the last statement that references the variable (dataflow only).
+    let mut last_use_idx = None;
+    for (i, stmt) in stmts.iter().enumerate() {
+        if stmt_references_var_deep(stmt, name) {
+            last_use_idx = Some(i);
+        }
     }
-    // Step 2: Insert Drop(name) right after the last use.
+
     let drop_node = Rc::new(EvmExpr::Drop(name.to_owned()));
-    let tightened = insert_drop_after_last_use(name, &new_body, &drop_node);
 
+    match last_use_idx {
+        Some(idx) => {
+            // Try to push Drop deeper into the last-use statement if it's a LetBind or If.
+            // This handles the common case where LetBind(y, init_y, body_y) is
+            // the last top-level statement referencing x — we want Drop(x) inside
+            // body_y right after the last use of x there.
+            //
+            // Always insert at optimal position (right after last use). The Drop
+            // may have been found inside a nested LetBind (via try_remove_drop_from_letbind),
+            // so drop_idx is not comparable with insert_pos — we must not use it as a guard.
+            if let Some(modified) = try_insert_drop_into_stmt(name, &stmts[idx], &drop_node) {
+                stmts[idx] = modified;
+            } else {
+                stmts.insert(idx + 1, drop_node);
+            }
+        }
+        None => {
+            // No use found — variable is dead. Put Drop at start.
+            stmts.insert(0, drop_node);
+        }
+    }
 
+    let new_body = rebuild_concat(&stmts);
     Rc::new(EvmExpr::LetBind(
         name.to_owned(),
         Rc::clone(init),
-        tightened,
+        new_body,
     ))
 }
 
-/// Remove Drop(name) from the expression tree.
-/// Returns (new_expr, was_found).
-///
-/// Traverses Concat chains and LetBind bodies to find and remove the Drop.
-fn remove_drop_from_tree(name: &str, expr: &RcExpr) -> (RcExpr, bool) {
-    match expr.as_ref() {
-        EvmExpr::Drop(n) if n == name => {
-            // Replace with a unit Empty — will be cleaned up by egglog DCE.
-            let empty = Rc::new(EvmExpr::Empty(
-                EvmType::Base(crate::schema::EvmBaseType::UnitT),
-                crate::schema::EvmContext::InFunction("__drop_removed__".into()),
-            ));
-            (empty, true)
-        }
-        EvmExpr::Concat(a, b) => {
-            // Try b first (drops are typically at the tail)
-            let (new_b, found) = remove_drop_from_tree(name, b);
-            if found {
-                return (Rc::new(EvmExpr::Concat(Rc::clone(a), new_b)), true);
+/// Find Drop(name) in the flattened statement list and remove it.
+/// Returns the index where it was found, or None.
+/// Also searches inside LetBind bodies (recursively) since inner tightenings
+/// may have moved the Drop into a nested LetBind.
+fn find_and_remove_drop(name: &str, stmts: &mut Vec<RcExpr>) -> Option<usize> {
+    for i in (0..stmts.len()).rev() {
+        if let EvmExpr::Drop(n) = stmts[i].as_ref() {
+            if n == name {
+                stmts.remove(i);
+                return Some(i);
             }
-            let (new_a, found) = remove_drop_from_tree(name, a);
-            if found {
-                return (Rc::new(EvmExpr::Concat(new_a, Rc::clone(b))), true);
-            }
-            (Rc::clone(expr), false)
         }
-        EvmExpr::LetBind(n, init, body) => {
-            let (new_body, found) = remove_drop_from_tree(name, body);
-            if found {
-                return (
-                    Rc::new(EvmExpr::LetBind(n.clone(), Rc::clone(init), new_body)),
-                    true,
-                );
-            }
-            (Rc::clone(expr), false)
+        // Check inside LetBind bodies
+        if let Some(new_stmt) = try_remove_drop_from_letbind(name, &stmts[i]) {
+            stmts[i] = new_stmt;
+            return Some(i);
         }
-        _ => (Rc::clone(expr), false),
     }
+    None
 }
 
-/// Insert Drop(name) right after the last sequential use of the variable.
-///
-/// In `Concat(a, b)`: if `b` references the var, recurse into `b`.
-/// If only `a` references it, insert Drop between `a` and `b`.
-/// For LetBinds, recurse into the body.
-///
-/// If the last use is an If with one halting branch, push Drop into
-/// the non-halting branch for earlier reclamation.
-fn insert_drop_after_last_use(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> RcExpr {
+/// Try to remove Drop(name) from inside a LetBind's body.
+/// Returns Some(modified_letbind) if found, None otherwise.
+fn try_remove_drop_from_letbind(name: &str, expr: &RcExpr) -> Option<RcExpr> {
     match expr.as_ref() {
-        EvmExpr::Concat(a, b) => {
-            if references_var_dataflow(b, name) {
-                // Last use is somewhere in b — recurse into b
-                let new_b = insert_drop_after_last_use(name, b, drop_node);
-                Rc::new(EvmExpr::Concat(Rc::clone(a), new_b))
-            } else if references_var_dataflow(a, name) {
-                // Last use is in a, b doesn't reference it.
-                // Try to push Drop deeper into a if a is a complex structure.
-                let result = try_insert_drop_deeper(name, a, drop_node);
-                if let Some(new_a_with_drop) = result {
-                    Rc::new(EvmExpr::Concat(new_a_with_drop, Rc::clone(b)))
-                } else {
-                    // Can't go deeper — insert Drop between a and b.
-                    Rc::new(EvmExpr::Concat(
-                        Rc::clone(a),
-                        Rc::new(EvmExpr::Concat(Rc::clone(drop_node), Rc::clone(b))),
-                    ))
+        EvmExpr::LetBind(n, init, body) => {
+            // Flatten body, look for Drop(name)
+            let mut inner_stmts = Vec::new();
+            flatten_concat(body, &mut inner_stmts);
+            for i in (0..inner_stmts.len()).rev() {
+                if let EvmExpr::Drop(dn) = inner_stmts[i].as_ref() {
+                    if dn == name {
+                        inner_stmts.remove(i);
+                        if inner_stmts.is_empty() {
+                            let empty = Rc::new(EvmExpr::Empty(
+                                EvmType::Base(crate::schema::EvmBaseType::UnitT),
+                                crate::schema::EvmContext::InFunction("__drop_removed__".into()),
+                            ));
+                            return Some(Rc::new(EvmExpr::LetBind(
+                                n.clone(),
+                                Rc::clone(init),
+                                empty,
+                            )));
+                        }
+                        let new_body = rebuild_concat(&inner_stmts);
+                        return Some(Rc::new(EvmExpr::LetBind(
+                            n.clone(),
+                            Rc::clone(init),
+                            new_body,
+                        )));
+                    }
                 }
-            } else {
-                // Neither side references the var — just append Drop at end.
-                Rc::new(EvmExpr::Concat(Rc::clone(expr), Rc::clone(drop_node)))
+                // Recurse into nested LetBinds
+                if let Some(new_inner) = try_remove_drop_from_letbind(name, &inner_stmts[i]) {
+                    inner_stmts[i] = new_inner;
+                    let new_body = rebuild_concat(&inner_stmts);
+                    return Some(Rc::new(EvmExpr::LetBind(
+                        n.clone(),
+                        Rc::clone(init),
+                        new_body,
+                    )));
+                }
             }
+            None
         }
-        EvmExpr::LetBind(n, init, body) => {
-            // Recurse into the body to place Drop
-            let new_body = insert_drop_after_last_use(name, body, drop_node);
-            Rc::new(EvmExpr::LetBind(n.clone(), Rc::clone(init), new_body))
-        }
-        _ => {
-            // Leaf or non-Concat node — append Drop after it
-            Rc::new(EvmExpr::Concat(Rc::clone(expr), Rc::clone(drop_node)))
-        }
+        _ => None,
     }
 }
 
-/// Try to insert Drop deeper into a complex expression.
-///
-/// For If with one halting branch, pushes Drop into the non-halting branch.
-/// For LetBind, recurses into the body.
-/// Returns None if we can't go deeper (caller should insert Drop after the expr).
-fn try_insert_drop_deeper(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> Option<RcExpr> {
-    match expr.as_ref() {
+/// Try to insert Drop(name) inside a statement (LetBind or If with halting branch).
+/// Returns Some(modified_stmt) if successful, None if we can't go deeper.
+fn try_insert_drop_into_stmt(name: &str, stmt: &RcExpr, drop_node: &RcExpr) -> Option<RcExpr> {
+    match stmt.as_ref() {
+        EvmExpr::LetBind(n, init, body) => {
+            // Push Drop inside this LetBind's body.
+            let mut inner_stmts = Vec::new();
+            flatten_concat(body, &mut inner_stmts);
+
+            // Find last use of `name` inside the body
+            let mut last_use_idx = None;
+            for (i, s) in inner_stmts.iter().enumerate() {
+                if stmt_references_var_deep(s, name) {
+                    last_use_idx = Some(i);
+                }
+            }
+
+            match last_use_idx {
+                Some(idx) => {
+                    // Try to go deeper if last use is also a LetBind
+                    if let Some(modified) =
+                        try_insert_drop_into_stmt(name, &inner_stmts[idx], drop_node)
+                    {
+                        inner_stmts[idx] = modified;
+                    } else {
+                        inner_stmts.insert(idx + 1, Rc::clone(drop_node));
+                    }
+                    let new_body = rebuild_concat(&inner_stmts);
+                    Some(Rc::new(EvmExpr::LetBind(
+                        n.clone(),
+                        Rc::clone(init),
+                        new_body,
+                    )))
+                }
+                None => {
+                    // Variable only used in init, not body — insert at start of body
+                    inner_stmts.insert(0, Rc::clone(drop_node));
+                    let new_body = rebuild_concat(&inner_stmts);
+                    Some(Rc::new(EvmExpr::LetBind(
+                        n.clone(),
+                        Rc::clone(init),
+                        new_body,
+                    )))
+                }
+            }
+        }
         EvmExpr::If(cond, inputs, then_body, else_body) => {
             let then_halts = expr_definitely_halts(then_body);
             let else_halts = expr_definitely_halts(else_body);
             if then_halts && !else_halts {
                 // Push Drop into else (non-halting) branch
-                let new_else = insert_drop_after_last_use(name, else_body, drop_node);
+                let mut else_stmts = Vec::new();
+                flatten_concat(else_body, &mut else_stmts);
+                else_stmts.push(Rc::clone(drop_node));
+                let new_else = rebuild_concat(&else_stmts);
                 Some(Rc::new(EvmExpr::If(
                     Rc::clone(cond),
                     Rc::clone(inputs),
@@ -1145,8 +1233,10 @@ fn try_insert_drop_deeper(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> Opti
                     new_else,
                 )))
             } else if else_halts && !then_halts {
-                // Push Drop into then (non-halting) branch
-                let new_then = insert_drop_after_last_use(name, then_body, drop_node);
+                let mut then_stmts = Vec::new();
+                flatten_concat(then_body, &mut then_stmts);
+                then_stmts.push(Rc::clone(drop_node));
+                let new_then = rebuild_concat(&then_stmts);
                 Some(Rc::new(EvmExpr::If(
                     Rc::clone(cond),
                     Rc::clone(inputs),
@@ -1157,20 +1247,32 @@ fn try_insert_drop_deeper(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> Opti
                 None
             }
         }
-        EvmExpr::LetBind(n, init, body) => {
-            let new_body = insert_drop_after_last_use(name, body, drop_node);
-            Some(Rc::new(EvmExpr::LetBind(
-                n.clone(),
-                Rc::clone(init),
-                new_body,
-            )))
-        }
-        EvmExpr::Concat(..) => {
-            // Recurse into the Concat
-            Some(insert_drop_after_last_use(name, expr, drop_node))
-        }
         _ => None,
     }
+}
+
+/// Check if a statement references a variable in a dataflow sense.
+/// For top-level statements, this checks the statement itself.
+/// For LetBinds, this recursively checks both init and body (since
+/// variables from outer scopes can be used in inner LetBind inits).
+fn stmt_references_var_deep(stmt: &RcExpr, name: &str) -> bool {
+    match stmt.as_ref() {
+        EvmExpr::LetBind(_, init, body) => {
+            // Check init — outer variables can be used here
+            references_var_dataflow(init, name)
+                || stmt_references_var_deep_in_body(body, name)
+        }
+        EvmExpr::Drop(_) => false, // Drops aren't data-flow uses
+        _ => references_var_dataflow(stmt, name),
+    }
+}
+
+/// Check if a LetBind body (which may contain nested LetBinds) references
+/// a variable from an outer scope.
+fn stmt_references_var_deep_in_body(body: &RcExpr, name: &str) -> bool {
+    let mut stmts = Vec::new();
+    flatten_concat(body, &mut stmts);
+    stmts.iter().any(|s| stmt_references_var_deep(s, name))
 }
 
 /// Substitute all occurrences of `Var(name)` with `replacement` in `expr`.
@@ -1466,6 +1568,13 @@ fn monomorphize_rec(
             let g2 = monomorphize_rec(g, funcs, site_counter, new_functions);
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| monomorphize_rec(i, funcs, site_counter, new_functions))
+                .collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
         // Leaves (EnvRead, EnvRead1, Function, Const, Var, Arg, etc.)
         _ => Rc::clone(expr),
     }
@@ -1574,6 +1683,13 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
             let g2 = substitute_args(g, in_ty, args);
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| substitute_args(i, in_ty, args))
+                .collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
         // Leaves
         _ => Rc::clone(body),
     }
@@ -1638,6 +1754,11 @@ fn collect_letbind_names(expr: &RcExpr, names: &mut std::collections::HashSet<St
         EvmExpr::Call(_, args) => {
             for a in args {
                 collect_letbind_names(a, names);
+            }
+        }
+        EvmExpr::InlineAsm(inputs, ..) => {
+            for input in inputs {
+                collect_letbind_names(input, names);
             }
         }
         _ => {}
@@ -1756,6 +1877,13 @@ fn rename_locals_rec(
             let f2 = rename_locals_rec(f, suffix, defined);
             let g2 = rename_locals_rec(g, suffix, defined);
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
+        }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| rename_locals_rec(i, suffix, defined))
+                .collect();
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
         }
         _ => Rc::clone(expr),
     }

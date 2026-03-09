@@ -41,7 +41,7 @@ test_impl::test_point_sum(), 135, 113, 110, 110
 test_impl::test_point_x(), 195, 176, 176, 176
 test_inline_asm::asm_add(), 151, 149, 149, 149
 test_inline_asm::asm_caller(), 204, 202, 202, 202
-test_inline_asm::asm_computed_local(), 246, 210, 210, 210
+test_inline_asm::asm_computed_local(), 251, 210, 210, 210
 test_inline_asm::asm_hex_literal(), 203, 201, 201, 201
 test_inline_asm::asm_identity(), 96, 96, 96, 96
 test_inline_asm::asm_local_var(), 210, 208, 208, 208
@@ -51,7 +51,9 @@ test_inline::double_val(), 195, 129, 129, 129
 test_inline::inline_in_branch(uint256), 354, 306, 306, 306
 test_inline::inline_in_loop(), 1039, 879, 879, 879
 test_inline::triple_val(), 254, 114, 114, 114
-test_inline::weighted_sum_val(), 441, 164, 164, 164
+test_inline::weighted_sum_val(), 433, 164, 164, 164
+test_inlined_halt::compute(uint256,uint256,uint256), 726, 726, 726, 726
+test_inlined_halt::wrapper(uint256,uint256,uint256), 726, 726, 726, 726
 test_logs::emit_no_indexed(uint256), 23257, 23250, 23250, 23250
 test_logs::emit_one_indexed(uint256,uint256), 23566, 23559, 23559, 23559
 test_logs::emit_three_indexed(uint256,uint256,uint256), 24125, 24123, 24123, 24123
@@ -62,7 +64,7 @@ test_loop_storage::count_up(uint256), 23161, 23161, 23161, 23161
 test_loop_storage::get_count(), 2229, 2229, 2229, 2229
 test_loop_storage::get_last_val(), 2230, 2230, 2230, 2230
 test_loop_storage::get_total(), 2285, 2285, 2285, 2285
-test_loop_storage::read_write_loop(uint256), 45014, 45014, 45014, 45014
+test_loop_storage::read_write_loop(uint256), 44999, 44999, 44999, 44999
 test_loop_storage::reset(), 4790, 4790, 4790, 4790
 test_mappings::counter_get(address), 2411, 2405, 2405, 2405
 test_mappings::counter_inc(address), 22574, 22562, 22562, 22562

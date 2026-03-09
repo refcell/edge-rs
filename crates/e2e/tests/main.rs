@@ -17,6 +17,8 @@ mod examples;
 mod expressions;
 #[path = "suites/features_exec.rs"]
 mod features_exec;
+#[path = "suites/full_math_exec.rs"]
+mod full_math_exec;
 #[path = "suites/finance_exec.rs"]
 mod finance_exec;
 #[path = "suites/generics_exec.rs"]
@@ -25,6 +27,8 @@ mod generics_exec;
 mod generics_negative;
 #[path = "suites/inline_asm_exec.rs"]
 mod inline_asm_exec;
+#[path = "suites/inlined_halt_exec.rs"]
+mod inlined_halt_exec;
 #[path = "suites/internal_fn_types.rs"]
 mod internal_fn_types;
 #[path = "suites/packed_exec.rs"]

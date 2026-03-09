@@ -1146,9 +1146,10 @@ impl AstToEgglog {
         // For 0-1 outputs, we can use the simple encoding.
         // For N>1 outputs, append MSTORE/POP to bytecode to capture outputs to memory.
 
-        // Collect lowered input expressions
+        // Collect lowered input expressions in reverse order so that codegen's
+        // forward push places the first asm arg on TOS (EVM operand convention).
         let mut input_exprs: Vec<RcExpr> = Vec::new();
-        for input_expr in inputs {
+        for input_expr in inputs.iter().rev() {
             input_exprs.push(self.lower_expr(input_expr)?);
         }
 

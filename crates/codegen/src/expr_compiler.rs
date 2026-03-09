@@ -36,6 +36,11 @@ pub struct ExprCompiler<'a> {
     allocation_modes: HashMap<String, VarAllocation>,
     /// Maps stack-allocated variable names to their stack position (depth when pushed)
     stack_vars: HashMap<String, usize>,
+    /// Remaining reads for stack-allocated variables (for last-use consume optimization)
+    remaining_reads: HashMap<String, usize>,
+    /// True when compiling code after a RETURN/REVERT (unreachable dead code).
+    /// Disables consume optimization since dead-code stack accounting is fragile.
+    in_dead_code: bool,
     /// Current EVM stack depth (number of values on the stack, tracked for DUP indexing)
     stack_depth: usize,
     /// Label for shared overflow revert trampoline (lazily created)
@@ -76,6 +81,8 @@ impl<'a> ExprCompiler<'a> {
             free_slots: Vec::new(),
             allocation_modes,
             stack_vars: HashMap::new(),
+            remaining_reads: HashMap::new(),
+            in_dead_code: false,
             stack_depth: 0,
             overflow_revert_label: None,
             fn_info: HashMap::new(),
@@ -216,13 +223,10 @@ impl<'a> ExprCompiler<'a> {
                         _ => None,
                     };
                     if let Some(dn) = drop_name {
-                        if dn == var_name {
+                        if dn == var_name && !self.in_dead_code {
                             if let Some(&var_pos) = self.stack_vars.get(var_name.as_str()) {
                                 let depth = self.stack_depth - var_pos;
                                 if depth == 1 {
-                                    // Elide: skip DUP and Drop, just remove
-                                    // tracking. x stays on the stack as the
-                                    // "result" value.
                                     self.stack_vars.remove(var_name.as_str());
                                     // Compile rest if Concat(Drop, rest)
                                     if let EvmExpr::Concat(_, rest) = b.as_ref() {
@@ -235,6 +239,10 @@ impl<'a> ExprCompiler<'a> {
                     }
                 }
                 self.compile_expr(a);
+                // Mark dead code after a halting expression
+                if Self::expr_definitely_halts(a.as_ref()) {
+                    self.in_dead_code = true;
+                }
                 self.compile_expr(b);
             }
 
@@ -447,18 +455,28 @@ impl<'a> ExprCompiler<'a> {
         match self.alloc_mode(name) {
             AllocationMode::Stack => {
                 // Stack mode: leave value on stack, use DUP to read
+                let was_dead = self.in_dead_code;
                 self.compile_expr(value);
+                // If init halts, body is dead code
+                if Self::expr_definitely_halts(value.as_ref()) {
+                    self.in_dead_code = true;
+                }
                 // Value is now on top of stack; record its position
                 let var_pos = self.stack_depth - 1;
                 let prev_stack = self.stack_vars.insert(name.to_owned(), var_pos);
+                // Count reads in body for last-use consume optimization.
+                // Disable consume when body halts or we're in dead code:
+                // cleanup will be skipped so the var must "leak" on stack
+                // to maintain consistent depth accounting.
+                let body_halts = Self::expr_definitely_halts(body.as_ref());
+                let reads = if body_halts || self.in_dead_code {
+                    usize::MAX
+                } else {
+                    Self::count_var_reads(name, body)
+                };
+                let prev_reads = self.remaining_reads.insert(name.to_owned(), reads);
 
                 self.compile_expr(body);
-
-                // Only clean up if the variable wasn't already dropped by an
-                // early Drop node (e.g. in a halting branch).
-                // Also skip cleanup if the body definitely halts — the cleanup
-                // code is unreachable and the stack accounting would be wrong.
-                let body_halts = Self::expr_definitely_halts(body.as_ref());
                 if self.stack_vars.contains_key(name) && !body_halts {
                     // Clean up: remove variable from under body's results
                     let body_count = Self::count_stack_values(body);
@@ -480,10 +498,20 @@ impl<'a> ExprCompiler<'a> {
                 } else {
                     self.stack_vars.remove(name);
                 }
+                if let Some(prev) = prev_reads {
+                    self.remaining_reads.insert(name.to_owned(), prev);
+                } else {
+                    self.remaining_reads.remove(name);
+                }
+                self.in_dead_code = was_dead;
             }
             AllocationMode::Memory => {
                 // Memory mode: compile value, spill to memory
+                let was_dead = self.in_dead_code;
                 self.compile_expr(value);
+                if Self::expr_definitely_halts(value.as_ref()) {
+                    self.in_dead_code = true;
+                }
                 // Allocate a memory slot: reuse a freed slot or bump the high-water mark
                 let offset = if let Some(reused) = self.free_slots.pop() {
                     reused
@@ -510,6 +538,7 @@ impl<'a> ExprCompiler<'a> {
                 } else {
                     self.let_bindings.remove(name);
                 }
+                self.in_dead_code = was_dead;
             }
         }
     }
@@ -517,15 +546,29 @@ impl<'a> ExprCompiler<'a> {
     /// Compile a variable read.
     fn compile_var(&mut self, name: &str) {
         if let Some(&var_pos) = self.stack_vars.get(name) {
-            // Stack mode: DUP from the correct position
-            let dup_index = self.stack_depth - var_pos;
+            let depth = self.stack_depth - var_pos;
             debug_assert!(
-                (1..=16).contains(&dup_index),
-                "DUP index {dup_index} out of range for variable {name} (depth={}, pos={var_pos})",
+                (1..=16).contains(&depth),
+                "DUP/SWAP index {depth} out of range for variable {name} (depth={}, pos={var_pos})",
                 self.stack_depth
             );
-            self.asm.emit_op(Opcode::dup_n(dup_index as u8));
-            self.stack_depth += 1;
+
+            // Check if this is the last read — if so and var is at TOS,
+            // consume it directly instead of DUP + later SWAP+POP.
+            let is_last_use = if let Some(remaining) = self.remaining_reads.get_mut(name) {
+                *remaining = remaining.saturating_sub(1);
+                *remaining == 0
+            } else {
+                false
+            };
+
+            if is_last_use && depth == 1 && !self.in_dead_code {
+                // Last use and var is at TOS: consume in-place.
+                self.stack_vars.remove(name);
+            } else {
+                self.asm.emit_op(Opcode::dup_n(depth as u8));
+                self.stack_depth += 1;
+            }
         } else {
             // Memory mode: PUSH offset, MLOAD
             let offset = *self.let_bindings.get(name).unwrap_or_else(|| {
@@ -560,7 +603,6 @@ impl<'a> ExprCompiler<'a> {
     /// slot for reuse.
     fn compile_drop(&mut self, name: &str) {
         if let Some(var_pos) = self.stack_vars.remove(name) {
-            // Stack mode: actually emit POP to remove the variable
             let depth = self.stack_depth - var_pos;
             if depth == 1 {
                 // Variable is at TOS: just POP
@@ -1059,6 +1101,15 @@ impl<'a> ExprCompiler<'a> {
         let stack_vars_before = self.stack_vars.clone();
         let let_bindings_before = self.let_bindings.clone();
         let free_slots_before = self.free_slots.clone();
+        let remaining_reads_before = self.remaining_reads.clone();
+        let was_dead = self.in_dead_code;
+
+        // Prevent consume of outer stack vars inside branches.
+        for name in stack_vars_before.keys() {
+            if let Some(count) = self.remaining_reads.get_mut(name) {
+                *count = usize::MAX;
+            }
+        }
 
         let then_halts = Self::expr_definitely_halts(then_body);
         let else_halts = Self::expr_definitely_halts(else_body);
@@ -1070,12 +1121,21 @@ impl<'a> ExprCompiler<'a> {
         let stack_vars_after_then = self.stack_vars.clone();
         let let_bindings_after_then = self.let_bindings.clone();
         let free_slots_after_then = self.free_slots.clone();
+        let remaining_reads_after_then = self.remaining_reads.clone();
 
         // Restore all compiler state for the else path
         self.stack_depth = depth_before_branches;
-        self.stack_vars = stack_vars_before;
+        self.stack_vars = stack_vars_before.clone();
         self.let_bindings = let_bindings_before;
         self.free_slots = free_slots_before;
+        self.remaining_reads = remaining_reads_before.clone();
+        self.in_dead_code = was_dead;
+        // Re-apply MAX protection for outer vars in else branch
+        for name in stack_vars_before.keys() {
+            if let Some(count) = self.remaining_reads.get_mut(name) {
+                *count = usize::MAX;
+            }
+        }
 
         self.asm.emit(AsmInstruction::Label(else_label));
         self.compile_expr(else_body);
@@ -1094,6 +1154,7 @@ impl<'a> ExprCompiler<'a> {
             self.stack_vars = stack_vars_after_then;
             self.let_bindings = let_bindings_after_then;
             self.free_slots = free_slots_after_then;
+            self.remaining_reads = remaining_reads_after_then;
         } else if !then_halts && !else_halts {
             debug_assert_eq!(
                 depth_after_else, depth_after_then,
@@ -1109,12 +1170,71 @@ impl<'a> ExprCompiler<'a> {
     fn expr_definitely_halts(expr: &EvmExpr) -> bool {
         match expr {
             EvmExpr::ReturnOp(_, _, _) | EvmExpr::Revert(_, _, _) => true,
-            EvmExpr::Concat(_, b) => Self::expr_definitely_halts(b),
+            EvmExpr::Concat(a, b) => {
+                Self::expr_definitely_halts(a) || Self::expr_definitely_halts(b)
+            }
             EvmExpr::If(_, _, then_body, else_body) => {
                 Self::expr_definitely_halts(then_body) && Self::expr_definitely_halts(else_body)
             }
-            EvmExpr::LetBind(_, _, body) => Self::expr_definitely_halts(body),
+            EvmExpr::LetBind(_, init, body) => {
+                Self::expr_definitely_halts(init) || Self::expr_definitely_halts(body)
+            }
+            EvmExpr::VarStore(_, val) => Self::expr_definitely_halts(val),
             _ => false,
+        }
+    }
+
+    /// Count how many times `Var(name)` appears in an expression tree.
+    /// Skips state parameters (same positions codegen skips) for accuracy.
+    fn count_var_reads(name: &str, expr: &RcExpr) -> usize {
+        match expr.as_ref() {
+            EvmExpr::Var(n) => if n == name { 1 } else { 0 },
+            EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
+                Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
+            }
+            EvmExpr::Bop(op, a, b) => {
+                use EvmBinaryOp::*;
+                let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
+                Self::count_var_reads(name, a)
+                    + if b_is_state { 0 } else { Self::count_var_reads(name, b) }
+            }
+            EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => Self::count_var_reads(name, a),
+            EvmExpr::Top(op, a, b, c) => {
+                use EvmTernaryOp::*;
+                let c_is_state = matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
+                Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
+                    + if c_is_state { 0 } else { Self::count_var_reads(name, c) }
+            }
+            EvmExpr::Revert(a, b, _s) | EvmExpr::ReturnOp(a, b, _s) => {
+                Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
+            }
+            EvmExpr::If(c, _i, t, e) => {
+                Self::count_var_reads(name, c)
+                    + Self::count_var_reads(name, t) + Self::count_var_reads(name, e)
+            }
+            EvmExpr::LetBind(n, init, body) => {
+                Self::count_var_reads(name, init)
+                    + if n == name { 0 } else { Self::count_var_reads(name, body) }
+            }
+            EvmExpr::VarStore(_, val) => Self::count_var_reads(name, val),
+            EvmExpr::Log(_, topics, data_offset, data_size, _state) => {
+                topics.iter().map(|t| Self::count_var_reads(name, t)).sum::<usize>()
+                    + Self::count_var_reads(name, data_offset)
+                    + Self::count_var_reads(name, data_size)
+            }
+            EvmExpr::EnvRead(_, _) => 0,
+            EvmExpr::EnvRead1(_, arg, _) => Self::count_var_reads(name, arg),
+            EvmExpr::Call(_, args) => {
+                args.iter().map(|a| Self::count_var_reads(name, a)).sum()
+            }
+            EvmExpr::Function(_, _, _, body) => Self::count_var_reads(name, body),
+            EvmExpr::InlineAsm(inputs, ..) => {
+                inputs.iter().map(|i| Self::count_var_reads(name, i)).sum()
+            }
+            EvmExpr::ExtCall(a, b, c, d, e, f, _g) => {
+                [a, b, c, d, e, f].iter().map(|x| Self::count_var_reads(name, x)).sum()
+            }
+            _ => 0,
         }
     }
 

@@ -1,0 +1,49 @@
+use std::ops::UnsafeSub;
+use std::ops::UnsafeMul;
+
+fn _mulmod(a: u256, b: u256, n: u256) -> (u256) {
+    let result: u256 = asm (a, b, n) -> (r) {
+        mulmod
+    };
+    return result;
+}
+
+fn _helper(a: u256, b: u256, c: u256, d: u256) -> (u256) {
+    let remainder: u256 = _mulmod(a, b, c);
+    let result: u256 = UnsafeMul::unsafe_mul(d, remainder);
+    return result;
+}
+
+fn _compute(a: u256, b: u256, denominator: u256) -> (u256) {
+    let mm: u256 = _mulmod(a, b, ~0);
+    let prod0: u256 = UnsafeMul::unsafe_mul(a, b);
+    let prod1: u256 = UnsafeSub::unsafe_sub(mm, prod0);
+    let result: u256 = 0;
+    if prod1 == 0 {
+        if denominator == 0 {
+            revert();
+        }
+        result = prod0 / denominator;
+    } else {
+        if denominator <= prod1 {
+            revert();
+        }
+        result = _helper(a, b, denominator, prod0);
+    }
+    return result;
+}
+
+fn _wrapper(a: u256, b: u256, denominator: u256) -> (u256) {
+    let result: u256 = _compute(a, b, denominator);
+    return result;
+}
+
+contract Test {
+    pub fn compute(a: u256, b: u256, denominator: u256) -> (u256) {
+        return _compute(a, b, denominator);
+    }
+
+    pub fn wrapper(a: u256, b: u256, denominator: u256) -> (u256) {
+        return _wrapper(a, b, denominator);
+    }
+}
