@@ -23,6 +23,7 @@ test_enums2::direction_west(), 222, 118, 118, 118
 test_enums2::is_north_check(uint256), 306, 306, 306, 306
 test_enums2::result_err_value(), 271, 263, 255, 255
 test_enums2::result_ok_value(), 154, 146, 138, 138
+test_full_math::mul_div(uint256,uint256,uint256), 726, 726, 726, 726
 test_generics::test_entry_key(), 322, 303, 303, 303
 test_generics::test_entry_value(), 324, 304, 301, 301
 test_generics::test_identity(), 252, 252, 252, 252

@@ -1,16 +1,14 @@
 #![allow(missing_docs)]
 
-//! Regression test for full_math (bisect1) - Arg DUP depth 0 crash at O3.
-//!
-//! This test is ignored because it triggers a pre-existing bug where
-//! single-function contracts at O3 produce an Arg DUP depth 0 panic.
+//! Regression test for full_math (bisect1) - previously crashed with
+//! Arg DUP depth 0 at O3 due to InlineAsm inputs not being traversed
+//! by substitute_args during monomorphization.
 
 use crate::helpers::*;
 
 const CONTRACT: &str = "examples/tests/test_full_math.edge";
 
 #[test]
-#[ignore = "Arg DUP depth 0 crash at O3 - pre-existing bug"]
 fn test_full_math_mul_div() {
     for_all_opt_levels(CONTRACT, |h, o| {
         // mul_div(6, 7, 3) = (6*7) / 3 = 14
