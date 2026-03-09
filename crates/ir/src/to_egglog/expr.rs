@@ -159,7 +159,7 @@ impl AstToEgglog {
                         let ret_buf = self.alloc_region(1);
                         let size = ast_helpers::const_int(32, self.current_ctx.clone());
                         let mstore_expr = ast_helpers::mstore(
-                            ret_buf.clone(),
+                            Rc::clone(&ret_buf),
                             val,
                             Rc::clone(&self.current_state),
                         );
@@ -325,7 +325,7 @@ impl AstToEgglog {
                                         ),
                                     );
                                     // Compute slice length from end index
-                                    let slice_len = if let Some(end_idx) = end_index {
+                                    let slice_len = end_index.as_ref().map_or(0, |end_idx| {
                                         if let edge_ast::Expr::Literal(end_lit) = end_idx.as_ref() {
                                             if let edge_ast::Lit::Int(end, _, _) = end_lit.as_ref()
                                             {
@@ -336,11 +336,11 @@ impl AstToEgglog {
                                         } else {
                                             0
                                         }
-                                    } else {
-                                        0
-                                    };
-                                    self.last_composite_alloc =
-                                        Some((format!("__array__{slice_len}"), new_base.clone()));
+                                    });
+                                    self.last_composite_alloc = Some((
+                                        format!("__array__{slice_len}"),
+                                        Rc::clone(&new_base),
+                                    ));
                                     return Ok(new_base);
                                 }
                             }
@@ -400,14 +400,14 @@ impl AstToEgglog {
                 for (i, elem) in elements.iter().enumerate() {
                     let val = self.lower_expr(elem)?;
                     let offset = ast_helpers::add(
-                        base_ir.clone(),
+                        Rc::clone(&base_ir),
                         ast_helpers::const_int((i * 32) as i64, self.current_ctx.clone()),
                     );
                     let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
                     result = ast_helpers::concat(result, mstore);
                 }
                 // Track as composite for field access
-                self.last_composite_alloc = Some(("__tuple".to_string(), base_ir.clone()));
+                self.last_composite_alloc = Some(("__tuple".to_string(), Rc::clone(&base_ir)));
                 // Return base address as the tuple "value"
                 Ok(ast_helpers::concat(result, base_ir))
             }
@@ -928,7 +928,7 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         // Pre-compute total return slots needed (arrays expand to multiple slots)
         let mut total_slots = 0usize;
-        for elem in elements.iter() {
+        for elem in elements {
             if let edge_ast::Expr::Ident(ident) = elem {
                 if let Some(&(_, len)) = self.storage_array_fields.get(&ident.name) {
                     total_slots += len;
@@ -953,7 +953,7 @@ impl AstToEgglog {
             ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
         let mut slot = 0usize;
 
-        for elem in elements.iter() {
+        for elem in elements {
             // Check if this element is a storage array identifier
             if let edge_ast::Expr::Ident(ident) = elem {
                 if let Some(&(base_slot, len)) = self.storage_array_fields.get(&ident.name) {
@@ -965,7 +965,7 @@ impl AstToEgglog {
                         );
                         let val = ast_helpers::sload(arr_slot, Rc::clone(&self.current_state));
                         let offset = ast_helpers::add(
-                            ret_base.clone(),
+                            Rc::clone(&ret_base),
                             ast_helpers::const_int((slot * 32) as i64, self.current_ctx.clone()),
                         );
                         let mstore =
@@ -983,7 +983,7 @@ impl AstToEgglog {
                         if let Ok(len) = len_str.parse::<usize>() {
                             // Use MCOPY to bulk-copy array data to return offset
                             let dest = ast_helpers::add(
-                                ret_base.clone(),
+                                Rc::clone(&ret_base),
                                 ast_helpers::const_int(
                                     (slot * 32) as i64,
                                     self.current_ctx.clone(),
@@ -1003,7 +1003,7 @@ impl AstToEgglog {
             // Scalar element: single MSTORE
             let val = self.lower_expr(elem)?;
             let offset = ast_helpers::add(
-                ret_base.clone(),
+                Rc::clone(&ret_base),
                 ast_helpers::const_int((slot * 32) as i64, self.current_ctx.clone()),
             );
             let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));

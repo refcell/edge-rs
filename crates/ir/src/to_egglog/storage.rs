@@ -76,7 +76,7 @@ impl AstToEgglog {
             let log_region = self.alloc_region(data_exprs.len());
             for (i, data_expr) in data_exprs.iter().enumerate() {
                 let offset = ast_helpers::add(
-                    log_region.clone(),
+                    Rc::clone(&log_region),
                     ast_helpers::const_int((i * 32) as i64, ctx.clone()),
                 );
                 let mstore = ast_helpers::mstore(
@@ -128,11 +128,12 @@ impl AstToEgglog {
         // Allocate a 2-word scratch region for keccak input
         let scratch = self.alloc_region(2);
         // MSTORE(scratch, key)
-        let mstore_key = ast_helpers::mstore(scratch.clone(), key, Rc::clone(&self.current_state));
+        let mstore_key =
+            ast_helpers::mstore(Rc::clone(&scratch), key, Rc::clone(&self.current_state));
         self.current_state = Rc::clone(&mstore_key);
         // MSTORE(scratch+32, base_slot)
         let slot_offset =
-            ast_helpers::add(scratch.clone(), ast_helpers::const_int(32, ctx.clone()));
+            ast_helpers::add(Rc::clone(&scratch), ast_helpers::const_int(32, ctx.clone()));
         let mstore_slot = ast_helpers::mstore(
             slot_offset,
             ast_helpers::const_int(base_slot, ctx.clone()),
@@ -168,11 +169,17 @@ impl AstToEgglog {
         let scratch1 = self.alloc_region(2);
         let scratch2 = self.alloc_region(2);
         // First level: keccak256(key1 . base_slot) at scratch1
-        let mstore_key1 =
-            ast_helpers::mstore(scratch1.clone(), outer_key, Rc::clone(&self.current_state));
+        let mstore_key1 = ast_helpers::mstore(
+            Rc::clone(&scratch1),
+            outer_key,
+            Rc::clone(&self.current_state),
+        );
         self.current_state = Rc::clone(&mstore_key1);
         let mstore_slot1 = ast_helpers::mstore(
-            ast_helpers::add(scratch1.clone(), ast_helpers::const_int(32, ctx.clone())),
+            ast_helpers::add(
+                Rc::clone(&scratch1),
+                ast_helpers::const_int(32, ctx.clone()),
+            ),
             ast_helpers::const_int(base_slot, ctx.clone()),
             Rc::clone(&self.current_state),
         );
@@ -184,11 +191,17 @@ impl AstToEgglog {
             Rc::clone(&self.current_state),
         );
         // Second level: keccak256(key2 . inner_slot) at scratch2
-        let mstore_key2 =
-            ast_helpers::mstore(scratch2.clone(), inner_key, Rc::clone(&self.current_state));
+        let mstore_key2 = ast_helpers::mstore(
+            Rc::clone(&scratch2),
+            inner_key,
+            Rc::clone(&self.current_state),
+        );
         self.current_state = Rc::clone(&mstore_key2);
         let mstore_slot2 = ast_helpers::mstore(
-            ast_helpers::add(scratch2.clone(), ast_helpers::const_int(32, ctx.clone())),
+            ast_helpers::add(
+                Rc::clone(&scratch2),
+                ast_helpers::const_int(32, ctx.clone()),
+            ),
             inner_slot,
             Rc::clone(&self.current_state),
         );

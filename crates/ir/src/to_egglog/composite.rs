@@ -73,7 +73,7 @@ impl AstToEgglog {
 
             let disc_ir = ast_helpers::const_int(idx as i64, self.current_ctx.clone());
             let data_offset_ir = ast_helpers::add(
-                base_ir.clone(),
+                Rc::clone(&base_ir),
                 ast_helpers::const_int(32, self.current_ctx.clone()),
             );
 
@@ -90,7 +90,7 @@ impl AstToEgglog {
 
             let result = ast_helpers::concat(store_disc, store_data);
             // The "value" of this union is the base address
-            let result = ast_helpers::concat(result, base_ir.clone());
+            let result = ast_helpers::concat(result, base_ir);
             Ok(result)
         }
     }
@@ -156,7 +156,7 @@ impl AstToEgglog {
                 });
             let val = self.lower_expr(expr)?;
             let offset = ast_helpers::add(
-                base_ir.clone(),
+                Rc::clone(&base_ir),
                 ast_helpers::const_int((field_idx * 32) as i64, self.current_ctx.clone()),
             );
             let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
@@ -165,7 +165,7 @@ impl AstToEgglog {
         }
 
         // Track this allocation for VarAssign wiring
-        self.last_composite_alloc = Some((resolved_name, base_ir.clone()));
+        self.last_composite_alloc = Some((resolved_name, Rc::clone(&base_ir)));
 
         // Return the base address as the struct value
         Ok(ast_helpers::concat(result, base_ir))
@@ -224,13 +224,14 @@ impl AstToEgglog {
 
         // MSTORE the packed word
         if let Some(word) = packed_word {
-            let mstore = ast_helpers::mstore(base_ir.clone(), word, Rc::clone(&self.current_state));
+            let mstore =
+                ast_helpers::mstore(Rc::clone(&base_ir), word, Rc::clone(&self.current_state));
             self.current_state = Rc::clone(&mstore);
             result = ast_helpers::concat(result, mstore);
         }
 
         // Track this allocation for VarAssign wiring
-        self.last_composite_alloc = Some((resolved_name.to_string(), base_ir.clone()));
+        self.last_composite_alloc = Some((resolved_name.to_string(), Rc::clone(&base_ir)));
 
         // Return the base address as the struct value
         Ok(ast_helpers::concat(result, base_ir))
@@ -278,7 +279,7 @@ impl AstToEgglog {
         for (i, elem) in elements.iter().enumerate() {
             let val = self.lower_expr(elem)?;
             let offset = ast_helpers::add(
-                base_ir.clone(),
+                Rc::clone(&base_ir),
                 ast_helpers::const_int((i * 32) as i64, self.current_ctx.clone()),
             );
             let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
@@ -287,7 +288,8 @@ impl AstToEgglog {
         }
 
         // Track this allocation for VarAssign wiring (encode length for tuple return expansion)
-        self.last_composite_alloc = Some((format!("__array__{}", elements.len()), base_ir.clone()));
+        self.last_composite_alloc =
+            Some((format!("__array__{}", elements.len()), Rc::clone(&base_ir)));
 
         Ok(ast_helpers::concat(result, base_ir))
     }

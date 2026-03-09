@@ -16,11 +16,11 @@ use revm::{
 };
 use tiny_keccak::{Hasher, Keccak};
 
-pub fn workspace_root() -> PathBuf {
+pub(crate) fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-pub fn compile_contract_opt(relative_path: &str, opt_level: u8) -> Vec<u8> {
+pub(crate) fn compile_contract_opt(relative_path: &str, opt_level: u8) -> Vec<u8> {
     let path = workspace_root().join(relative_path);
     let mut config = CompilerConfig::new(path);
     config.emit = EmitKind::Bytecode;
@@ -30,7 +30,7 @@ pub fn compile_contract_opt(relative_path: &str, opt_level: u8) -> Vec<u8> {
     output.bytecode.expect("no bytecode produced")
 }
 
-pub fn selector(sig: &str) -> [u8; 4] {
+pub(crate) fn selector(sig: &str) -> [u8; 4] {
     let mut h = Keccak::v256();
     h.update(sig.as_bytes());
     let mut out = [0u8; 32];
@@ -38,7 +38,7 @@ pub fn selector(sig: &str) -> [u8; 4] {
     [out[0], out[1], out[2], out[3]]
 }
 
-pub fn decode_u256(output: &[u8]) -> u64 {
+pub(crate) fn decode_u256(output: &[u8]) -> u64 {
     assert!(
         output.len() >= 32,
         "return value too short: {} bytes",
@@ -48,17 +48,17 @@ pub fn decode_u256(output: &[u8]) -> u64 {
     u64::from_be_bytes(output[24..32].try_into().unwrap())
 }
 
-pub fn encode_u256(val: u64) -> [u8; 32] {
+pub(crate) fn encode_u256(val: u64) -> [u8; 32] {
     let mut out = [0u8; 32];
     out[24..].copy_from_slice(&val.to_be_bytes());
     out
 }
 
-pub const fn encode_b32(val: [u8; 32]) -> [u8; 32] {
+pub(crate) const fn encode_b32(val: [u8; 32]) -> [u8; 32] {
     val
 }
 
-pub fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
+pub(crate) fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
     let mut cd = sel.to_vec();
     for a in args {
         cd.extend_from_slice(a);
@@ -66,19 +66,19 @@ pub fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
     cd
 }
 
-pub const CALLER: Address = Address::ZERO;
+pub(crate) const CALLER: Address = Address::ZERO;
 
-pub type TestDb = CacheDB<EmptyDB>;
-pub type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
+pub(crate) type TestDb = CacheDB<EmptyDB>;
+pub(crate) type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
 
-pub struct EvmHandle {
+pub(crate) struct EvmHandle {
     pub evm: TestEvm,
     pub contract: Address,
     pub nonce: u64,
 }
 
 impl EvmHandle {
-    pub fn new(deploy_bytecode: Vec<u8>) -> Self {
+    pub(crate) fn new(deploy_bytecode: Vec<u8>) -> Self {
         let mut db = CacheDB::<EmptyDB>::default();
         db.insert_account_info(
             CALLER,
@@ -111,7 +111,7 @@ impl EvmHandle {
         }
     }
 
-    pub fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
+    pub(crate) fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
             .caller(CALLER)
             .kind(TxKind::Call(self.contract))
@@ -128,7 +128,7 @@ impl EvmHandle {
     }
 }
 
-pub fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8) + Sync) {
+pub(crate) fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8) + Sync) {
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..=3)
             .map(|opt| {

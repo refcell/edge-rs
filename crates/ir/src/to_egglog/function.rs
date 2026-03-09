@@ -56,11 +56,11 @@ impl AstToEgglog {
                 let cd_off =
                     ast_helpers::const_int(calldata_offset as i64, self.current_ctx.clone());
                 let size = ast_helpers::const_int((n * 32) as i64, self.current_ctx.clone());
-                let copy = ast_helpers::calldatacopy(base_ir.clone(), cd_off, size);
+                let copy = ast_helpers::calldatacopy(Rc::clone(&base_ir), cd_off, size);
                 array_param_prefix = ast_helpers::concat(array_param_prefix, copy);
 
                 let binding = VarBinding {
-                    value: base_ir.clone(),
+                    value: Rc::clone(&base_ir),
                     location: DataLocation::Stack,
                     storage_slot: None,
                     _ty: ty,
