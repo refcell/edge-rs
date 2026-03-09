@@ -317,9 +317,9 @@ impl AstToEgglog {
                             // Evaluate start index (must be a constant for now)
                             if let edge_ast::Expr::Literal(lit) = index.as_ref() {
                                 if let edge_ast::Lit::Int(start_bytes, _, _) = lit.as_ref() {
-                                    let start = u64::from_be_bytes(
-                                        start_bytes[24..32].try_into().unwrap(),
-                                    ) as usize;
+                                    let start =
+                                        u64::from_be_bytes(start_bytes[24..32].try_into().unwrap())
+                                            as usize;
                                     let new_base = ast_helpers::add(
                                         base_expr,
                                         ast_helpers::const_int(
@@ -335,7 +335,8 @@ impl AstToEgglog {
                                             {
                                                 let end = u64::from_be_bytes(
                                                     end_bytes[24..32].try_into().unwrap(),
-                                                ) as usize;
+                                                )
+                                                    as usize;
                                                 end - start
                                             } else {
                                                 0
