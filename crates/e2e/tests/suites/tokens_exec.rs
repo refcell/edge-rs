@@ -64,11 +64,7 @@ fn test_weth_allowance_initially_zero() {
         &[encode_address([0u8; 20]), encode_address(ALICE_ADDR)],
     ));
     assert!(res.success, "allowance() reverted");
-    assert_eq!(
-        decode_u256(&res.output),
-        0,
-        "allowance should start at 0"
-    );
+    assert_eq!(decode_u256(&res.output), 0, "allowance should start at 0");
 }
 
 #[test]
@@ -166,11 +162,7 @@ fn test_amm_get_reserves_initially_zero() {
         res.output.len()
     );
     assert_eq!(decode_u256(&res.output[0..32]), 0, "reserve0 should be 0");
-    assert_eq!(
-        decode_u256(&res.output[32..64]),
-        0,
-        "reserve1 should be 0"
-    );
+    assert_eq!(decode_u256(&res.output[32..64]), 0, "reserve1 should be 0");
 }
 
 #[test]

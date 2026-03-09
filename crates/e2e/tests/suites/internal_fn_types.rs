@@ -19,14 +19,22 @@ fn internal_fn_returning_bool() {
         &[encode_u256(42)],
     ));
     assert!(r.success, "call failed");
-    assert_eq!(decode_u256(&r.output), 1, "is_positive(42) should be true (1)");
+    assert_eq!(
+        decode_u256(&r.output),
+        1,
+        "is_positive(42) should be true (1)"
+    );
 
     let r = evm.call(calldata(
         selector("is_positive(uint256)"),
         &[encode_u256(0)],
     ));
     assert!(r.success, "call failed");
-    assert_eq!(decode_u256(&r.output), 0, "is_positive(0) should be false (0)");
+    assert_eq!(
+        decode_u256(&r.output),
+        0,
+        "is_positive(0) should be false (0)"
+    );
 }
 
 // =============================================================================
@@ -55,10 +63,7 @@ fn internal_fn_storage_regression() {
     let bc = compile_contract("examples/tests/internal_void.edge");
     let mut evm = EvmHandle::new(bc);
 
-    let r = evm.call(calldata(
-        selector("set_value(uint256)"),
-        &[encode_u256(99)],
-    ));
+    let r = evm.call(calldata(selector("set_value(uint256)"), &[encode_u256(99)]));
     assert!(r.success, "set_value call failed");
 
     let r = evm.call(calldata(selector("get_value()"), &[]));

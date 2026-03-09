@@ -62,6 +62,8 @@ fn ensure_atexit() {
         extern "C" {
             fn atexit(f: extern "C" fn()) -> std::ffi::c_int;
         }
+        // SAFETY: `flush_gas_snapshot` is an extern "C" fn with no captures;
+        // registering it with libc `atexit` is safe.
         unsafe {
             atexit(flush_gas_snapshot);
         }
@@ -69,9 +71,7 @@ fn ensure_atexit() {
 }
 
 fn calldata_intrinsic_gas(cd: &[u8]) -> u64 {
-    cd.iter()
-        .map(|&b| if b == 0 { 4u64 } else { 16u64 })
-        .sum()
+    cd.iter().map(|&b| if b == 0 { 4u64 } else { 16u64 }).sum()
 }
 
 fn execution_gas(gas_used: u64, cd: &[u8]) -> u64 {
@@ -333,6 +333,7 @@ impl EvmHandle {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn call_fn(&mut self, sig: &str, args: &[[u8; 32]]) -> CallResult {
         let cd = calldata(selector(sig), args);
         let tx = TxEnv::builder()
@@ -376,10 +377,7 @@ impl EvmHandle {
 // Test runners
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) fn for_all_opt_levels(
-    contract_path: &str,
-    test_fn: impl Fn(&mut EvmHandle, u8) + Sync,
-) {
+pub(crate) fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8) + Sync) {
     let label = label_from_path(contract_path);
     std::thread::scope(|s| {
         let handles: Vec<_> = (0..=3)

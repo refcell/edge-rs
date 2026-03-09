@@ -1,11 +1,11 @@
 #![allow(missing_docs)]
 
-use crate::helpers::*;
-
 use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind},
 };
+
+use crate::helpers::*;
 
 #[test]
 fn test_calldata_single_arg() {
@@ -43,7 +43,10 @@ fn test_calldata_two_args() {
     let mut evm = EvmHandle::new(bytecode);
 
     // Call add(3, 5) and expect 8
-    let cd = calldata(selector("add(uint256,uint256)"), &[encode_u256(3), encode_u256(5)]);
+    let cd = calldata(
+        selector("add(uint256,uint256)"),
+        &[encode_u256(3), encode_u256(5)],
+    );
 
     let r = evm.call(cd);
     assert!(r.success, "add(3, 5) reverted");

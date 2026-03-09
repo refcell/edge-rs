@@ -44,7 +44,11 @@ fn test_generic_entry_value() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_entry_value()"), &[]));
         assert!(r.success, "test_entry_value() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_entry_value() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_entry_value() wrong at O{o}"
+        );
     });
 }
 
@@ -53,7 +57,11 @@ fn test_generic_entry_key() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_entry_key()"), &[]));
         assert!(r.success, "test_entry_key() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 100, "test_entry_key() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            100,
+            "test_entry_key() wrong at O{o}"
+        );
     });
 }
 
@@ -71,7 +79,11 @@ fn test_generic_result_err() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_result_err()"), &[]));
         assert!(r.success, "test_result_err() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 99, "test_result_err() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            99,
+            "test_result_err() wrong at O{o}"
+        );
     });
 }
 
@@ -80,7 +92,11 @@ fn test_generic_option_some() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_option_some()"), &[]));
         assert!(r.success, "test_option_some() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 55, "test_option_some() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            55,
+            "test_option_some() wrong at O{o}"
+        );
     });
 }
 
@@ -89,7 +105,11 @@ fn test_generic_option_none() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_option_none()"), &[]));
         assert!(r.success, "test_option_none() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 0, "test_option_none() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            0,
+            "test_option_none() wrong at O{o}"
+        );
     });
 }
 
@@ -111,7 +131,11 @@ fn test_turbofish_max() {
     for_all_opt_levels(GENERICS, |h, o| {
         let r = h.call(calldata(selector("test_turbofish_max()"), &[]));
         assert!(r.success, "test_turbofish_max() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 20, "test_turbofish_max() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            20,
+            "test_turbofish_max() wrong at O{o}"
+        );
     });
 }
 
@@ -136,7 +160,11 @@ fn test_impl_point_scale() {
         let r = h.call(calldata(selector("test_point_scale()"), &[]));
         assert!(r.success, "test_point_scale() reverted at O{o}");
         // (5 * 3) + (7 * 3) = 15 + 21 = 36
-        assert_eq!(decode_u256(&r.output), 36, "test_point_scale() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            36,
+            "test_point_scale() wrong at O{o}"
+        );
     });
 }
 
@@ -154,7 +182,11 @@ fn test_impl_counter_get() {
     for_all_opt_levels(IMPL, |h, o| {
         let r = h.call(calldata(selector("test_counter_get()"), &[]));
         assert!(r.success, "test_counter_get() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 100, "test_counter_get() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            100,
+            "test_counter_get() wrong at O{o}"
+        );
     });
 }
 
@@ -163,7 +195,11 @@ fn test_impl_counter_add() {
     for_all_opt_levels(IMPL, |h, o| {
         let r = h.call(calldata(selector("test_counter_add()"), &[]));
         assert!(r.success, "test_counter_add() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 150, "test_counter_add() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            150,
+            "test_counter_add() wrong at O{o}"
+        );
     });
 }
 
@@ -210,7 +246,11 @@ fn test_trait_double_method() {
     for_all_opt_levels(TRAITS, |h, o| {
         let r = h.call(calldata(selector("test_double_method()"), &[]));
         assert!(r.success, "test_double_method() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 42, "test_double_method() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_double_method() wrong at O{o}"
+        );
     });
 }
 
@@ -219,7 +259,11 @@ fn test_trait_triple_method() {
     for_all_opt_levels(TRAITS, |h, o| {
         let r = h.call(calldata(selector("test_triple_method()"), &[]));
         assert!(r.success, "test_triple_method() reverted at O{o}");
-        assert_eq!(decode_u256(&r.output), 30, "test_triple_method() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            30,
+            "test_triple_method() wrong at O{o}"
+        );
     });
 }
 
@@ -229,7 +273,11 @@ fn test_operator_overload_add() {
         let r = h.call(calldata(selector("test_add_overload()"), &[]));
         assert!(r.success, "test_add_overload() reverted at O{o}");
         // Wrapper{10} + Wrapper{32} = Wrapper{42} → .val = 42
-        assert_eq!(decode_u256(&r.output), 42, "test_add_overload() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            42,
+            "test_add_overload() wrong at O{o}"
+        );
     });
 }
 
@@ -239,6 +287,10 @@ fn test_operator_overload_eq() {
         let r = h.call(calldata(selector("test_eq_overload()"), &[]));
         assert!(r.success, "test_eq_overload() reverted at O{o}");
         // Wrapper{42} == Wrapper{42} → true → returns 1
-        assert_eq!(decode_u256(&r.output), 1, "test_eq_overload() wrong at O{o}");
+        assert_eq!(
+            decode_u256(&r.output),
+            1,
+            "test_eq_overload() wrong at O{o}"
+        );
     });
 }

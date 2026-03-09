@@ -61,7 +61,10 @@ fn test_transient_reentrancy_guard_protected_withdraw_succeeds() {
         selector("protectedWithdraw(address,uint256)"),
         &[encode_address(ALICE_ADDR), encode_u256(100)],
     ));
-    assert!(r.success, "transient protectedWithdraw reverted unexpectedly");
+    assert!(
+        r.success,
+        "transient protectedWithdraw reverted unexpectedly"
+    );
 }
 
 #[test]

@@ -30,11 +30,7 @@ fn test_staking_staked_balance_initially_zero() {
         &[encode_address(addr)],
     ));
     assert!(r.success, "stakedBalance() reverted");
-    assert_eq!(
-        decode_u256(&r.output),
-        0,
-        "stakedBalance should start at 0"
-    );
+    assert_eq!(decode_u256(&r.output), 0, "stakedBalance should start at 0");
 }
 
 #[test]
@@ -77,10 +73,7 @@ fn test_staking_withdraw_decreases() {
     assert!(r.success, "stake(100) reverted");
 
     // Withdraw 50
-    let r = evm.call(calldata(
-        selector("withdraw(uint256)"),
-        &[encode_u256(50)],
-    ));
+    let r = evm.call(calldata(selector("withdraw(uint256)"), &[encode_u256(50)]));
     assert!(r.success, "withdraw(50) reverted");
 
     let r = evm.call(calldata(selector("totalStaked()"), &[]));
@@ -129,11 +122,7 @@ fn test_multisig_confirmations_initially_zero() {
         &[encode_u256(0)],
     ));
     assert!(r.success, "getConfirmations(0) reverted");
-    assert_eq!(
-        decode_u256(&r.output),
-        0,
-        "confirmations should start at 0"
-    );
+    assert_eq!(decode_u256(&r.output), 0, "confirmations should start at 0");
 }
 
 #[test]
