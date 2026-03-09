@@ -202,6 +202,38 @@ impl<'a> ExprCompiler<'a> {
             }
 
             EvmExpr::Concat(a, b) => {
+                // Last-use DUP elision: Concat(Var(x), Drop(x)) or
+                // Concat(Var(x), Concat(Drop(x), rest)) where x is a stack
+                // var at depth 1 (TOS).  Instead of DUP1 + SWAP1 + POP,
+                // emit nothing — x stays in place.
+                if let EvmExpr::Var(var_name) = a.as_ref() {
+                    let drop_name = match b.as_ref() {
+                        EvmExpr::Drop(n) => Some(n.as_str()),
+                        EvmExpr::Concat(drop_expr, _) => match drop_expr.as_ref() {
+                            EvmExpr::Drop(n) => Some(n.as_str()),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some(dn) = drop_name {
+                        if dn == var_name {
+                            if let Some(&var_pos) = self.stack_vars.get(var_name.as_str()) {
+                                let depth = self.stack_depth - var_pos;
+                                if depth == 1 {
+                                    // Elide: skip DUP and Drop, just remove
+                                    // tracking. x stays on the stack as the
+                                    // "result" value.
+                                    self.stack_vars.remove(var_name.as_str());
+                                    // Compile rest if Concat(Drop, rest)
+                                    if let EvmExpr::Concat(_, rest) = b.as_ref() {
+                                        self.compile_expr(rest);
+                                    }
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 self.compile_expr(a);
                 self.compile_expr(b);
             }

@@ -417,11 +417,32 @@ impl AstToEgglog {
         // we insert Drops between the side-effect prefix and the return value.
         for name in var_decl_names.iter().rev() {
             let var_name = format!("{prefix}__local_{name}");
-            // When inlining, don't append Drop — the last expression is the
-            // return value and Concat(result, Drop) would lose it (Drop pushes
-            // nothing). LetBind's codegen already cleans up if Drop wasn't reached.
             if self.inline_depth == 0 {
+                // Normal (non-inline): append Drop after the body.
                 result = ast_helpers::concat(result, ast_helpers::drop_var(var_name.clone()));
+            } else {
+                // Inlining: the last expression is the return value. We can't
+                // append Drop after it (Concat(result, Drop) loses the return
+                // value). Instead, insert Drop BEFORE the return value if the
+                // return value doesn't reference this variable.
+                let drop_node = ast_helpers::drop_var(var_name.clone());
+                if let EvmExpr::Concat(prefix, ret_val) = result.as_ref() {
+                    if !references_any_var(ret_val, &std::collections::HashSet::from([var_name.as_str()])) {
+                        // Safe: return value doesn't use this var.
+                        // Insert Drop between prefix and return value.
+                        result = ast_helpers::concat(
+                            ast_helpers::concat(Rc::clone(prefix), drop_node),
+                            Rc::clone(ret_val),
+                        );
+                    }
+                    // else: return value references the var — skip Drop,
+                    // let compile_let_bind handle cleanup.
+                } else if !references_any_var(&result, &std::collections::HashSet::from([var_name.as_str()])) {
+                    // Single expression that doesn't reference the var:
+                    // prepend Drop before it.
+                    result = ast_helpers::concat(drop_node, result);
+                }
+                // else: single expression that IS the var — can't Drop.
             }
             let init = var_inits
                 .remove(&var_name)

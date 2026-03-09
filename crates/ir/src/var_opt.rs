@@ -10,7 +10,7 @@
 //!
 //! Store-forwarding is handled at the lowering level (`to_egglog.rs`), not here.
 
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::{HashMap, HashSet}, rc::Rc};
 
 use crate::schema::{EvmExpr, EvmTernaryOp, EvmType, RcExpr};
 
@@ -170,6 +170,9 @@ pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_le
         // Insert early Drops in halting branches for better dead-var-elim
         contract.runtime = insert_early_drops(&contract.runtime);
         contract.constructor = insert_early_drops(&contract.constructor);
+        // Tighten Drop placement: move Drops to right after last use
+        contract.runtime = tighten_drops(&contract.runtime);
+        contract.constructor = tighten_drops(&contract.constructor);
         // Optimize internal function bodies
         for func in &mut contract.internal_functions {
             *func = optimize_expr(func);
@@ -615,69 +618,82 @@ fn is_pure(expr: &RcExpr) -> bool {
 /// These variables always have the same value as their init expression,
 /// so egglog can propagate bounds from the init to Var references.
 pub fn collect_immutable_vars(expr: &RcExpr) -> Vec<String> {
-    let mut result = Vec::new();
-    collect_immutable_vars_rec(expr, &mut result);
-    result
+    let mut immutable = HashSet::new();
+    let mut mutable = HashSet::new();
+    collect_immutable_vars_rec(expr, &mut immutable, &mut mutable);
+    // A name is only truly immutable if ALL LetBinds with that name have
+    // write_count == 0. Different functions can reuse the same local name
+    // (e.g., two functions both having a variable `r` → `$__local_r`),
+    // and egglog merges identical Var(name) nodes across the e-graph.
+    // If one LetBind is mutable (has VarStore) and another is immutable,
+    // const_prop on the immutable one would corrupt the mutable one.
+    immutable.difference(&mutable).cloned().collect()
 }
 
-fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
+fn collect_immutable_vars_rec(
+    expr: &RcExpr,
+    immutable: &mut HashSet<String>,
+    mutable: &mut HashSet<String>,
+) {
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
             let info = analyze_var(name, body);
             if info.write_count == 0 {
-                out.push(name.clone());
+                immutable.insert(name.clone());
+            } else {
+                mutable.insert(name.clone());
             }
-            collect_immutable_vars_rec(init, out);
-            collect_immutable_vars_rec(body, out);
+            collect_immutable_vars_rec(init, immutable, mutable);
+            collect_immutable_vars_rec(body, immutable, mutable);
         }
         EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
-            collect_immutable_vars_rec(a, out);
-            collect_immutable_vars_rec(b, out);
+            collect_immutable_vars_rec(a, immutable, mutable);
+            collect_immutable_vars_rec(b, immutable, mutable);
         }
         EvmExpr::If(c, i, t, e) => {
-            collect_immutable_vars_rec(c, out);
-            collect_immutable_vars_rec(i, out);
-            collect_immutable_vars_rec(t, out);
-            collect_immutable_vars_rec(e, out);
+            collect_immutable_vars_rec(c, immutable, mutable);
+            collect_immutable_vars_rec(i, immutable, mutable);
+            collect_immutable_vars_rec(t, immutable, mutable);
+            collect_immutable_vars_rec(e, immutable, mutable);
         }
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
-            collect_immutable_vars_rec(a, out);
+            collect_immutable_vars_rec(a, immutable, mutable);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            collect_immutable_vars_rec(a, out);
-            collect_immutable_vars_rec(b, out);
-            collect_immutable_vars_rec(c, out);
+            collect_immutable_vars_rec(a, immutable, mutable);
+            collect_immutable_vars_rec(b, immutable, mutable);
+            collect_immutable_vars_rec(c, immutable, mutable);
         }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
-                collect_immutable_vars_rec(t, out);
+                collect_immutable_vars_rec(t, immutable, mutable);
             }
-            collect_immutable_vars_rec(data_offset, out);
-            collect_immutable_vars_rec(data_size, out);
-            collect_immutable_vars_rec(state, out);
+            collect_immutable_vars_rec(data_offset, immutable, mutable);
+            collect_immutable_vars_rec(data_size, immutable, mutable);
+            collect_immutable_vars_rec(state, immutable, mutable);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
             for x in [a, b, c, d, e, f, g] {
-                collect_immutable_vars_rec(x, out);
+                collect_immutable_vars_rec(x, immutable, mutable);
             }
         }
         EvmExpr::VarStore(_, val) => {
-            collect_immutable_vars_rec(val, out);
+            collect_immutable_vars_rec(val, immutable, mutable);
         }
         EvmExpr::Call(_, args) => {
             for arg in args {
-                collect_immutable_vars_rec(arg, out);
+                collect_immutable_vars_rec(arg, immutable, mutable);
             }
         }
         EvmExpr::Function(_, _, _, body) => {
-            collect_immutable_vars_rec(body, out);
+            collect_immutable_vars_rec(body, immutable, mutable);
         }
         EvmExpr::EnvRead(_, s) => {
-            collect_immutable_vars_rec(s, out);
+            collect_immutable_vars_rec(s, immutable, mutable);
         }
         EvmExpr::EnvRead1(_, a, s) => {
-            collect_immutable_vars_rec(a, out);
-            collect_immutable_vars_rec(s, out);
+            collect_immutable_vars_rec(a, immutable, mutable);
+            collect_immutable_vars_rec(s, immutable, mutable);
         }
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
@@ -689,7 +705,7 @@ fn collect_immutable_vars_rec(expr: &RcExpr, out: &mut Vec<String>) {
         | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
-                collect_immutable_vars_rec(input, out);
+                collect_immutable_vars_rec(input, immutable, mutable);
             }
         }
     }
@@ -784,50 +800,133 @@ fn expr_definitely_halts(expr: &RcExpr) -> bool {
     }
 }
 
-/// Check if an expression references a variable by name (Var or `VarStore`).
+/// Check if an expression references a variable by name (Var, VarStore, or Drop).
+///
+/// This follows ALL sub-expressions including state parameters.
+/// Used by `insert_early_drops` which needs full reachability.
 fn references_var(expr: &RcExpr, name: &str) -> bool {
+    references_var_inner(expr, name, true)
+}
+
+/// Check if an expression references a variable in a data-flow sense.
+///
+/// Ignores state parameters (which chain through all prior side-effecting ops
+/// and would make every expression appear to reference every prior variable).
+/// Also ignores Drop nodes, which are lifetime markers, not data uses.
+/// Used by `tighten_drops` to find the last actual use of a variable.
+fn references_var_dataflow(expr: &RcExpr, name: &str) -> bool {
+    references_var_inner(expr, name, false)
+}
+
+fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
     match expr.as_ref() {
-        EvmExpr::Var(n) | EvmExpr::Drop(n) => n == name,
-        EvmExpr::VarStore(n, val) => n == name || references_var(val, name),
+        EvmExpr::Var(n) => n == name,
+        EvmExpr::Drop(n) => follow_state && n == name,
+        EvmExpr::VarStore(n, val) => n == name || references_var_inner(val, name, follow_state),
         EvmExpr::LetBind(n, init, body) => {
-            references_var(init, name) || (n != name && references_var(body, name))
+            references_var_inner(init, name, follow_state)
+                || (n != name && references_var_inner(body, name, follow_state))
         }
-        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) => {
-            references_var(a, name) || references_var(b, name)
+        EvmExpr::Concat(a, b) => {
+            references_var_inner(a, name, follow_state)
+                || references_var_inner(b, name, follow_state)
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_var(a, name),
-        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            references_var(a, name) || references_var(b, name) || references_var(c, name)
+        EvmExpr::Bop(op, a, b) => {
+            use crate::schema::EvmBinaryOp::*;
+            let a_ref = references_var_inner(a, name, follow_state);
+            // For state-consuming binary ops, b is the state parameter
+            let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
+            let b_ref = if b_is_state && !follow_state {
+                false
+            } else {
+                references_var_inner(b, name, follow_state)
+            };
+            a_ref || b_ref
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
+            references_var_inner(a, name, follow_state)
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            use crate::schema::EvmTernaryOp::*;
+            let c_is_state = matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
+            references_var_inner(a, name, follow_state)
+                || references_var_inner(b, name, follow_state)
+                || if c_is_state && !follow_state {
+                    false
+                } else {
+                    references_var_inner(c, name, follow_state)
+                }
+        }
+        EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            // c is always state for Revert/ReturnOp
+            references_var_inner(a, name, follow_state)
+                || references_var_inner(b, name, follow_state)
+                || if follow_state {
+                    references_var_inner(c, name, follow_state)
+                } else {
+                    false
+                }
         }
         EvmExpr::If(c, i, t, e) => {
-            references_var(c, name)
-                || references_var(i, name)
-                || references_var(t, name)
-                || references_var(e, name)
+            references_var_inner(c, name, follow_state)
+                || references_var_inner(i, name, follow_state)
+                || references_var_inner(t, name, follow_state)
+                || references_var_inner(e, name, follow_state)
         }
         EvmExpr::DoWhile(inputs, body) => {
-            references_var(inputs, name) || references_var(body, name)
+            references_var_inner(inputs, name, follow_state)
+                || references_var_inner(body, name, follow_state)
         }
-        EvmExpr::EnvRead(_, s) => references_var(s, name),
-        EvmExpr::EnvRead1(_, a, s) => references_var(a, name) || references_var(s, name),
+        EvmExpr::EnvRead(_, s) => {
+            if follow_state {
+                references_var_inner(s, name, follow_state)
+            } else {
+                false
+            }
+        }
+        EvmExpr::EnvRead1(_, a, s) => {
+            references_var_inner(a, name, follow_state)
+                || if follow_state {
+                    references_var_inner(s, name, follow_state)
+                } else {
+                    false
+                }
+        }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
-            topics.iter().any(|t| references_var(t, name))
-                || references_var(data_offset, name)
-                || references_var(data_size, name)
-                || references_var(state, name)
+            topics
+                .iter()
+                .any(|t| references_var_inner(t, name, follow_state))
+                || references_var_inner(data_offset, name, follow_state)
+                || references_var_inner(data_size, name, follow_state)
+                || if follow_state {
+                    references_var_inner(state, name, follow_state)
+                } else {
+                    false
+                }
         }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            // Last arg (g) is state
+            let args: &[&RcExpr] = if follow_state {
+                &[a, b, c, d, e, f, g]
+            } else {
+                &[a, b, c, d, e, f]
+            };
+            args.iter()
+                .any(|x| references_var_inner(x, name, follow_state))
+        }
+        EvmExpr::Call(_, args) => args
             .iter()
-            .any(|x| references_var(x, name)),
-        EvmExpr::Call(_, args) => args.iter().any(|a| references_var(a, name)),
-        EvmExpr::Function(_, _, _, body) => references_var(body, name),
+            .any(|a| references_var_inner(a, name, follow_state)),
+        EvmExpr::Function(_, _, _, body) => references_var_inner(body, name, follow_state),
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..)
         | EvmExpr::MemRegion(..) => false,
-        EvmExpr::InlineAsm(inputs, ..) => inputs.iter().any(|i| references_var(i, name)),
+        EvmExpr::InlineAsm(inputs, ..) => inputs
+            .iter()
+            .any(|i| references_var_inner(i, name, follow_state)),
     }
 }
 
@@ -848,6 +947,229 @@ fn prepend_drop(expr: &RcExpr, var: &str) -> RcExpr {
             Rc::new(EvmExpr::Drop(var.to_owned())),
             Rc::clone(expr),
         )),
+    }
+}
+
+// ============================================================
+// Linear Last-Use Drop Tightening
+// ============================================================
+//
+// Moves Drop(var) from the end of a LetBind body to immediately after
+// the last top-level statement that references the variable. Only
+// operates on the top-level Concat chain (linear segments) — does not
+// move Drops into or across If/DoWhile boundaries.
+//
+// This reduces variable lifetimes, lowering peak live variables and
+// enabling more stack-eligible allocations (3 gas DUP vs 6 gas MLOAD).
+
+/// Tighten Drop placement in all LetBinds throughout the expression tree.
+pub fn tighten_drops(expr: &RcExpr) -> RcExpr {
+    tighten_drops_rec(expr)
+}
+
+fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::LetBind(name, init, body) => {
+            // First recurse into init and body
+            let new_init = tighten_drops_rec(init);
+            let new_body = tighten_drops_rec(body);
+            // Then try to tighten this LetBind's Drop
+            tighten_letbind_drop(name, &new_init, &new_body)
+        }
+        EvmExpr::Concat(a, b) => {
+            let new_a = tighten_drops_rec(a);
+            let new_b = tighten_drops_rec(b);
+            Rc::new(EvmExpr::Concat(new_a, new_b))
+        }
+        EvmExpr::If(cond, inputs, then_body, else_body) => {
+            let new_cond = tighten_drops_rec(cond);
+            let new_inputs = tighten_drops_rec(inputs);
+            let new_then = tighten_drops_rec(then_body);
+            let new_else = tighten_drops_rec(else_body);
+            Rc::new(EvmExpr::If(new_cond, new_inputs, new_then, new_else))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let new_inputs = tighten_drops_rec(inputs);
+            let new_body = tighten_drops_rec(body);
+            Rc::new(EvmExpr::DoWhile(new_inputs, new_body))
+        }
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            let new_body = tighten_drops_rec(body);
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                new_body,
+            ))
+        }
+        // Leaf and other nodes: no structural changes needed
+        _ => Rc::clone(expr),
+    }
+}
+
+/// Try to move Drop(name) earlier in a LetBind body.
+///
+/// Works on the tree structure directly (not flattening), so it can
+/// reach Drop(name) nodes buried inside nested LetBinds.
+///
+/// Algorithm:
+/// 1. Remove Drop(name) from wherever it sits in the body tree
+/// 2. Insert Drop(name) right after the last sequential use of the variable
+/// 3. If the last use is inside an If with one halting branch, push Drop
+///    into the non-halting branch
+fn tighten_letbind_drop(name: &str, init: &RcExpr, body: &RcExpr) -> RcExpr {
+    // Step 1: Remove Drop(name) from the body tree.
+    let (new_body, found) = remove_drop_from_tree(name, body);
+    if !found {
+        // No Drop(name) found — nothing to tighten.
+        return Rc::new(EvmExpr::LetBind(
+            name.to_owned(),
+            Rc::clone(init),
+            Rc::clone(body),
+        ));
+    }
+    // Step 2: Insert Drop(name) right after the last use.
+    let drop_node = Rc::new(EvmExpr::Drop(name.to_owned()));
+    let tightened = insert_drop_after_last_use(name, &new_body, &drop_node);
+
+
+    Rc::new(EvmExpr::LetBind(
+        name.to_owned(),
+        Rc::clone(init),
+        tightened,
+    ))
+}
+
+/// Remove Drop(name) from the expression tree.
+/// Returns (new_expr, was_found).
+///
+/// Traverses Concat chains and LetBind bodies to find and remove the Drop.
+fn remove_drop_from_tree(name: &str, expr: &RcExpr) -> (RcExpr, bool) {
+    match expr.as_ref() {
+        EvmExpr::Drop(n) if n == name => {
+            // Replace with a unit Empty — will be cleaned up by egglog DCE.
+            let empty = Rc::new(EvmExpr::Empty(
+                EvmType::Base(crate::schema::EvmBaseType::UnitT),
+                crate::schema::EvmContext::InFunction("__drop_removed__".into()),
+            ));
+            (empty, true)
+        }
+        EvmExpr::Concat(a, b) => {
+            // Try b first (drops are typically at the tail)
+            let (new_b, found) = remove_drop_from_tree(name, b);
+            if found {
+                return (Rc::new(EvmExpr::Concat(Rc::clone(a), new_b)), true);
+            }
+            let (new_a, found) = remove_drop_from_tree(name, a);
+            if found {
+                return (Rc::new(EvmExpr::Concat(new_a, Rc::clone(b))), true);
+            }
+            (Rc::clone(expr), false)
+        }
+        EvmExpr::LetBind(n, init, body) => {
+            let (new_body, found) = remove_drop_from_tree(name, body);
+            if found {
+                return (
+                    Rc::new(EvmExpr::LetBind(n.clone(), Rc::clone(init), new_body)),
+                    true,
+                );
+            }
+            (Rc::clone(expr), false)
+        }
+        _ => (Rc::clone(expr), false),
+    }
+}
+
+/// Insert Drop(name) right after the last sequential use of the variable.
+///
+/// In `Concat(a, b)`: if `b` references the var, recurse into `b`.
+/// If only `a` references it, insert Drop between `a` and `b`.
+/// For LetBinds, recurse into the body.
+///
+/// If the last use is an If with one halting branch, push Drop into
+/// the non-halting branch for earlier reclamation.
+fn insert_drop_after_last_use(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::Concat(a, b) => {
+            if references_var_dataflow(b, name) {
+                // Last use is somewhere in b — recurse into b
+                let new_b = insert_drop_after_last_use(name, b, drop_node);
+                Rc::new(EvmExpr::Concat(Rc::clone(a), new_b))
+            } else if references_var_dataflow(a, name) {
+                // Last use is in a, b doesn't reference it.
+                // Try to push Drop deeper into a if a is a complex structure.
+                let result = try_insert_drop_deeper(name, a, drop_node);
+                if let Some(new_a_with_drop) = result {
+                    Rc::new(EvmExpr::Concat(new_a_with_drop, Rc::clone(b)))
+                } else {
+                    // Can't go deeper — insert Drop between a and b.
+                    Rc::new(EvmExpr::Concat(
+                        Rc::clone(a),
+                        Rc::new(EvmExpr::Concat(Rc::clone(drop_node), Rc::clone(b))),
+                    ))
+                }
+            } else {
+                // Neither side references the var — just append Drop at end.
+                Rc::new(EvmExpr::Concat(Rc::clone(expr), Rc::clone(drop_node)))
+            }
+        }
+        EvmExpr::LetBind(n, init, body) => {
+            // Recurse into the body to place Drop
+            let new_body = insert_drop_after_last_use(name, body, drop_node);
+            Rc::new(EvmExpr::LetBind(n.clone(), Rc::clone(init), new_body))
+        }
+        _ => {
+            // Leaf or non-Concat node — append Drop after it
+            Rc::new(EvmExpr::Concat(Rc::clone(expr), Rc::clone(drop_node)))
+        }
+    }
+}
+
+/// Try to insert Drop deeper into a complex expression.
+///
+/// For If with one halting branch, pushes Drop into the non-halting branch.
+/// For LetBind, recurses into the body.
+/// Returns None if we can't go deeper (caller should insert Drop after the expr).
+fn try_insert_drop_deeper(name: &str, expr: &RcExpr, drop_node: &RcExpr) -> Option<RcExpr> {
+    match expr.as_ref() {
+        EvmExpr::If(cond, inputs, then_body, else_body) => {
+            let then_halts = expr_definitely_halts(then_body);
+            let else_halts = expr_definitely_halts(else_body);
+            if then_halts && !else_halts {
+                // Push Drop into else (non-halting) branch
+                let new_else = insert_drop_after_last_use(name, else_body, drop_node);
+                Some(Rc::new(EvmExpr::If(
+                    Rc::clone(cond),
+                    Rc::clone(inputs),
+                    Rc::clone(then_body),
+                    new_else,
+                )))
+            } else if else_halts && !then_halts {
+                // Push Drop into then (non-halting) branch
+                let new_then = insert_drop_after_last_use(name, then_body, drop_node);
+                Some(Rc::new(EvmExpr::If(
+                    Rc::clone(cond),
+                    Rc::clone(inputs),
+                    new_then,
+                    Rc::clone(else_body),
+                )))
+            } else {
+                None
+            }
+        }
+        EvmExpr::LetBind(n, init, body) => {
+            let new_body = insert_drop_after_last_use(name, body, drop_node);
+            Some(Rc::new(EvmExpr::LetBind(
+                n.clone(),
+                Rc::clone(init),
+                new_body,
+            )))
+        }
+        EvmExpr::Concat(..) => {
+            // Recurse into the Concat
+            Some(insert_drop_after_last_use(name, expr, drop_node))
+        }
+        _ => None,
     }
 }
 
