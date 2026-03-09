@@ -49,7 +49,11 @@ fn read_all() {
         let mut h = deploy(opt);
         let r = h.call_fn("read_all()", &[]);
         assert!(r.success, "O{opt}: read_all should succeed");
-        assert_eq!(decode(&r.output), u(1000), "O{opt}: 100+200+300+400 == 1000");
+        assert_eq!(
+            decode(&r.output),
+            u(1000),
+            "O{opt}: 100+200+300+400 == 1000"
+        );
     }
 }
 
@@ -99,7 +103,11 @@ fn find_max() {
         let mut h = deploy(opt);
         let r = h.call_fn("find_max()", &[]);
         assert!(r.success, "O{opt}: find_max should succeed");
-        assert_eq!(decode(&r.output), u(50), "O{opt}: max of [30,10,50,20,40] == 50");
+        assert_eq!(
+            decode(&r.output),
+            u(50),
+            "O{opt}: max of [30,10,50,20,40] == 50"
+        );
     }
 }
 
@@ -144,7 +152,11 @@ fn storage_multiple_slots() {
         // Set several slots
         for i in 0..5u64 {
             let r = h.call_fn("set(uint256,uint256)", &encode2(i, (i + 1) * 100));
-            assert!(r.success, "O{opt}: set({i}, {}) should succeed", (i + 1) * 100);
+            assert!(
+                r.success,
+                "O{opt}: set({i}, {}) should succeed",
+                (i + 1) * 100
+            );
         }
         // Read back
         for i in 0..5u64 {
@@ -200,7 +212,10 @@ fn storage_get_oob_reverts() {
         let mut h = deploy(opt);
         // values has length 5, index 5 is OOB
         let r = h.call_fn("get(uint256)", &encode(5));
-        assert!(!r.success, "O{opt}: get(5) should revert (OOB on [u256; 5])");
+        assert!(
+            !r.success,
+            "O{opt}: get(5) should revert (OOB on [u256; 5])"
+        );
     }
 }
 
@@ -218,7 +233,10 @@ fn storage_set_oob_reverts() {
     for opt in 0..=2 {
         let mut h = deploy(opt);
         let r = h.call_fn("set(uint256,uint256)", &encode2(5, 42));
-        assert!(!r.success, "O{opt}: set(5, 42) should revert (OOB on [u256; 5])");
+        assert!(
+            !r.success,
+            "O{opt}: set(5, 42) should revert (OOB on [u256; 5])"
+        );
     }
 }
 
@@ -228,7 +246,10 @@ fn storage_boundary_index_succeeds() {
         let mut h = deploy(opt);
         // Index 4 is the last valid index for [u256; 5]
         let r = h.call_fn("set(uint256,uint256)", &encode2(4, 777));
-        assert!(r.success, "O{opt}: set(4, 777) should succeed (last valid index)");
+        assert!(
+            r.success,
+            "O{opt}: set(4, 777) should succeed (last valid index)"
+        );
         let r = h.call_fn("get(uint256)", &encode(4));
         assert!(r.success, "O{opt}: get(4) should succeed");
         assert_eq!(decode(&r.output), u(777), "O{opt}: values[4] == 777");
@@ -265,10 +286,16 @@ fn small_storage_oob_reverts() {
         let mut h = deploy(opt);
         // small is [u256; 3], index 3 is OOB
         let r = h.call_fn("get_small(uint256)", &encode(3));
-        assert!(!r.success, "O{opt}: get_small(3) should revert (OOB on [u256; 3])");
+        assert!(
+            !r.success,
+            "O{opt}: get_small(3) should revert (OOB on [u256; 3])"
+        );
 
         let r = h.call_fn("set_small(uint256,uint256)", &encode2(3, 42));
-        assert!(!r.success, "O{opt}: set_small(3, 42) should revert (OOB on [u256; 3])");
+        assert!(
+            !r.success,
+            "O{opt}: set_small(3, 42) should revert (OOB on [u256; 3])"
+        );
     }
 }
 

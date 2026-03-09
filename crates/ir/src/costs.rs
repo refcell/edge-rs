@@ -169,8 +169,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
 
     // -- EvmBaseType / EvmType variants --
     for ty in &[
-        "UIntT", "IntT", "BytesT", "AddrT", "BoolT", "UnitT", "StateT", "Base", "TupleT",
-        "ArrayT",
+        "UIntT", "IntT", "BytesT", "AddrT", "BoolT", "UnitT", "StateT", "Base", "TupleT", "ArrayT",
     ] {
         m.insert(*ty, 0);
     }
