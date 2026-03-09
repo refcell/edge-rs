@@ -6,67 +6,19 @@
 //! packed structs store fields in a single packed word rather than
 //! one-word-per-field. Tests run at O0, O1, O2, and O3.
 
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
-use edge_driver::{
-    compiler::Compiler,
-    config::{CompilerConfig, EmitKind},
-};
 use revm::{
     context::{Context, TxEnv},
     database::{CacheDB, EmptyDB},
-    handler::MainnetContext,
+    inspector::InspectCommitEvm,
     interpreter::{interpreter::EthInterpreter, interpreter_types::Jumps, Interpreter},
-    primitives::{Address, Bytes, TxKind, U256},
+    primitives::{Bytes, TxKind, U256},
     state::AccountInfo,
-    ExecuteCommitEvm, Inspector, MainBuilder, MainContext, MainnetEvm,
+    Inspector, MainBuilder, MainContext,
 };
-use tiny_keccak::{Hasher, Keccak};
 
-// =============================================================================
-// Shared helpers
-// =============================================================================
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn compile_contract_opt(relative_path: &str, opt_level: u8) -> Vec<u8> {
-    let path = workspace_root().join(relative_path);
-    let mut config = CompilerConfig::new(path);
-    config.emit = EmitKind::Bytecode;
-    config.optimization_level = opt_level;
-    let mut compiler = Compiler::new(config).expect("compiler init failed");
-    let output = compiler.compile().expect("compile failed");
-    output.bytecode.expect("no bytecode produced")
-}
-
-fn selector(sig: &str) -> [u8; 4] {
-    let mut h = Keccak::v256();
-    h.update(sig.as_bytes());
-    let mut out = [0u8; 32];
-    h.finalize(&mut out);
-    [out[0], out[1], out[2], out[3]]
-}
-
-fn decode_u256(output: &[u8]) -> u64 {
-    assert!(
-        output.len() >= 32,
-        "return value too short: {} bytes",
-        output.len()
-    );
-    assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
-    u64::from_be_bytes(output[24..32].try_into().unwrap())
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-const CALLER: Address = Address::ZERO;
-
-type TestDb = CacheDB<EmptyDB>;
-type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
+use crate::helpers::*;
 
 // =============================================================================
 // Memory-capturing Inspector
@@ -113,65 +65,11 @@ impl<CTX> Inspector<CTX, EthInterpreter> for MStoreInspector {
 }
 
 // =============================================================================
-// EVM handles
+// Inspector-based EVM call helper
 // =============================================================================
 
-/// Standard EVM handle (no inspector).
-struct EvmHandle {
-    evm: TestEvm,
-    contract: Address,
-    nonce: u64,
-}
-
-impl EvmHandle {
-    fn new(deploy_bytecode: Vec<u8>) -> Self {
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(
-            CALLER,
-            AccountInfo {
-                balance: U256::from(u64::MAX),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-
-        let mut evm = Context::mainnet().with_db(db).build_mainnet();
-
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Create)
-            .data(Bytes::from(deploy_bytecode))
-            .gas_limit(10_000_000)
-            .nonce(0)
-            .build()
-            .unwrap();
-
-        let result = evm.transact_commit(tx).unwrap();
-        assert!(result.is_success(), "Deployment failed: {result:#?}");
-
-        let contract = CALLER.create(0);
-        Self {
-            evm,
-            contract,
-            nonce: 1,
-        }
-    }
-
-    fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Call(self.contract))
-            .data(Bytes::from(calldata))
-            .nonce(self.nonce)
-            .gas_limit(10_000_000)
-            .build()
-            .unwrap();
-        let result = self.evm.transact_commit(tx).unwrap();
-        self.nonce += 1;
-        let success = result.is_success();
-        let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
-        (success, output)
-    }
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Deploy a contract and call a function with MSTORE inspection.
@@ -205,7 +103,6 @@ fn call_with_inspector(deploy_bytecode: &[u8], calldata: Vec<u8>) -> (bool, Vec<
         .build()
         .unwrap();
 
-    use revm::inspector::InspectCommitEvm;
     let result = evm.inspect_tx_commit(deploy_tx).unwrap();
     assert!(result.is_success(), "Deployment failed: {result:#?}");
     let contract = CALLER.create(0);
@@ -228,22 +125,6 @@ fn call_with_inspector(deploy_bytecode: &[u8], calldata: Vec<u8>) -> (bool, Vec<
     let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
     let mstores = capture.borrow().clone();
     (success, output, mstores)
-}
-
-fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
-    let mut cd = sel.to_vec();
-    for a in args {
-        cd.extend_from_slice(a);
-    }
-    cd
-}
-
-fn for_all_opt_levels(contract_path: &str, test_fn: impl Fn(&mut EvmHandle, u8)) {
-    for opt in 0..=3 {
-        let bc = compile_contract_opt(contract_path, opt);
-        let mut h = EvmHandle::new(bc);
-        test_fn(&mut h, opt);
-    }
 }
 
 // =============================================================================

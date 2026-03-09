@@ -1,0 +1,9 @@
+contract BoolTest {
+    fn check_positive(x: u256) -> (bool) {
+        return x > 0;
+    }
+
+    pub fn is_positive(x: u256) -> (bool) {
+        return check_positive(x);
+    }
+}

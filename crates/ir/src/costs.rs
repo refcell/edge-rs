@@ -123,6 +123,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("OpMStore8", 3);
     m.insert("OpSelect", 10);
     m.insert("OpCalldataCopy", 9); // 3 base + 3*words (typically 1-2 words)
+    m.insert("OpMcopy", 9); // 3 base + 3*words (typically 1-2 words)
 
     // -- EvmEnvOp variants --
     for op in &[
@@ -168,7 +169,7 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
 
     // -- EvmBaseType / EvmType variants --
     for ty in &[
-        "UIntT", "IntT", "BytesT", "AddrT", "BoolT", "UnitT", "StateT", "Base", "TupleT",
+        "UIntT", "IntT", "BytesT", "AddrT", "BoolT", "UnitT", "StateT", "Base", "TupleT", "ArrayT",
     ] {
         m.insert(*ty, 0);
     }
@@ -213,6 +214,9 @@ fn gas_cost_table() -> HashMap<&'static str, u32> {
     m.insert("EnvRead1", 0);
     m.insert("TLNil", 0);
     m.insert("TLCons", 0);
+
+    // MemRegion — symbolic allocation, resolves to PUSH at codegen
+    m.insert("MemRegion", 3);
 
     m
 }

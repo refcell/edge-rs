@@ -111,13 +111,13 @@ impl AstToEgglog {
         }
 
         // Check contract functions — emit Call (not inline)
-        if let Some((name, params, _body)) = self
+        if let Some((name, params, returns, _body)) = self
             .contract_functions
             .iter()
-            .find(|(name, _, _)| *name == fn_name)
+            .find(|(name, _, _, _)| *name == fn_name)
             .cloned()
         {
-            return self.emit_call(&name, &params, args);
+            return self.emit_call(&name, &params, &returns, args);
         }
 
         // Check non-comptime free functions — emit Call (not inline)
@@ -127,7 +127,7 @@ impl AstToEgglog {
             .find(|f| f.name == fn_name && !f.is_comptime)
             .cloned()
         {
-            return self.emit_call(&info.name, &info.params, args);
+            return self.emit_call(&info.name, &info.params, &info.returns, args);
         }
 
         // Check generic function templates
@@ -551,7 +551,7 @@ impl AstToEgglog {
 
         // Before pushing a new scope, look up composite info for args that are identifiers
         // (needed for method calls where `self` refers to a struct variable)
-        let mut arg_composite: Vec<Option<(String, Option<usize>)>> = Vec::new();
+        let mut arg_composite: Vec<Option<(String, Option<RcExpr>)>> = Vec::new();
         for arg in args {
             if let edge_ast::Expr::Ident(ident) = arg {
                 let info = self.lookup_composite_info(&ident.name);
@@ -571,7 +571,7 @@ impl AstToEgglog {
             let (mut composite_type, composite_base) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
-                .map(|(ct, cb)| (Some(ct.clone()), *cb))
+                .map(|(ct, cb)| (Some(ct.clone()), cb.clone()))
                 .unwrap_or((None, None));
 
             // If composite_type is still None, check if the param type sig names
@@ -619,6 +619,7 @@ impl AstToEgglog {
         &mut self,
         name: &str,
         params: &[(String, edge_ast::ty::TypeSig)],
+        returns: &[edge_ast::ty::TypeSig],
         args: &[edge_ast::Expr],
     ) -> Result<RcExpr, IrError> {
         let args_ir: Vec<RcExpr> = args
@@ -632,7 +633,7 @@ impl AstToEgglog {
             .iter()
             .any(|f| matches!(f.as_ref(), EvmExpr::Function(n, _, _, _) if n == name))
         {
-            self.lower_internal_function_body(name, params)?;
+            self.lower_internal_function_body(name, params, returns)?;
         }
 
         Ok(ast_helpers::call(name.to_string(), args_ir))

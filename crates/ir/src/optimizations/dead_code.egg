@@ -73,12 +73,15 @@
 ;; Drop (lifetime marker) is pure — no side effects
 (rule ((= e (Drop name)))                  ((IsPure e)) :ruleset dead-code)
 
+;; MemRegion (symbolic allocation) is pure — just a compile-time constant
+(rule ((= e (MemRegion id sz)))            ((IsPure e)) :ruleset dead-code)
+
 ;; Concat of pure expressions is pure (enables cascading DCE)
 (rule ((= e (Concat a b)) (IsPure a) (IsPure b))
       ((IsPure e)) :ruleset dead-code)
 
-;; If with all-pure branches is pure
-(rule ((= e (If cond t f ctx)) (IsPure cond) (IsPure t) (IsPure f))
+;; If with all-pure branches is pure (must check all 4 args including else)
+(rule ((= e (If cond inputs then_b else_b)) (IsPure cond) (IsPure inputs) (IsPure then_b) (IsPure else_b))
       ((IsPure e)) :ruleset dead-code)
 
 ;; ---- Empty elimination in Concat chains ----

@@ -97,13 +97,13 @@ impl AstToEgglog {
                 // If RHS was a struct/array instantiation, wire composite info to LHS binding
                 // (skip storage fields — they already have composite_type set from lower_contract)
                 let rhs_composite = self.last_composite_alloc.clone();
-                if let Some((ref type_name, base)) = rhs_composite {
+                if let Some((ref type_name, ref base)) = rhs_composite {
                     if let edge_ast::Expr::Ident(ident) = lhs {
                         for scope in self.scopes.iter_mut().rev() {
                             if let Some(binding) = scope.bindings.get_mut(&ident.name) {
                                 if binding.storage_slot.is_none() {
                                     binding.composite_type = Some(type_name.clone());
-                                    binding.composite_base = Some(base);
+                                    binding.composite_base = Some(Rc::clone(base));
                                 }
                                 break;
                             }
@@ -156,16 +156,16 @@ impl AstToEgglog {
                     } else {
                         let val = self.lower_expr(expr)?;
                         // ABI-encode the return value to memory and RETURN
-                        let offset = ast_helpers::const_int(0, self.current_ctx.clone());
+                        let ret_buf = self.alloc_region(1);
                         let size = ast_helpers::const_int(32, self.current_ctx.clone());
                         let mstore_expr = ast_helpers::mstore(
-                            Rc::clone(&offset),
+                            Rc::clone(&ret_buf),
                             val,
                             Rc::clone(&self.current_state),
                         );
                         self.current_state = Rc::clone(&mstore_expr);
                         let ret =
-                            ast_helpers::return_op(offset, size, Rc::clone(&self.current_state));
+                            ast_helpers::return_op(ret_buf, size, Rc::clone(&self.current_state));
                         Ok(ast_helpers::concat(mstore_expr, ret))
                     }
                 } else {
@@ -290,13 +290,13 @@ impl AstToEgglog {
                 // If RHS was a struct/array instantiation, wire composite info to LHS binding
                 // (skip storage fields — they already have composite_type set from lower_contract)
                 let rhs_composite = self.last_composite_alloc.clone();
-                if let Some((ref type_name, base)) = rhs_composite {
+                if let Some((ref type_name, ref base)) = rhs_composite {
                     if let edge_ast::Expr::Ident(ident) = lhs.as_ref() {
                         for scope in self.scopes.iter_mut().rev() {
                             if let Some(binding) = scope.bindings.get_mut(&ident.name) {
                                 if binding.storage_slot.is_none() {
                                     binding.composite_type = Some(type_name.clone());
-                                    binding.composite_base = Some(base);
+                                    binding.composite_base = Some(Rc::clone(base));
                                 }
                                 break;
                             }
@@ -311,22 +311,44 @@ impl AstToEgglog {
                 // Slice access: arr[start:end] → pointer to base + start * 32
                 if end_index.is_some() {
                     if let edge_ast::Expr::Ident(ident) = base.as_ref() {
-                        if let Some((_type_name, base_offset)) =
+                        if let Some((_type_name, base_expr)) =
                             self.lookup_composite_info(&ident.name)
                         {
                             // Evaluate start index (must be a constant for now)
                             if let edge_ast::Expr::Literal(lit) = index.as_ref() {
-                                if let edge_ast::Lit::Int(bytes, _, _) = lit.as_ref() {
-                                    let start =
-                                        u64::from_be_bytes(bytes[24..32].try_into().unwrap())
-                                            as usize;
-                                    let new_base = base_offset + start * 32;
-                                    self.last_composite_alloc =
-                                        Some(("__array__".to_string(), new_base));
-                                    return Ok(ast_helpers::const_int(
-                                        new_base as i64,
-                                        self.current_ctx.clone(),
+                                if let edge_ast::Lit::Int(start_bytes, _, _) = lit.as_ref() {
+                                    let start = u64::from_be_bytes(
+                                        start_bytes[24..32].try_into().unwrap(),
+                                    ) as usize;
+                                    let new_base = ast_helpers::add(
+                                        base_expr,
+                                        ast_helpers::const_int(
+                                            (start * 32) as i64,
+                                            self.current_ctx.clone(),
+                                        ),
+                                    );
+                                    // Compute slice length from end index
+                                    let slice_len = end_index.as_ref().map_or(0, |end_idx| {
+                                        if let edge_ast::Expr::Literal(end_lit) = end_idx.as_ref() {
+                                            if let edge_ast::Lit::Int(end_bytes, _, _) =
+                                                end_lit.as_ref()
+                                            {
+                                                let end = u64::from_be_bytes(
+                                                    end_bytes[24..32].try_into().unwrap(),
+                                                ) as usize;
+                                                end - start
+                                            } else {
+                                                0
+                                            }
+                                        } else {
+                                            0
+                                        }
+                                    });
+                                    self.last_composite_alloc = Some((
+                                        format!("__array__{slice_len}"),
+                                        Rc::clone(&new_base),
                                     ));
+                                    return Ok(new_base);
                                 }
                             }
                         }
@@ -379,32 +401,34 @@ impl AstToEgglog {
                     return self.lower_expr(&elements[0]);
                 }
                 // Allocate memory for tuple elements
-                let base = self.next_memory_offset;
-                self.next_memory_offset += elements.len() * 32;
+                let base_ir = self.alloc_region(elements.len());
                 let mut result =
                     ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
                 for (i, elem) in elements.iter().enumerate() {
                     let val = self.lower_expr(elem)?;
-                    let offset =
-                        ast_helpers::const_int((base + i * 32) as i64, self.current_ctx.clone());
+                    let offset = ast_helpers::add(
+                        Rc::clone(&base_ir),
+                        ast_helpers::const_int((i * 32) as i64, self.current_ctx.clone()),
+                    );
                     let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
                     result = ast_helpers::concat(result, mstore);
                 }
                 // Track as composite for field access
-                self.last_composite_alloc = Some(("__tuple".to_string(), base));
+                self.last_composite_alloc = Some(("__tuple".to_string(), Rc::clone(&base_ir)));
                 // Return base address as the tuple "value"
-                let base_val = ast_helpers::const_int(base as i64, self.current_ctx.clone());
-                Ok(ast_helpers::concat(result, base_val))
+                Ok(ast_helpers::concat(result, base_ir))
             }
 
             edge_ast::Expr::TupleFieldAccess(obj, index, _span) => {
                 // Check if obj is a variable with composite info
                 if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
-                    if let Some((_type_name, base_offset)) = self.lookup_composite_info(&ident.name)
-                    {
-                        let field_offset = ast_helpers::const_int(
-                            (base_offset + (*index as usize) * 32) as i64,
-                            self.current_ctx.clone(),
+                    if let Some((_type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
+                        let field_offset = ast_helpers::add(
+                            base_expr,
+                            ast_helpers::const_int(
+                                (*index as usize * 32) as i64,
+                                self.current_ctx.clone(),
+                            ),
                         );
                         return Ok(ast_helpers::mload(
                             field_offset,
@@ -557,12 +581,12 @@ impl AstToEgglog {
     }
 
     /// Lower an assignment expression.
-    /// `rhs_composite` is set when the RHS was a struct/array instantiation, giving `(type_name, memory_base)`.
+    /// `rhs_composite` is set when the RHS was a struct/array instantiation, giving `(type_name, base_expr)`.
     pub(crate) fn lower_assignment_with_composite(
         &mut self,
         lhs: &edge_ast::Expr,
         rhs_ir: RcExpr,
-        rhs_composite: Option<&(String, usize)>,
+        rhs_composite: Option<&(String, RcExpr)>,
     ) -> Result<RcExpr, IrError> {
         match lhs {
             edge_ast::Expr::Ident(ident) => {
@@ -580,14 +604,10 @@ impl AstToEgglog {
                                 // instantiation (stored in memory), MLOAD the packed word
                                 // from the memory base instead of storing the base address.
                                 // We must keep rhs_ir in the result (it contains MSTOREs).
-                                if let Some((_type_name, base)) = rhs_composite {
+                                if let Some((_type_name, base_expr)) = rhs_composite {
                                     if binding.composite_type.is_some() {
-                                        let base_ir = ast_helpers::const_int(
-                                            *base as i64,
-                                            self.current_ctx.clone(),
-                                        );
                                         let packed_word = ast_helpers::mload(
-                                            base_ir,
+                                            Rc::clone(base_expr),
                                             Rc::clone(&self.current_state),
                                         );
                                         let new_state = ast_helpers::sstore(
@@ -613,14 +633,10 @@ impl AstToEgglog {
                                     binding.storage_slot.unwrap_or(0) as i64,
                                     self.current_ctx.clone(),
                                 );
-                                if let Some((_type_name, base)) = rhs_composite {
+                                if let Some((_type_name, base_expr)) = rhs_composite {
                                     if binding.composite_type.is_some() {
-                                        let base_ir = ast_helpers::const_int(
-                                            *base as i64,
-                                            self.current_ctx.clone(),
-                                        );
                                         let packed_word = ast_helpers::mload(
-                                            base_ir,
+                                            Rc::clone(base_expr),
                                             Rc::clone(&self.current_state),
                                         );
                                         let new_state = ast_helpers::tstore(
@@ -934,22 +950,101 @@ impl AstToEgglog {
 
     /// Lower `return (a, b, c)` — MSTORE each element at sequential 32-byte
     /// offsets, then RETURN the entire memory range.
+    ///
+    /// Array-typed elements (storage or memory-backed) are expanded inline:
+    /// each array element gets its own 32-byte return slot.
     pub(crate) fn lower_tuple_return(
         &mut self,
         elements: &[edge_ast::Expr],
     ) -> Result<RcExpr, IrError> {
+        // Pre-compute total return slots needed (arrays expand to multiple slots)
+        let mut total_slots = 0usize;
+        for elem in elements {
+            if let edge_ast::Expr::Ident(ident) = elem {
+                if let Some(&(_, len)) = self.storage_array_fields.get(&ident.name) {
+                    total_slots += len;
+                    continue;
+                }
+                if let Some((type_name, _)) = self.lookup_composite_info(&ident.name) {
+                    if let Some(len_str) = type_name.strip_prefix("__array__") {
+                        if let Ok(len) = len_str.parse::<usize>() {
+                            total_slots += len;
+                            continue;
+                        }
+                    }
+                }
+            }
+            total_slots += 1;
+        }
+
+        // Allocate a return buffer region
+        let ret_base = self.alloc_region(total_slots);
+
         let mut result =
             ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
-        for (i, elem) in elements.iter().enumerate() {
+        let mut slot = 0usize;
+
+        for elem in elements {
+            // Check if this element is a storage array identifier
+            if let edge_ast::Expr::Ident(ident) = elem {
+                if let Some(&(base_slot, len)) = self.storage_array_fields.get(&ident.name) {
+                    // Expand storage array: SLOAD each element into a return slot
+                    for j in 0..len {
+                        let arr_slot = ast_helpers::const_int(
+                            (base_slot + j) as i64,
+                            self.current_ctx.clone(),
+                        );
+                        let val = ast_helpers::sload(arr_slot, Rc::clone(&self.current_state));
+                        let offset = ast_helpers::add(
+                            Rc::clone(&ret_base),
+                            ast_helpers::const_int((slot * 32) as i64, self.current_ctx.clone()),
+                        );
+                        let mstore =
+                            ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
+                        self.current_state = Rc::clone(&mstore);
+                        result = ast_helpers::concat(result, mstore);
+                        slot += 1;
+                    }
+                    continue;
+                }
+
+                // Check if this element is a memory-backed array variable
+                if let Some((type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
+                    if let Some(len_str) = type_name.strip_prefix("__array__") {
+                        if let Ok(len) = len_str.parse::<usize>() {
+                            // Use MCOPY to bulk-copy array data to return offset
+                            let dest = ast_helpers::add(
+                                Rc::clone(&ret_base),
+                                ast_helpers::const_int(
+                                    (slot * 32) as i64,
+                                    self.current_ctx.clone(),
+                                ),
+                            );
+                            let size =
+                                ast_helpers::const_int((len * 32) as i64, self.current_ctx.clone());
+                            let copy = ast_helpers::mcopy(dest, base_expr, size);
+                            result = ast_helpers::concat(result, copy);
+                            slot += len;
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Scalar element: single MSTORE
             let val = self.lower_expr(elem)?;
-            let offset = ast_helpers::const_int((i * 32) as i64, self.current_ctx.clone());
+            let offset = ast_helpers::add(
+                Rc::clone(&ret_base),
+                ast_helpers::const_int((slot * 32) as i64, self.current_ctx.clone()),
+            );
             let mstore = ast_helpers::mstore(offset, val, Rc::clone(&self.current_state));
             self.current_state = Rc::clone(&mstore);
             result = ast_helpers::concat(result, mstore);
+            slot += 1;
         }
-        let offset = ast_helpers::const_int(0, self.current_ctx.clone());
-        let size = ast_helpers::const_int((elements.len() * 32) as i64, self.current_ctx.clone());
-        let ret = ast_helpers::return_op(offset, size, Rc::clone(&self.current_state));
+
+        let size = ast_helpers::const_int((slot * 32) as i64, self.current_ctx.clone());
+        let ret = ast_helpers::return_op(ret_base, size, Rc::clone(&self.current_state));
         result = ast_helpers::concat(result, ret);
         Ok(result)
     }
@@ -1063,12 +1158,27 @@ impl AstToEgglog {
             Ok(asm_node)
         } else {
             // Multiple outputs: allocate memory slots and append MSTORE/POP to bytecode
+            // InlineAsm multi-output: offsets are embedded directly in raw bytecode hex,
+            // so we can't use symbolic MemRegion here. Allocate a region to reserve the
+            // space, then use the region ID to derive deterministic concrete offsets.
+            // The post-egglog mem_region pass won't touch raw bytecode, but reserving
+            // the region prevents other allocations from overlapping.
+            let num_named = outputs.iter().filter(|o| o.is_some()).count();
+            let _asm_region = self.alloc_region(num_named);
+            // Use high concrete offsets based on region ID to avoid conflicts.
+            // These will be consistent because region IDs are monotonically assigned.
+            let asm_base = if let crate::schema::EvmExpr::MemRegion(id, _) = _asm_region.as_ref() {
+                // Place at 0xF000 + id * num_named * 32 to avoid overlapping
+                0xF000 + (*id as usize) * num_named * 32
+            } else {
+                0xF000
+            };
             let mut output_offsets: Vec<Option<usize>> = Vec::new();
+            let mut asm_slot = 0;
             for output in outputs {
                 if output.is_some() {
-                    let offset = self.next_memory_offset;
-                    self.next_memory_offset += 32;
-                    output_offsets.push(Some(offset));
+                    output_offsets.push(Some(asm_base + asm_slot * 32));
+                    asm_slot += 1;
                 } else {
                     output_offsets.push(None);
                 }

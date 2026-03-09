@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
 
+#[path = "suites/helpers.rs"]
+mod helpers;
+
 #[path = "suites/access_exec.rs"]
 mod access_exec;
 #[path = "suites/calldata_args.rs"]
@@ -22,6 +25,8 @@ mod generics_exec;
 mod generics_negative;
 #[path = "suites/inline_asm_exec.rs"]
 mod inline_asm_exec;
+#[path = "suites/internal_fn_types.rs"]
+mod internal_fn_types;
 #[path = "suites/packed_exec.rs"]
 mod packed_exec;
 #[path = "suites/packed_storage_exec.rs"]

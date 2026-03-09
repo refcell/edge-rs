@@ -164,7 +164,8 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
         | EvmExpr::Var(..)
         | EvmExpr::Drop(..)
         | EvmExpr::Selector(..)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..) => Rc::clone(expr),
     }
 }
 

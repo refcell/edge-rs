@@ -50,25 +50,23 @@ impl AstToEgglog {
 
             if let Some(n) = array_len {
                 // Array parameter: allocate memory, copy N elements from calldata
-                let base = self.next_memory_offset;
-                self.next_memory_offset += n * 32;
+                let base_ir = self.alloc_region(n);
 
                 // Use a single CALLDATACOPY to bulk-copy array data from calldata to memory
-                let dest_off = ast_helpers::const_int(base as i64, self.current_ctx.clone());
                 let cd_off =
                     ast_helpers::const_int(calldata_offset as i64, self.current_ctx.clone());
                 let size = ast_helpers::const_int((n * 32) as i64, self.current_ctx.clone());
-                let copy = ast_helpers::calldatacopy(dest_off, cd_off, size);
+                let copy = ast_helpers::calldatacopy(Rc::clone(&base_ir), cd_off, size);
                 array_param_prefix = ast_helpers::concat(array_param_prefix, copy);
 
                 let binding = VarBinding {
-                    value: ast_helpers::const_int(base as i64, self.current_ctx.clone()),
+                    value: Rc::clone(&base_ir),
                     location: DataLocation::Stack,
                     storage_slot: None,
                     _ty: ty,
                     let_bind_name: None,
-                    composite_type: Some("__array__".to_string()),
-                    composite_base: Some(base),
+                    composite_type: Some(format!("__array__{n}")),
+                    composite_base: Some(base_ir),
                 };
                 self.scopes
                     .last_mut()
@@ -441,6 +439,7 @@ impl AstToEgglog {
         &mut self,
         name: &str,
         params: &[(String, edge_ast::ty::TypeSig)],
+        returns: &[edge_ast::ty::TypeSig],
     ) -> Result<(), IrError> {
         let saved_ctx = self.current_ctx.clone();
         let saved_state = Rc::clone(&self.current_state);
@@ -465,7 +464,7 @@ impl AstToEgglog {
                 })
                 .collect::<Vec<_>>(),
         );
-        let out_ty = EvmType::Base(EvmBaseType::UIntT(256)); // TODO: derive from return type
+        let out_ty = self.returns_to_type(returns);
 
         // Bind parameters via Arg/Get
         self.scopes.push(Scope::new());
@@ -499,8 +498,8 @@ impl AstToEgglog {
         let body = self
             .contract_functions
             .iter()
-            .find(|(n, _, _)| n == name)
-            .map(|(_, _, b)| b.clone())
+            .find(|(n, _, _, _)| n == name)
+            .map(|(_, _, _, b)| b.clone())
             .or_else(|| {
                 self.free_fn_bodies
                     .iter()

@@ -38,7 +38,8 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         | EvmExpr::Empty(..)
         | EvmExpr::Selector(_)
         | EvmExpr::StorageField(..)
-        | EvmExpr::Drop(_) => false,
+        | EvmExpr::Drop(_)
+        | EvmExpr::MemRegion(..) => false,
         EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(|inp| references_any_var(inp, names)),
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
             references_any_var(a, names) || references_any_var(b, names)
@@ -91,7 +92,7 @@ pub(crate) struct VarBinding {
     /// For struct/array-typed variables: the type name (for field/index lookup)
     pub composite_type: Option<String>,
     /// For struct/array-typed variables: the memory base offset
-    pub composite_base: Option<usize>,
+    pub composite_base: Option<RcExpr>,
 }
 
 /// Scope for variable resolution during lowering.
@@ -109,10 +110,11 @@ impl Scope {
     }
 }
 
-/// A contract function: (name, params, body).
+/// A contract function: (name, params, returns, body).
 pub(crate) type ContractFunction = (
     String,
     Vec<(String, edge_ast::ty::TypeSig)>,
+    Vec<edge_ast::ty::TypeSig>,
     edge_ast::CodeBlock,
 );
 
@@ -284,12 +286,11 @@ pub struct AstToEgglog {
     pub(crate) type_aliases: IndexMap<String, edge_ast::ty::TypeSig>,
     /// Storage array fields: `field_name` -> `(base_slot, array_length)`
     pub(crate) storage_array_fields: IndexMap<String, (usize, usize)>,
-    /// Next available memory offset for composite value allocation (structs, arrays, data-unions).
-    /// Starts at 128 to avoid conflict with mapping keccak scratch space (0..128).
-    pub(crate) next_memory_offset: usize,
-    /// Tracks the last composite allocation `(type_name, base_offset)` for wiring
+    /// Next available region ID for symbolic memory allocation.
+    pub(crate) next_region_id: i64,
+    /// Tracks the last composite allocation `(type_name, base_expr)` for wiring
     /// struct/array assignments to variable bindings.
-    pub(crate) last_composite_alloc: Option<(String, usize)>,
+    pub(crate) last_composite_alloc: Option<(String, RcExpr)>,
     /// Module prefixes from `use std::math`-style whole-module imports.
     /// When set, `math::mul_div_down` resolves to `mul_div_down`.
     pub(crate) module_prefixes: HashSet<String>,
@@ -352,7 +353,7 @@ impl AstToEgglog {
             struct_types: IndexMap::new(),
             type_aliases: IndexMap::new(),
             storage_array_fields: IndexMap::new(),
-            next_memory_offset: 128,
+            next_region_id: 0,
             last_composite_alloc: None,
             module_prefixes: HashSet::new(),
             generic_type_templates: IndexMap::new(),
@@ -367,6 +368,15 @@ impl AstToEgglog {
             type_hint: None,
             warnings: Vec::new(),
         }
+    }
+
+    /// Allocate a symbolic memory region of `size_words` 32-byte words.
+    /// Returns an `RcExpr` representing the region's base address (a `MemRegion` node).
+    /// Concrete byte offsets are assigned later by `mem_region::assign_program_offsets`.
+    pub(crate) fn alloc_region(&mut self, size_words: usize) -> RcExpr {
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        crate::ast_helpers::mem_region(id, size_words as i64)
     }
 
     /// Lower an entire program.
@@ -900,8 +910,13 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                self.contract_functions
-                    .push((fn_decl.name.name.clone(), params, body.clone()));
+                let returns = fn_decl.returns.clone();
+                self.contract_functions.push((
+                    fn_decl.name.name.clone(),
+                    params,
+                    returns,
+                    body.clone(),
+                ));
             }
         }
 
@@ -934,7 +949,7 @@ impl AstToEgglog {
             constructor,
             runtime,
             internal_functions,
-            memory_high_water: self.next_memory_offset,
+            memory_high_water: 0, // Set later by mem_region::assign_program_offsets
         })
     }
 

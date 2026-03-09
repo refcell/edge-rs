@@ -52,6 +52,8 @@ pub enum EvmType {
     Base(EvmBaseType),
     /// A tuple type (flat — no nested tuples)
     TupleT(Vec<EvmBaseType>),
+    /// A fixed-size array type: element type + length
+    ArrayT(EvmBaseType, usize),
 }
 
 // ============================================================
@@ -217,6 +219,9 @@ pub enum EvmTernaryOp {
     /// Calldata copy: (`dest_offset`, `cd_offset`, `size`) -> state
     /// Copies `size` bytes from calldata at `cd_offset` to memory at `dest_offset`.
     CalldataCopy,
+    /// Memory copy: (`dest`, `src`, `size`) -> state
+    /// Copies `size` bytes from memory at `src` to memory at `dest`.
+    Mcopy,
 }
 
 // ============================================================
@@ -339,6 +344,12 @@ pub enum EvmExpr {
     /// `num_outputs` is how many values the asm block leaves on stack after consuming inputs.
     /// Opaque to egglog — passes through optimization unchanged.
     InlineAsm(Vec<RcExpr>, String, i32),
+
+    /// Symbolic memory region: (`region_id`, `size_words`)
+    /// Evaluates to the base memory address of this region at runtime.
+    /// Different region IDs are guaranteed to be non-overlapping.
+    /// Resolved to a concrete offset by `assign_memory_offsets` after egglog extraction.
+    MemRegion(i64, i64),
 }
 
 // ============================================================
@@ -464,6 +475,7 @@ impl std::fmt::Display for EvmTernaryOp {
             Self::Keccak256 => "KECCAK256",
             Self::Select => "SELECT",
             Self::CalldataCopy => "CALLDATACOPY",
+            Self::Mcopy => "MCOPY",
         };
         write!(f, "{s}")
     }

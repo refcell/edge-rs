@@ -198,6 +198,7 @@ fn fmt_type(ty: &EvmType) -> String {
             let inner: Vec<_> = ts.iter().map(|t| format!("{t}")).collect();
             format!("({})", inner.join(", "))
         }
+        EvmType::ArrayT(elem, len) => format!("[{elem}; {len}]"),
     }
 }
 
@@ -279,6 +280,7 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
         | EvmExpr::Call(..)
         | EvmExpr::VarStore(..)
         | EvmExpr::InlineAsm(..) => None,
+        EvmExpr::MemRegion(id, sz) => Some(format!("region({id}, {sz})").len()),
     }
 }
 
@@ -304,6 +306,7 @@ fn pp_inline(expr: &RcExpr, buf: &mut String) {
         EvmExpr::Var(name) => buf.push_str(&format!("${name}")),
         EvmExpr::Drop(name) => buf.push_str(&format!("drop ${name}")),
         EvmExpr::Selector(sig) => buf.push_str(&format!("selector(\"{sig}\")")),
+        EvmExpr::MemRegion(id, sz) => buf.push_str(&format!("region({id}, {sz})")),
         EvmExpr::EnvRead(op, _) => buf.push_str(&format!("{op}()")),
         EvmExpr::EnvRead1(op, arg, _) => {
             buf.push_str(&format!("{op}("));
@@ -635,6 +638,10 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
                 ));
             }
         }
+        EvmExpr::MemRegion(id, sz) => {
+            indent(depth, buf);
+            buf.push_str(&format!("region({id}, {sz})"));
+        }
     }
 }
 
@@ -758,6 +765,7 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
             let disasm = disassemble_hex(hex);
             buf.push_str(&format!("asm({num_outputs}){{ {disasm} }}"));
         }
+        EvmExpr::MemRegion(id, sz) => buf.push_str(&format!("region({id}, {sz})")),
     }
 }
 
