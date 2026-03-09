@@ -83,13 +83,27 @@ check-stdlib:
     done < <(find std -name '*.edge' -print0 | sort -z)
     exit $failed
 
-# Run acceptance tests
+# Run acceptance tests and update gas snapshot
 e2e:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf /tmp/edge-gas
     cargo test -p edge-e2e
+    if [ -f /tmp/edge-gas/e2e.csv ]; then
+        sort /tmp/edge-gas/e2e.csv > crates/e2e/.gas-snapshot
+        echo "Gas snapshot written to crates/e2e/.gas-snapshot ($(wc -l < crates/e2e/.gas-snapshot) entries)"
+    fi
 
-# Run acceptance tests for CI
+# Run acceptance tests for CI and update gas snapshot
 e2e-ci:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rm -rf /tmp/edge-gas
     cargo nextest run -p edge-e2e
+    if [ -f /tmp/edge-gas/e2e.csv ]; then
+        sort /tmp/edge-gas/e2e.csv > crates/e2e/.gas-snapshot
+        echo "Gas snapshot written to crates/e2e/.gas-snapshot ($(wc -l < crates/e2e/.gas-snapshot) entries)"
+    fi
 
 # Run benchmarks
 bench:

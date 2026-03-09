@@ -11,161 +11,13 @@
 //! bypassed in tests, but observable state mutations (timestamps, cancelled,
 //! executed flags) are tested correctly.
 
-use std::path::PathBuf;
+use crate::helpers::*;
 
-use edge_driver::{
-    compiler::Compiler,
-    config::{CompilerConfig, EmitKind},
-};
-use revm::{
-    context::{Context, TxEnv},
-    database::{CacheDB, EmptyDB},
-    handler::{MainBuilder, MainnetContext},
-    primitives::{Address, Bytes, TxKind},
-    state::AccountInfo,
-    ExecuteCommitEvm, MainContext, MainnetEvm,
-};
-use tiny_keccak::{Hasher, Keccak};
-
-// =============================================================================
-// Shared helpers
-// =============================================================================
-
-fn workspace_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
-}
-
-fn compile_contract(relative_path: &str) -> Vec<u8> {
-    let path = workspace_root().join(relative_path);
-    let mut config = CompilerConfig::new(path);
-    config.emit = EmitKind::Bytecode;
-    let mut compiler = Compiler::new(config).expect("compiler init failed");
-    let output = compiler.compile().expect("compile failed");
-    output.bytecode.expect("no bytecode produced")
-}
-
-fn compile_named(relative_path: &str, contract_name: &str) -> Vec<u8> {
-    let path = workspace_root().join(relative_path);
-    let mut config = CompilerConfig::new(path);
-    config.emit = EmitKind::Bytecode;
-    let mut compiler = Compiler::new(config).expect("compiler init failed");
-    let output = compiler.compile().expect("compile failed");
-    output
-        .bytecodes
-        .expect("no bytecodes map")
-        .get(contract_name)
-        .unwrap_or_else(|| panic!("contract {contract_name} not found"))
-        .clone()
-}
-
-fn selector(sig: &str) -> [u8; 4] {
-    let mut h = Keccak::v256();
-    h.update(sig.as_bytes());
-    let mut out = [0u8; 32];
-    h.finalize(&mut out);
-    [out[0], out[1], out[2], out[3]]
-}
-
-fn encode_u256(val: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[24..].copy_from_slice(&val.to_be_bytes());
-    out
-}
-
-fn encode_address(addr: [u8; 20]) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[12..].copy_from_slice(&addr);
-    out
-}
-
-fn decode_u256(output: &[u8]) -> u64 {
-    assert!(
-        output.len() >= 32,
-        "return value too short: {} bytes",
-        output.len()
-    );
-    assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
-    u64::from_be_bytes(output[24..32].try_into().unwrap())
-}
-
-fn decode_bool(output: &[u8]) -> bool {
-    decode_u256(output) != 0
-}
-
-const CALLER: Address = Address::ZERO;
 const ALICE_ADDR: [u8; 20] = {
     let mut a = [0u8; 20];
     a[19] = 0xA1;
     a
 };
-
-type TestDb = CacheDB<EmptyDB>;
-type TestEvm = MainnetEvm<MainnetContext<TestDb>>;
-
-struct EvmHandle {
-    evm: TestEvm,
-    contract: Address,
-    nonce: u64,
-}
-
-impl EvmHandle {
-    fn new(deploy_bytecode: Vec<u8>) -> Self {
-        let mut db = CacheDB::<EmptyDB>::default();
-        db.insert_account_info(
-            CALLER,
-            AccountInfo {
-                balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
-                nonce: 0,
-                ..Default::default()
-            },
-        );
-
-        let mut evm = Context::mainnet().with_db(db).build_mainnet();
-
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Create)
-            .data(Bytes::from(deploy_bytecode))
-            .gas_limit(10_000_000)
-            .nonce(0)
-            .build()
-            .unwrap();
-
-        let result = evm.transact_commit(tx).unwrap();
-        assert!(result.is_success(), "Deployment failed: {result:#?}");
-
-        let contract = CALLER.create(0);
-        Self {
-            evm,
-            contract,
-            nonce: 1,
-        }
-    }
-
-    fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Call(self.contract))
-            .data(Bytes::from(calldata))
-            .nonce(self.nonce)
-            .gas_limit(10_000_000)
-            .build()
-            .unwrap();
-        let result = self.evm.transact_commit(tx).unwrap();
-        self.nonce += 1;
-        let success = result.is_success();
-        let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
-        (success, output)
-    }
-}
-
-fn calldata(sel: [u8; 4], args: &[[u8; 32]]) -> Vec<u8> {
-    let mut cd = sel.to_vec();
-    for a in args {
-        cd.extend_from_slice(a);
-    }
-    cd
-}
 
 // =============================================================================
 // ReentrancyGuard (persistent storage)
@@ -178,19 +30,19 @@ fn test_reentrancy_guard_protected_withdraw_succeeds() {
 
     // protectedWithdraw calls _lock, _doWithdraw, _unlock — all internal stubs.
     // With stubs bypassed the function should succeed without reverting.
-    let (ok, _) = evm.call(calldata(
+    let r = evm.call(calldata(
         selector("protectedWithdraw(address,uint256)"),
         &[encode_address(ALICE_ADDR), encode_u256(100)],
     ));
-    assert!(ok, "protectedWithdraw reverted unexpectedly");
+    assert!(r.success, "protectedWithdraw reverted unexpectedly");
 }
 
 #[test]
 fn test_reentrancy_guard_unknown_selector_reverts() {
     let bc = compile_named("std/patterns/reentrancy_guard.edge", "ReentrancyGuard");
     let mut evm = EvmHandle::new(bc);
-    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
-    assert!(!ok, "unknown selector should revert");
+    let r = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!r.success, "unknown selector should revert");
 }
 
 // =============================================================================
@@ -205,11 +57,14 @@ fn test_transient_reentrancy_guard_protected_withdraw_succeeds() {
     );
     let mut evm = EvmHandle::new(bc);
 
-    let (ok, _) = evm.call(calldata(
+    let r = evm.call(calldata(
         selector("protectedWithdraw(address,uint256)"),
         &[encode_address(ALICE_ADDR), encode_u256(100)],
     ));
-    assert!(ok, "transient protectedWithdraw reverted unexpectedly");
+    assert!(
+        r.success,
+        "transient protectedWithdraw reverted unexpectedly"
+    );
 }
 
 #[test]
@@ -219,8 +74,8 @@ fn test_transient_reentrancy_guard_unknown_selector_reverts() {
         "TransientReentrancyGuard",
     );
     let mut evm = EvmHandle::new(bc);
-    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
-    assert!(!ok, "unknown selector should revert");
+    let r = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!r.success, "unknown selector should revert");
 }
 
 // =============================================================================
@@ -233,13 +88,13 @@ fn test_timelock_is_ready_unscheduled_returns_false() {
     let mut evm = EvmHandle::new(bc);
 
     // isReady(id=0, current_time=9999) — nothing scheduled, ts=0 → returns false
-    let (ok, out) = evm.call(calldata(
+    let r = evm.call(calldata(
         selector("isReady(bytes32,uint256)"),
         &[[0u8; 32], encode_u256(9999)],
     ));
-    assert!(ok, "isReady reverted");
+    assert!(r.success, "isReady reverted");
     assert!(
-        !decode_bool(&out),
+        !decode_bool(&r.output),
         "isReady should return false for unscheduled op"
     );
 }
@@ -261,21 +116,21 @@ fn test_timelock_schedule_and_is_ready() {
     args[64..96].copy_from_slice(&encode_u256(0)); // value
     args[96..128].copy_from_slice(&encode_u256(delay));
 
-    let (ok, _) = evm.call({
+    let r = evm.call({
         let mut cd = selector("schedule(bytes32,address,uint256,uint256)").to_vec();
         cd.extend_from_slice(&args);
         cd
     });
-    assert!(ok, "schedule reverted");
+    assert!(r.success, "schedule reverted");
 
     // isReady(id, current_time=delay) — should be true since ts=delay and current_time>=ts
-    let (ok, out) = evm.call(calldata(
+    let r = evm.call(calldata(
         selector("isReady(bytes32,uint256)"),
         &[id, encode_u256(delay)],
     ));
-    assert!(ok, "isReady reverted after schedule");
+    assert!(r.success, "isReady reverted after schedule");
     assert!(
-        decode_bool(&out),
+        decode_bool(&r.output),
         "isReady should be true after scheduling with current_time >= delay"
     );
 }
@@ -284,8 +139,8 @@ fn test_timelock_schedule_and_is_ready() {
 fn test_timelock_unknown_selector_reverts() {
     let bc = compile_contract("std/patterns/timelock.edge");
     let mut evm = EvmHandle::new(bc);
-    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
-    assert!(!ok, "unknown selector should revert");
+    let r = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!r.success, "unknown selector should revert");
 }
 
 // =============================================================================
@@ -296,15 +151,18 @@ fn test_timelock_unknown_selector_reverts() {
 fn test_factory_is_deployed_initially_false() {
     let bc = compile_contract("std/patterns/factory.edge");
     let mut evm = EvmHandle::new(bc);
-    let (ok, out) = evm.call(calldata(selector("isDeployed(bytes32)"), &[[0u8; 32]]));
-    assert!(ok, "isDeployed() reverted");
-    assert!(!decode_bool(&out), "isDeployed should be false initially");
+    let r = evm.call(calldata(selector("isDeployed(bytes32)"), &[[0u8; 32]]));
+    assert!(r.success, "isDeployed() reverted");
+    assert!(
+        !decode_bool(&r.output),
+        "isDeployed should be false initially"
+    );
 }
 
 #[test]
 fn test_factory_unknown_selector_reverts() {
     let bc = compile_contract("std/patterns/factory.edge");
     let mut evm = EvmHandle::new(bc);
-    let (ok, _) = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
-    assert!(!ok, "unknown selector should revert");
+    let r = evm.call(vec![0xde, 0xad, 0xbe, 0xef]);
+    assert!(!r.success, "unknown selector should revert");
 }

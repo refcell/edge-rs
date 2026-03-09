@@ -22,6 +22,10 @@ use revm::{
 };
 use tiny_keccak::{Hasher, Keccak};
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════
+
 /// Result of a contract call.
 #[derive(Debug)]
 pub struct CallResult {
@@ -66,6 +70,10 @@ pub struct DeployResult {
     /// Gas used for deployment.
     pub deploy_gas: u64,
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EvmTestHost
+// ═══════════════════════════════════════════════════════════════════════════
 
 impl EvmTestHost {
     /// Compile an `.edge` file at the given path and deploy its bytecode.
@@ -214,7 +222,8 @@ impl EvmTestHost {
         }
     }
 
-    /// Call using a function signature string to compute the selector.
+    /// Call using a function signature string.
+    ///
     /// e.g. `call_fn("transfer(address,uint256)", &args)`
     pub fn call_fn(&mut self, sig: &str, args: &[u8]) -> CallResult {
         let selector = fn_selector(sig);
@@ -246,6 +255,10 @@ impl EvmTestHost {
         self.caller = caller;
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Compilation helpers
+// ═══════════════════════════════════════════════════════════════════════════
 
 /// Compile an `.edge` file and return the raw deployment bytecode.
 pub fn compile_edge(path: &str, opt_level: u8) -> Vec<u8> {
@@ -284,6 +297,10 @@ pub fn compile_edge_split(
     edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for).expect("codegen failed")
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ABI helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
 /// Compute the 4-byte function selector from a signature like "transfer(address,uint256)".
 pub fn fn_selector(sig: &str) -> [u8; 4] {
     let mut h = Keccak::v256();
@@ -316,4 +333,28 @@ pub fn abi_decode_u256(data: &[u8]) -> U256 {
 /// Decode a bool from ABI-encoded output.
 pub fn abi_decode_bool(data: &[u8]) -> bool {
     abi_decode_u256(data) == U256::from(1)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Gas helpers
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Compute the EVM calldata intrinsic gas cost.
+///
+/// Per the yellow paper: 4 gas per zero byte, 16 gas per nonzero byte.
+pub fn calldata_intrinsic_gas(selector: [u8; 4], args: &[u8]) -> u64 {
+    let mut cost = 0u64;
+    for &b in selector.iter().chain(args.iter()) {
+        cost += if b == 0 { 4 } else { 16 };
+    }
+    cost
+}
+
+/// Compute the pure execution gas cost from a call result.
+///
+/// Strips the 21000 base transaction cost and calldata intrinsic cost.
+pub fn execution_gas(gas_used: u64, selector: [u8; 4], args: &[u8]) -> u64 {
+    gas_used
+        .saturating_sub(21000)
+        .saturating_sub(calldata_intrinsic_gas(selector, args))
 }

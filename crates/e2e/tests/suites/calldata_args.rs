@@ -4,106 +4,8 @@ use edge_driver::{
     compiler::Compiler,
     config::{CompilerConfig, EmitKind},
 };
-use revm::{
-    context::TxEnv,
-    database::{CacheDB, EmptyDB},
-    handler::MainBuilder,
-    primitives::{Address, Bytes, TxKind},
-    state::AccountInfo,
-    ExecuteCommitEvm, MainContext, MainnetEvm,
-};
-use tiny_keccak::{Hasher, Keccak};
 
-fn selector(sig: &str) -> [u8; 4] {
-    let mut h = Keccak::v256();
-    h.update(sig.as_bytes());
-    let mut out = [0u8; 32];
-    h.finalize(&mut out);
-    [out[0], out[1], out[2], out[3]]
-}
-
-fn encode_u256(v: u64) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    let bytes = v.to_be_bytes();
-    out[24..32].copy_from_slice(&bytes);
-    out
-}
-
-fn decode_u256(output: &[u8]) -> u64 {
-    assert!(
-        output.len() >= 32,
-        "return value too short: {} bytes",
-        output.len()
-    );
-    assert_eq!(&output[0..24], &[0u8; 24], "u256 too large for u64");
-    u64::from_be_bytes(output[24..32].try_into().unwrap())
-}
-
-const CALLER: Address = Address::new([0x01; 20]);
-
-type TestDb = CacheDB<EmptyDB>;
-type TestEvm = MainnetEvm<revm::handler::MainnetContext<TestDb>>;
-
-struct EvmHandle {
-    evm: TestEvm,
-    contract: Address,
-    nonce: u64,
-}
-
-impl EvmHandle {
-    fn new(deploy_bytecode: Vec<u8>) -> Self {
-        // Fund the caller account
-        let mut db = CacheDB::<EmptyDB>::default();
-        let caller_info = AccountInfo {
-            balance: revm::primitives::U256::from(1_000_000_000_000_000_000u128),
-            nonce: 0,
-            ..Default::default()
-        };
-        db.insert_account_info(CALLER, caller_info);
-
-        let mut evm = revm::context::Context::mainnet()
-            .with_db(db)
-            .build_mainnet();
-
-        // Deploy via CREATE transaction
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Create)
-            .data(Bytes::from(deploy_bytecode))
-            .gas_limit(10_000_000)
-            .nonce(0)
-            .build()
-            .unwrap();
-
-        let result = evm.transact_commit(tx).unwrap();
-        assert!(result.is_success(), "Deployment failed: {result:#?}");
-
-        let contract = CALLER.create(0);
-
-        Self {
-            evm,
-            contract,
-            nonce: 1,
-        }
-    }
-
-    fn call(&mut self, calldata: Vec<u8>) -> (bool, Vec<u8>) {
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .kind(TxKind::Call(self.contract))
-            .data(Bytes::from(calldata))
-            .nonce(self.nonce)
-            .gas_limit(10_000_000)
-            .build()
-            .unwrap();
-
-        let result = self.evm.transact_commit(tx).unwrap();
-        self.nonce += 1;
-        let success = result.is_success();
-        let output = result.output().map(|b| b.to_vec()).unwrap_or_default();
-        (success, output)
-    }
-}
+use crate::helpers::*;
 
 #[test]
 fn test_calldata_single_arg() {
@@ -120,12 +22,11 @@ fn test_calldata_single_arg() {
     let mut evm = EvmHandle::new(bytecode);
 
     // Call double(5) and expect 10
-    let mut calldata = selector("double(uint256)").to_vec();
-    calldata.extend_from_slice(&encode_u256(5));
+    let cd = calldata(selector("double(uint256)"), &[encode_u256(5)]);
 
-    let (ok, out) = evm.call(calldata);
-    assert!(ok, "double(5) reverted");
-    assert_eq!(decode_u256(&out), 10, "double(5) should be 10");
+    let r = evm.call(cd);
+    assert!(r.success, "double(5) reverted");
+    assert_eq!(decode_u256(&r.output), 10, "double(5) should be 10");
 }
 
 #[test]
@@ -142,13 +43,14 @@ fn test_calldata_two_args() {
     let mut evm = EvmHandle::new(bytecode);
 
     // Call add(3, 5) and expect 8
-    let mut calldata = selector("add(uint256,uint256)").to_vec();
-    calldata.extend_from_slice(&encode_u256(3));
-    calldata.extend_from_slice(&encode_u256(5));
+    let cd = calldata(
+        selector("add(uint256,uint256)"),
+        &[encode_u256(3), encode_u256(5)],
+    );
 
-    let (ok, out) = evm.call(calldata);
-    assert!(ok, "add(3, 5) reverted");
-    assert_eq!(decode_u256(&out), 8, "add(3, 5) should be 8");
+    let r = evm.call(cd);
+    assert!(r.success, "add(3, 5) reverted");
+    assert_eq!(decode_u256(&r.output), 8, "add(3, 5) should be 8");
 }
 
 #[test]
@@ -165,12 +67,12 @@ fn test_calldata_three_args() {
     let mut evm = EvmHandle::new(bytecode);
 
     // Call sum(1, 2, 3) and expect 6
-    let mut calldata = selector("sum(uint256,uint256,uint256)").to_vec();
-    calldata.extend_from_slice(&encode_u256(1));
-    calldata.extend_from_slice(&encode_u256(2));
-    calldata.extend_from_slice(&encode_u256(3));
+    let cd = calldata(
+        selector("sum(uint256,uint256,uint256)"),
+        &[encode_u256(1), encode_u256(2), encode_u256(3)],
+    );
 
-    let (ok, out) = evm.call(calldata);
-    assert!(ok, "sum(1, 2, 3) reverted");
-    assert_eq!(decode_u256(&out), 6, "sum(1, 2, 3) should be 6");
+    let r = evm.call(cd);
+    assert!(r.success, "sum(1, 2, 3) reverted");
+    assert_eq!(decode_u256(&r.output), 6, "sum(1, 2, 3) should be 6");
 }
