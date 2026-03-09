@@ -52,6 +52,8 @@ pub enum EvmType {
     Base(EvmBaseType),
     /// A tuple type (flat — no nested tuples)
     TupleT(Vec<EvmBaseType>),
+    /// A fixed-size array type: element type + length
+    ArrayT(EvmBaseType, usize),
 }
 
 // ============================================================

@@ -198,6 +198,7 @@ fn fmt_type(ty: &EvmType) -> String {
             let inner: Vec<_> = ts.iter().map(|t| format!("{t}")).collect();
             format!("({})", inner.join(", "))
         }
+        EvmType::ArrayT(elem, len) => format!("[{elem}; {len}]"),
     }
 }
 
