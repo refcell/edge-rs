@@ -88,7 +88,7 @@ e2e:
     #!/usr/bin/env bash
     set -euo pipefail
     rm -rf /tmp/edge-gas
-    cargo test -p edge-e2e
+    cargo test --lib --tests -p edge-e2e
     if [ -f /tmp/edge-gas/e2e.csv ]; then
         sort /tmp/edge-gas/e2e.csv > crates/e2e/.gas-snapshot
         echo "Gas snapshot written to crates/e2e/.gas-snapshot ($(wc -l < crates/e2e/.gas-snapshot) entries)"

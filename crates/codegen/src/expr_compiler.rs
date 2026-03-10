@@ -510,7 +510,7 @@ impl<'a> ExprCompiler<'a> {
                 let prev_reads = self.remaining_reads.insert(name.to_owned(), reads);
 
                 self.compile_expr(body);
-                if self.stack_vars.contains_key(name) && !body_halts {
+                if self.stack_vars.contains_key(name) && !body_halts && !self.halting_context {
                     // Clean up: remove variable from under body's results
                     let body_count = Self::count_stack_values(body);
                     if body_count == 0 {
@@ -651,9 +651,9 @@ impl<'a> ExprCompiler<'a> {
     /// slot for reuse.
     fn compile_drop(&mut self, name: &str) {
         if let Some(var_pos) = self.stack_vars.remove(name) {
-            if self.halting_context {
-                // About to halt (RETURN/REVERT) — skip SWAP+POP cleanup.
-                // The EVM stack will be discarded anyway.
+            if self.halting_context || self.in_dead_code {
+                // About to halt (RETURN/REVERT) or already past a halt —
+                // skip SWAP+POP cleanup. The EVM stack will be discarded anyway.
                 return;
             }
             let depth = self.stack_depth - var_pos;
@@ -1210,9 +1210,9 @@ impl<'a> ExprCompiler<'a> {
         let first_halts = Self::expr_definitely_halts(first_body);
         let second_halts = Self::expr_definitely_halts(second_body);
 
-        // Reset halting_context for each branch — branches must independently
-        // determine their own halting context via their internal Concat chains.
-        // Inheriting from the outer context would cause stack depth mismatches.
+        // Don't propagate halting_context into branches: inner LetBinds that skip
+        // cleanup leak stack slots, inflating depth so outer vars exceed DUP16.
+        // The continuation after the if already benefits from halting_context.
         let outer_halting = self.halting_context;
         self.halting_context = false;
         self.compile_expr(first_body);

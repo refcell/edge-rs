@@ -266,6 +266,210 @@ impl Assembler {
         });
     }
 
+    /// Eliminate SWAP1+POP cleanup chains that precede a halting sequence.
+    ///
+    /// Within a basic block (between labels), if a contiguous chain of SWAP1+POP
+    /// pairs is followed by a "clean terminal" sequence (only Push/MSTORE/RETURN/
+    /// REVERT/STOP, no DUPs or SWAPs), the chain can be removed. The SWAP1+POP
+    /// chain preserves TOS while removing elements below it; since the terminal
+    /// sequence only uses TOS and freshly pushed values, the removed elements
+    /// are never accessed. RETURN/REVERT/STOP halts execution so leftover stack
+    /// junk is harmless.
+    pub fn eliminate_pre_halt_cleanup(&mut self) {
+        use std::collections::HashSet;
+
+        // Phase 1: Identify "halting labels" — labels whose basic block ends
+        // with RETURN/REVERT/STOP (or JUMP to another halting label).
+        // Iterate to a fixed point for chains.
+        let mut halting_labels: HashSet<String> = HashSet::new();
+        loop {
+            let mut changed = false;
+            let mut current_label: Option<String> = None;
+            for inst in &self.instructions {
+                match inst {
+                    AsmInstruction::Label(name) => {
+                        current_label = Some(name.clone());
+                    }
+                    AsmInstruction::Op(Opcode::Return)
+                    | AsmInstruction::Op(Opcode::Revert)
+                    | AsmInstruction::Op(Opcode::Stop)
+                    | AsmInstruction::Op(Opcode::Invalid) => {
+                        if let Some(ref label) = current_label {
+                            if halting_labels.insert(label.clone()) {
+                                changed = true;
+                            }
+                        }
+                    }
+                    AsmInstruction::JumpTo(target) => {
+                        if halting_labels.contains(target) {
+                            if let Some(ref label) = current_label {
+                                if halting_labels.insert(label.clone()) {
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                    // JumpITo doesn't unconditionally halt — skip
+                    _ => {}
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        // Phase 2: For each basic block, check if it ends in a halt or
+        // unconditional jump to a halting label. If so, remove SWAP1+POP
+        // chains that immediately precede the terminal sequence.
+        let len = self.instructions.len();
+        let mut keep = vec![true; len];
+
+        // Find block boundaries and terminal instructions
+        let mut i = 0;
+        while i < len {
+            // Find the end of this basic block: next Label, or end of instructions
+            let block_start = i;
+            let mut block_end = i;
+            let mut terminal_idx = None;
+
+            let mut j = if matches!(&self.instructions[i], AsmInstruction::Label(_)) {
+                i + 1
+            } else {
+                i
+            };
+
+            while j < len {
+                match &self.instructions[j] {
+                    AsmInstruction::Label(name) => {
+                        // Fallthrough to next block — if the target is halting,
+                        // use the label position as the boundary so the backward
+                        // walk finds the SWAP1+POP chain at the end of this block.
+                        if halting_labels.contains(name) {
+                            terminal_idx = Some(j);
+                        }
+                        block_end = j;
+                        break;
+                    }
+                    AsmInstruction::Op(Opcode::Return)
+                    | AsmInstruction::Op(Opcode::Revert)
+                    | AsmInstruction::Op(Opcode::Stop)
+                    | AsmInstruction::Op(Opcode::Invalid) => {
+                        terminal_idx = Some(j);
+                        // Mark everything after the halt in this block as dead
+                        let mut k = j + 1;
+                        while k < len
+                            && !matches!(&self.instructions[k], AsmInstruction::Label(_))
+                        {
+                            keep[k] = false;
+                            k += 1;
+                        }
+                        block_end = k;
+                        break;
+                    }
+                    AsmInstruction::JumpTo(target) => {
+                        if halting_labels.contains(target) {
+                            terminal_idx = Some(j);
+                        }
+                        block_end = j + 1;
+                        break;
+                    }
+                    AsmInstruction::JumpITo(_) => {
+                        // Conditional jump — not a clean terminal
+                        block_end = j + 1;
+                        break;
+                    }
+                    _ => {
+                        j += 1;
+                    }
+                }
+            }
+            if j >= len {
+                block_end = len;
+            }
+
+            // If we found a terminal, walk backward to find the "clean terminal"
+            // start, then further backward to find SWAP1+POP chain
+            if let Some(term) = terminal_idx {
+                // Walk backward past the clean terminal sequence
+                // (Push, Push0, MStore, MStore8, Comments — no DUP/SWAP/other)
+                let mut setup_start = term;
+                while setup_start > block_start {
+                    let prev = setup_start - 1;
+                    match &self.instructions[prev] {
+                        AsmInstruction::Op(Opcode::MStore | Opcode::MStore8 | Opcode::Push0) => {
+                            setup_start = prev;
+                        }
+                        AsmInstruction::Push(_) => {
+                            setup_start = prev;
+                        }
+                        AsmInstruction::Comment(_) => {
+                            setup_start = prev;
+                        }
+                        _ => break,
+                    }
+                }
+
+                // Check for redundant DUP1 before the clean terminal: DUP1 copies
+                // TOS for MStore consumption, but if RETURN follows the original
+                // copy is never used and the DUP1 can be removed.
+                if setup_start > block_start {
+                    let prev = setup_start - 1;
+                    if matches!(
+                        &self.instructions[prev],
+                        AsmInstruction::Op(Opcode::Dup1)
+                    ) {
+                        keep[prev] = false;
+                        setup_start = prev;
+                    }
+                }
+
+                // Walk backward past SWAP1+POP chain
+                let mut chain_start = setup_start;
+                while chain_start >= block_start + 2 {
+                    let pop_idx = chain_start - 1;
+                    let swap_idx = chain_start - 2;
+                    // Skip comments between swap and pop
+                    if matches!(&self.instructions[pop_idx], AsmInstruction::Op(Opcode::Pop))
+                        && matches!(
+                            &self.instructions[swap_idx],
+                            AsmInstruction::Op(Opcode::Swap1)
+                        )
+                    {
+                        chain_start = swap_idx;
+                    } else if matches!(&self.instructions[pop_idx], AsmInstruction::Comment(_)) {
+                        // Skip comment and try again
+                        chain_start = pop_idx;
+                    } else {
+                        break;
+                    }
+                }
+
+                // Mark SWAP1+POP pairs in the chain for removal
+                if chain_start < setup_start {
+                    let mut k = chain_start;
+                    while k < setup_start {
+                        match &self.instructions[k] {
+                            AsmInstruction::Op(Opcode::Swap1) | AsmInstruction::Op(Opcode::Pop) => {
+                                keep[k] = false;
+                            }
+                            _ => {} // keep comments
+                        }
+                        k += 1;
+                    }
+                }
+            }
+
+            i = if block_end > block_start { block_end } else { block_start + 1 };
+        }
+
+        let mut idx = 0;
+        self.instructions.retain(|_| {
+            let k = keep[idx];
+            idx += 1;
+            k
+        });
+    }
+
     /// Assemble into final bytecode, resolving all labels to offsets.
     ///
     /// Tries PUSH1 (short) jumps first. If any label offset >= 256,
