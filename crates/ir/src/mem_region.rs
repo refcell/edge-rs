@@ -110,10 +110,9 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
         ]),
 
         // Sequential composition
-        EvmExpr::Concat(a, b) => RegionScope::Sequential(vec![
-            collect_region_scopes(a),
-            collect_region_scopes(b),
-        ]),
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(b)])
+        }
         EvmExpr::LetBind(_, init, body) => RegionScope::Sequential(vec![
             collect_region_scopes(init),
             collect_region_scopes(body),
@@ -124,20 +123,14 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
         ]),
         EvmExpr::Function(_, _, _, body) => collect_region_scopes(body),
 
-        // Binary children — sequential
-        EvmExpr::Bop(_, a, b) => RegionScope::Sequential(vec![
-            collect_region_scopes(a),
-            collect_region_scopes(b),
-        ]),
-
         // Ternary children — sequential
-        EvmExpr::Top(_, a, b, c)
-        | EvmExpr::Revert(a, b, c)
-        | EvmExpr::ReturnOp(a, b, c) => RegionScope::Sequential(vec![
-            collect_region_scopes(a),
-            collect_region_scopes(b),
-            collect_region_scopes(c),
-        ]),
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            RegionScope::Sequential(vec![
+                collect_region_scopes(a),
+                collect_region_scopes(b),
+                collect_region_scopes(c),
+            ])
+        }
 
         // Unary children
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::VarStore(_, a) => {
@@ -162,10 +155,9 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
             RegionScope::Sequential(args.iter().map(collect_region_scopes).collect())
         }
         EvmExpr::EnvRead(_, s) => collect_region_scopes(s),
-        EvmExpr::EnvRead1(_, a, s) => RegionScope::Sequential(vec![
-            collect_region_scopes(a),
-            collect_region_scopes(s),
-        ]),
+        EvmExpr::EnvRead1(_, a, s) => {
+            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(s)])
+        }
         EvmExpr::InlineAsm(inputs, ..) => {
             RegionScope::Sequential(inputs.iter().map(collect_region_scopes).collect())
         }
@@ -471,7 +463,10 @@ mod tests {
         let r0 = ast_helpers::mem_region(0, 2); // 64 bytes — then branch
         let r1 = ast_helpers::mem_region(1, 3); // 96 bytes — else branch
         let val = ast_helpers::const_int(1, ctx.clone());
-        let state = Rc::new(EvmExpr::Arg(EvmType::Base(EvmBaseType::StateT), ctx.clone()));
+        let state = Rc::new(EvmExpr::Arg(
+            EvmType::Base(EvmBaseType::StateT),
+            ctx.clone(),
+        ));
         let cond = ast_helpers::const_int(1, ctx.clone());
         let inputs = Rc::new(EvmExpr::Empty(EvmType::Base(EvmBaseType::UnitT), ctx));
 
@@ -507,7 +502,10 @@ mod tests {
         let r_then = ast_helpers::mem_region(1, 2); // 64 bytes — then branch
         let r_else = ast_helpers::mem_region(2, 3); // 96 bytes — else branch
         let val = ast_helpers::const_int(1, ctx.clone());
-        let state = Rc::new(EvmExpr::Arg(EvmType::Base(EvmBaseType::StateT), ctx.clone()));
+        let state = Rc::new(EvmExpr::Arg(
+            EvmType::Base(EvmBaseType::StateT),
+            ctx.clone(),
+        ));
         let cond = ast_helpers::const_int(1, ctx.clone());
         let inputs = Rc::new(EvmExpr::Empty(EvmType::Base(EvmBaseType::UnitT), ctx));
 

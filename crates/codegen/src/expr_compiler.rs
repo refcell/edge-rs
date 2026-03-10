@@ -478,9 +478,7 @@ impl<'a> ExprCompiler<'a> {
         // Decide allocation mode with stack depth safety check:
         // Cap concurrent stack vars to avoid DUP/SWAP overflow (max depth 16).
         // With 14 stack vars + ~2 expression temporaries, peak depth ≈ 16.
-        let mode = if self.alloc_mode(name) == AllocationMode::Stack
-            && self.stack_vars.len() < 14
-        {
+        let mode = if self.alloc_mode(name) == AllocationMode::Stack && self.stack_vars.len() < 14 {
             AllocationMode::Stack
         } else {
             AllocationMode::Memory
@@ -588,12 +586,10 @@ impl<'a> ExprCompiler<'a> {
 
             // Check if this is the last read — if so and var is at TOS,
             // consume it directly instead of DUP + later SWAP+POP.
-            let is_last_use = if let Some(remaining) = self.remaining_reads.get_mut(name) {
+            let is_last_use = self.remaining_reads.get_mut(name).is_some_and(|remaining| {
                 *remaining = remaining.saturating_sub(1);
                 *remaining == 0
-            } else {
-                false
-            };
+            });
 
             if is_last_use && depth == 1 && !self.in_dead_code {
                 // Last use and var is at TOS: consume in-place.
@@ -1166,7 +1162,7 @@ impl<'a> ExprCompiler<'a> {
 
     /// Compile an if-then-else expression.
     ///
-    /// Optimizes condition compilation to avoid redundant IsZero:
+    /// Optimizes condition compilation to avoid redundant `IsZero`:
     /// - `if IsZero(x)`: compile x, JUMPI to else directly (double-negation cancel,
     ///   saves 3 gas per branch).
     fn compile_if(&mut self, cond: &RcExpr, then_body: &RcExpr, else_body: &RcExpr) {
@@ -1230,7 +1226,7 @@ impl<'a> ExprCompiler<'a> {
         self.stack_vars = stack_vars_before.clone();
         self.let_bindings = let_bindings_before;
         self.free_slots = free_slots_before;
-        self.remaining_reads = remaining_reads_before.clone();
+        self.remaining_reads = remaining_reads_before;
         self.in_dead_code = was_dead;
         // Re-apply MAX protection for outer vars in second branch
         for name in stack_vars_before.keys() {
@@ -1292,7 +1288,13 @@ impl<'a> ExprCompiler<'a> {
     /// Skips state parameters (same positions codegen skips) for accuracy.
     fn count_var_reads(name: &str, expr: &RcExpr) -> usize {
         match expr.as_ref() {
-            EvmExpr::Var(n) => if n == name { 1 } else { 0 },
+            EvmExpr::Var(n) => {
+                if n == name {
+                    1
+                } else {
+                    0
+                }
+            }
             EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
                 Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
             }
@@ -1300,44 +1302,62 @@ impl<'a> ExprCompiler<'a> {
                 use EvmBinaryOp::*;
                 let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
                 Self::count_var_reads(name, a)
-                    + if b_is_state { 0 } else { Self::count_var_reads(name, b) }
+                    + if b_is_state {
+                        0
+                    } else {
+                        Self::count_var_reads(name, b)
+                    }
             }
             EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => Self::count_var_reads(name, a),
             EvmExpr::Top(op, a, b, c) => {
                 use EvmTernaryOp::*;
-                let c_is_state = matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
-                Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
-                    + if c_is_state { 0 } else { Self::count_var_reads(name, c) }
+                let c_is_state = matches!(
+                    op,
+                    SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy
+                );
+                Self::count_var_reads(name, a)
+                    + Self::count_var_reads(name, b)
+                    + if c_is_state {
+                        0
+                    } else {
+                        Self::count_var_reads(name, c)
+                    }
             }
             EvmExpr::Revert(a, b, _s) | EvmExpr::ReturnOp(a, b, _s) => {
                 Self::count_var_reads(name, a) + Self::count_var_reads(name, b)
             }
             EvmExpr::If(c, _i, t, e) => {
                 Self::count_var_reads(name, c)
-                    + Self::count_var_reads(name, t) + Self::count_var_reads(name, e)
+                    + Self::count_var_reads(name, t)
+                    + Self::count_var_reads(name, e)
             }
             EvmExpr::LetBind(n, init, body) => {
                 Self::count_var_reads(name, init)
-                    + if n == name { 0 } else { Self::count_var_reads(name, body) }
+                    + if n == name {
+                        0
+                    } else {
+                        Self::count_var_reads(name, body)
+                    }
             }
             EvmExpr::VarStore(_, val) => Self::count_var_reads(name, val),
             EvmExpr::Log(_, topics, data_offset, data_size, _state) => {
-                topics.iter().map(|t| Self::count_var_reads(name, t)).sum::<usize>()
+                topics
+                    .iter()
+                    .map(|t| Self::count_var_reads(name, t))
+                    .sum::<usize>()
                     + Self::count_var_reads(name, data_offset)
                     + Self::count_var_reads(name, data_size)
             }
-            EvmExpr::EnvRead(_, _) => 0,
             EvmExpr::EnvRead1(_, arg, _) => Self::count_var_reads(name, arg),
-            EvmExpr::Call(_, args) => {
-                args.iter().map(|a| Self::count_var_reads(name, a)).sum()
-            }
+            EvmExpr::Call(_, args) => args.iter().map(|a| Self::count_var_reads(name, a)).sum(),
             EvmExpr::Function(_, _, _, body) => Self::count_var_reads(name, body),
             EvmExpr::InlineAsm(inputs, ..) => {
                 inputs.iter().map(|i| Self::count_var_reads(name, i)).sum()
             }
-            EvmExpr::ExtCall(a, b, c, d, e, f, _g) => {
-                [a, b, c, d, e, f].iter().map(|x| Self::count_var_reads(name, x)).sum()
-            }
+            EvmExpr::ExtCall(a, b, c, d, e, f, _g) => [a, b, c, d, e, f]
+                .iter()
+                .map(|x| Self::count_var_reads(name, x))
+                .sum(),
             _ => 0,
         }
     }

@@ -357,8 +357,7 @@ impl Assembler {
                         terminal_idx = Some(j);
                         // Mark everything after the halt in this block as dead
                         let mut k = j + 1;
-                        while k < len
-                            && !matches!(&self.instructions[k], AsmInstruction::Label(_))
+                        while k < len && !matches!(&self.instructions[k], AsmInstruction::Label(_))
                         {
                             keep[k] = false;
                             k += 1;
@@ -396,13 +395,9 @@ impl Assembler {
                 while setup_start > block_start {
                     let prev = setup_start - 1;
                     match &self.instructions[prev] {
-                        AsmInstruction::Op(Opcode::MStore | Opcode::MStore8 | Opcode::Push0) => {
-                            setup_start = prev;
-                        }
-                        AsmInstruction::Push(_) => {
-                            setup_start = prev;
-                        }
-                        AsmInstruction::Comment(_) => {
+                        AsmInstruction::Op(Opcode::MStore | Opcode::MStore8 | Opcode::Push0)
+                        | AsmInstruction::Push(_)
+                        | AsmInstruction::Comment(_) => {
                             setup_start = prev;
                         }
                         _ => break,
@@ -414,10 +409,7 @@ impl Assembler {
                 // copy is never used and the DUP1 can be removed.
                 if setup_start > block_start {
                     let prev = setup_start - 1;
-                    if matches!(
-                        &self.instructions[prev],
-                        AsmInstruction::Op(Opcode::Dup1)
-                    ) {
+                    if matches!(&self.instructions[prev], AsmInstruction::Op(Opcode::Dup1)) {
                         keep[prev] = false;
                         setup_start = prev;
                     }
@@ -459,7 +451,11 @@ impl Assembler {
                 }
             }
 
-            i = if block_end > block_start { block_end } else { block_start + 1 };
+            i = if block_end > block_start {
+                block_end
+            } else {
+                block_start + 1
+            };
         }
 
         let mut idx = 0;

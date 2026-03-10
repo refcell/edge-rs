@@ -180,12 +180,12 @@ pub fn generate_contract_asm(
     let mut rt_asm = Assembler::from_instructions(runtime);
     rt_asm.thread_jumps();
     rt_asm.eliminate_pre_halt_cleanup();
-    let runtime = rt_asm.take_instructions().to_vec();
+    let runtime = rt_asm.take_instructions();
 
     let mut ct_asm = Assembler::from_instructions(constructor);
     ct_asm.thread_jumps();
     ct_asm.eliminate_pre_halt_cleanup();
-    let constructor = ct_asm.take_instructions().to_vec();
+    let constructor = ct_asm.take_instructions();
 
     Ok(crate::AsmOutput {
         constructor,

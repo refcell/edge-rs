@@ -10,7 +10,10 @@
 //!
 //! Store-forwarding is handled at the lowering level (`to_egglog.rs`), not here.
 
-use std::{collections::{HashMap, HashSet}, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::schema::{EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, RcExpr};
 
@@ -801,7 +804,7 @@ fn expr_definitely_halts(expr: &RcExpr) -> bool {
     }
 }
 
-/// Check if an expression references a variable by name (Var, VarStore, or Drop).
+/// Check if an expression references a variable by name (Var, `VarStore`, or Drop).
 ///
 /// This follows ALL sub-expressions including state parameters.
 /// Used by `insert_early_drops` which needs full reachability.
@@ -844,12 +847,13 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
             };
             a_ref || b_ref
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
-            references_var_inner(a, name, follow_state)
-        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_var_inner(a, name, follow_state),
         EvmExpr::Top(op, a, b, c) => {
             use crate::schema::EvmTernaryOp::*;
-            let c_is_state = matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
+            let c_is_state = matches!(
+                op,
+                SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy
+            );
             references_var_inner(a, name, follow_state)
                 || references_var_inner(b, name, follow_state)
                 || if c_is_state && !follow_state {
@@ -1016,7 +1020,7 @@ fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
 }
 
 /// Flatten a Concat chain into a Vec of statements (left-to-right execution order).
-/// Non-Concat nodes become single elements. Nested LetBinds are kept as opaque elements.
+/// Non-Concat nodes become single elements. Nested `LetBind`s are kept as opaque elements.
 fn flatten_concat(expr: &RcExpr, out: &mut Vec<RcExpr>) {
     match expr.as_ref() {
         EvmExpr::Concat(a, b) => {
@@ -1037,7 +1041,7 @@ fn rebuild_concat(stmts: &[RcExpr]) -> RcExpr {
     result
 }
 
-/// Try to move Drop(name) closer to the last use in a LetBind body.
+/// Try to move Drop(name) closer to the last use in a `LetBind` body.
 ///
 /// Algorithm:
 /// 1. Flatten the body into a linear statement list
@@ -1094,17 +1098,13 @@ fn tighten_letbind_drop(name: &str, init: &RcExpr, body: &RcExpr) -> RcExpr {
     }
 
     let new_body = rebuild_concat(&stmts);
-    Rc::new(EvmExpr::LetBind(
-        name.to_owned(),
-        Rc::clone(init),
-        new_body,
-    ))
+    Rc::new(EvmExpr::LetBind(name.to_owned(), Rc::clone(init), new_body))
 }
 
 /// Find Drop(name) in the flattened statement list and remove it.
 /// Returns the index where it was found, or None.
-/// Also searches inside LetBind bodies (recursively) since inner tightenings
-/// may have moved the Drop into a nested LetBind.
+/// Also searches inside `LetBind` bodies (recursively) since inner tightenings
+/// may have moved the Drop into a nested `LetBind`.
 fn find_and_remove_drop(name: &str, stmts: &mut Vec<RcExpr>) -> Option<usize> {
     for i in (0..stmts.len()).rev() {
         if let EvmExpr::Drop(n) = stmts[i].as_ref() {
@@ -1122,8 +1122,8 @@ fn find_and_remove_drop(name: &str, stmts: &mut Vec<RcExpr>) -> Option<usize> {
     None
 }
 
-/// Try to remove Drop(name) from inside a LetBind's body.
-/// Returns Some(modified_letbind) if found, None otherwise.
+/// Try to remove Drop(name) from inside a `LetBind`'s body.
+/// Returns `Some(modified_letbind)` if found, None otherwise.
 fn try_remove_drop_from_letbind(name: &str, expr: &RcExpr) -> Option<RcExpr> {
     match expr.as_ref() {
         EvmExpr::LetBind(n, init, body) => {
@@ -1170,8 +1170,8 @@ fn try_remove_drop_from_letbind(name: &str, expr: &RcExpr) -> Option<RcExpr> {
     }
 }
 
-/// Try to insert Drop(name) inside a statement (LetBind or If with halting branch).
-/// Returns Some(modified_stmt) if successful, None if we can't go deeper.
+/// Try to insert Drop(name) inside a statement (`LetBind` or If with halting branch).
+/// Returns `Some(modified_stmt)` if successful, None if we can't go deeper.
 fn try_insert_drop_into_stmt(name: &str, stmt: &RcExpr, drop_node: &RcExpr) -> Option<RcExpr> {
     match stmt.as_ref() {
         EvmExpr::LetBind(n, init, body) => {
@@ -1252,21 +1252,20 @@ fn try_insert_drop_into_stmt(name: &str, stmt: &RcExpr, drop_node: &RcExpr) -> O
 
 /// Check if a statement references a variable in a dataflow sense.
 /// For top-level statements, this checks the statement itself.
-/// For LetBinds, this recursively checks both init and body (since
-/// variables from outer scopes can be used in inner LetBind inits).
+/// For `LetBind`s, this recursively checks both init and body (since
+/// variables from outer scopes can be used in inner `LetBind` inits).
 fn stmt_references_var_deep(stmt: &RcExpr, name: &str) -> bool {
     match stmt.as_ref() {
         EvmExpr::LetBind(_, init, body) => {
             // Check init — outer variables can be used here
-            references_var_dataflow(init, name)
-                || stmt_references_var_deep_in_body(body, name)
+            references_var_dataflow(init, name) || stmt_references_var_deep_in_body(body, name)
         }
         EvmExpr::Drop(_) => false, // Drops aren't data-flow uses
         _ => references_var_dataflow(stmt, name),
     }
 }
 
-/// Check if a LetBind body (which may contain nested LetBinds) references
+/// Check if a `LetBind` body (which may contain nested `LetBind`s) references
 /// a variable from an outer scope.
 fn stmt_references_var_deep_in_body(body: &RcExpr, name: &str) -> bool {
     let mut stmts = Vec::new();
@@ -1907,21 +1906,15 @@ pub fn dead_store_elim_program(program: &mut crate::schema::EvmProgram) {
 }
 
 /// Check if an expression reads a variable (contains Var(name)).
-/// Unlike references_var_dataflow, this does NOT count VarStore(name, _) as a read —
-/// only the value inside VarStore or standalone Var nodes count.
+/// Unlike `references_var_dataflow`, this does NOT count `VarStore(name, _)` as a read —
+/// only the value inside `VarStore` or standalone Var nodes count.
 fn reads_var(expr: &RcExpr, name: &str) -> bool {
     match expr.as_ref() {
         EvmExpr::Var(n) => n == name,
-        EvmExpr::VarStore(n, val) => {
-            // Writing to name is not a read. But reading name inside the value IS.
-            // Also, VarStore to a DIFFERENT var might read our var in its value.
-            if n == name {
-                reads_var(val, name)
-            } else {
-                reads_var(val, name)
-            }
+        EvmExpr::VarStore(_, val) => {
+            // Writing to name is not a read, but reading name inside the value IS.
+            reads_var(val, name)
         }
-        EvmExpr::Drop(_) => false,
         EvmExpr::LetBind(n, init, body) => {
             reads_var(init, name) || (n != name && reads_var(body, name))
         }
@@ -1934,8 +1927,10 @@ fn reads_var(expr: &RcExpr, name: &str) -> bool {
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => reads_var(a, name),
         EvmExpr::Top(op, a, b, c) => {
             use crate::schema::EvmTernaryOp::*;
-            let c_is_state =
-                matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
+            let c_is_state = matches!(
+                op,
+                SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy
+            );
             reads_var(a, name) || reads_var(b, name) || (!c_is_state && reads_var(c, name))
         }
         EvmExpr::If(c, i, t, e) => {
@@ -1972,14 +1967,14 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             let mut changed = false;
             let mut forwarded_init = Rc::clone(&new_init);
 
-            for i in 0..stmts.len() {
+            for stmt in &mut stmts {
                 // Check if this statement reads name
-                if reads_var(&stmts[i], name) {
+                if reads_var(stmt, name) {
                     read_since_write = true;
                 }
 
-                // Extract VarStore info before mutating stmts
-                let store_info = if let EvmExpr::VarStore(n, val) = stmts[i].as_ref() {
+                // Extract VarStore info before mutating stmt
+                let store_info = if let EvmExpr::VarStore(n, val) = stmt.as_ref() {
                     if n == name {
                         Some((Rc::clone(val), is_pure(val), reads_var(val, name)))
                     } else {
@@ -1990,18 +1985,19 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
                 };
 
                 if let Some((val, val_is_pure, val_reads_name)) = store_info {
-                    if !read_since_write && is_pure(&forwarded_init) {
-                        if val_is_pure || is_pure(&forwarded_init) {
-                            // Dead store: forward new value into LetBind init,
-                            // replace VarStore with Empty.
-                            forwarded_init = val.clone();
-                            let ctx = EvmContext::InFunction("__opt__".to_string());
-                            stmts[i] = Rc::new(EvmExpr::Empty(
-                                EvmType::Base(crate::schema::EvmBaseType::UnitT),
-                                ctx,
-                            ));
-                            changed = true;
-                        }
+                    if !read_since_write
+                        && is_pure(&forwarded_init)
+                        && (val_is_pure || is_pure(&forwarded_init))
+                    {
+                        // Dead store: forward new value into LetBind init,
+                        // replace VarStore with Empty.
+                        forwarded_init = Rc::clone(&val);
+                        let ctx = EvmContext::InFunction("__opt__".to_string());
+                        *stmt = Rc::new(EvmExpr::Empty(
+                            EvmType::Base(crate::schema::EvmBaseType::UnitT),
+                            ctx,
+                        ));
+                        changed = true;
                     }
                     // This VarStore writes name — reset read tracking.
                     read_since_write = val_reads_name;
@@ -2011,10 +2007,9 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             if changed {
                 let new_body = rebuild_concat(&stmts);
                 Rc::new(EvmExpr::LetBind(name.clone(), forwarded_init, new_body))
+            } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                Rc::clone(expr)
             } else {
-                if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
-                    return Rc::clone(expr);
-                }
                 Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
             }
         }
@@ -2031,7 +2026,11 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             let ni = dead_store_elim_rec(inputs);
             let nt = dead_store_elim_rec(then_b);
             let ne = dead_store_elim_rec(else_b);
-            if Rc::ptr_eq(&nc, cond) && Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nt, then_b) && Rc::ptr_eq(&ne, else_b) {
+            if Rc::ptr_eq(&nc, cond)
+                && Rc::ptr_eq(&ni, inputs)
+                && Rc::ptr_eq(&nt, then_b)
+                && Rc::ptr_eq(&ne, else_b)
+            {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::If(nc, ni, nt, ne))
@@ -2049,7 +2048,12 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             if Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
         }
         _ => Rc::clone(expr),
     }
@@ -2063,7 +2067,7 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
 // loads into LetBind variables at the top of the expression scope, replacing
 // duplicates with Var references. Since calldata is immutable, this is always safe.
 
-/// Deduplicate CalldataLoad nodes across the whole program.
+/// Deduplicate `CalldataLoad` nodes across the whole program.
 pub fn calldataload_cse_program(program: &mut crate::schema::EvmProgram) {
     for contract in &mut program.contracts {
         contract.runtime = calldataload_cse(&contract.runtime);
@@ -2073,7 +2077,7 @@ pub fn calldataload_cse_program(program: &mut crate::schema::EvmProgram) {
     }
 }
 
-/// Count CalldataLoad(Const(offset), _) occurrences by offset value.
+/// Count `CalldataLoad(Const(offset), _)` occurrences by offset value.
 fn count_calldataloads(expr: &RcExpr, counts: &mut HashMap<i64, usize>) {
     match expr.as_ref() {
         EvmExpr::Bop(EvmBinaryOp::CalldataLoad, offset, _state) => {
@@ -2132,7 +2136,7 @@ fn count_calldataloads(expr: &RcExpr, counts: &mut HashMap<i64, usize>) {
     }
 }
 
-/// Replace CalldataLoad(Const(offset), _) with Var references for hoisted offsets.
+/// Replace `CalldataLoad(Const(offset), _)` with Var references for hoisted offsets.
 fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::Bop(EvmBinaryOp::CalldataLoad, offset, _state) => {
@@ -2180,7 +2184,11 @@ fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExp
             let ni = replace_calldataloads(inputs, hoisted);
             let nt = replace_calldataloads(then_b, hoisted);
             let ne = replace_calldataloads(else_b, hoisted);
-            if Rc::ptr_eq(&nc, cond) && Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nt, then_b) && Rc::ptr_eq(&ne, else_b) {
+            if Rc::ptr_eq(&nc, cond)
+                && Rc::ptr_eq(&ni, inputs)
+                && Rc::ptr_eq(&nt, then_b)
+                && Rc::ptr_eq(&ne, else_b)
+            {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::If(nc, ni, nt, ne))
@@ -2220,19 +2228,36 @@ fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExp
             if Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
         }
         EvmExpr::InlineAsm(inputs, hex, num_out) => {
-            let new_inputs: Vec<_> = inputs.iter().map(|i| replace_calldataloads(i, hoisted)).collect();
-            let changed = new_inputs.iter().zip(inputs.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            let new_inputs: Vec<_> = inputs
+                .iter()
+                .map(|i| replace_calldataloads(i, hoisted))
+                .collect();
+            let changed = new_inputs
+                .iter()
+                .zip(inputs.iter())
+                .any(|(n, o)| !Rc::ptr_eq(n, o));
             if !changed {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_out))
         }
         EvmExpr::Call(name, args) => {
-            let new_args: Vec<_> = args.iter().map(|a| replace_calldataloads(a, hoisted)).collect();
-            let changed = new_args.iter().zip(args.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            let new_args: Vec<_> = args
+                .iter()
+                .map(|a| replace_calldataloads(a, hoisted))
+                .collect();
+            let changed = new_args
+                .iter()
+                .zip(args.iter())
+                .any(|(n, o)| !Rc::ptr_eq(n, o));
             if !changed {
                 return Rc::clone(expr);
             }
@@ -2255,10 +2280,16 @@ fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExp
             Rc::new(EvmExpr::Revert(Rc::clone(state), ns, no))
         }
         EvmExpr::Log(count, topics, doff, dsz, state) => {
-            let new_topics: Vec<_> = topics.iter().map(|t| replace_calldataloads(t, hoisted)).collect();
+            let new_topics: Vec<_> = topics
+                .iter()
+                .map(|t| replace_calldataloads(t, hoisted))
+                .collect();
             let nd = replace_calldataloads(doff, hoisted);
             let nz = replace_calldataloads(dsz, hoisted);
-            let topics_changed = new_topics.iter().zip(topics.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            let topics_changed = new_topics
+                .iter()
+                .zip(topics.iter())
+                .any(|(n, o)| !Rc::ptr_eq(n, o));
             if !topics_changed && Rc::ptr_eq(&nd, doff) && Rc::ptr_eq(&nz, dsz) {
                 return Rc::clone(expr);
             }
@@ -2268,8 +2299,8 @@ fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExp
     }
 }
 
-/// Apply CalldataLoad CSE to an expression tree.
-/// Hoists repeated CalldataLoad(const_offset) into LetBind variables.
+/// Apply `CalldataLoad` CSE to an expression tree.
+/// Hoists repeated `CalldataLoad(const_offset)` into `LetBind` variables.
 fn calldataload_cse(expr: &RcExpr) -> RcExpr {
     let mut counts = HashMap::new();
     count_calldataloads(expr, &mut counts);
@@ -2305,15 +2336,23 @@ fn calldataload_cse(expr: &RcExpr) -> RcExpr {
     for (&offset, var_name) in sorted_offsets.iter().rev() {
         let cd_load = Rc::new(EvmExpr::Bop(
             EvmBinaryOp::CalldataLoad,
-            Rc::new(EvmExpr::Const(EvmConstant::SmallInt(offset), uint_ty.clone(), ctx.clone())),
+            Rc::new(EvmExpr::Const(
+                EvmConstant::SmallInt(offset),
+                uint_ty.clone(),
+                ctx.clone(),
+            )),
             Rc::clone(&state),
         ));
         // Wrap body in Concat(body, Drop(var)) to mark lifetime end
         let body_with_drop = Rc::new(EvmExpr::Concat(
             result,
-            Rc::new(EvmExpr::Drop(var_name.to_string())),
+            Rc::new(EvmExpr::Drop((*var_name).clone())),
         ));
-        result = Rc::new(EvmExpr::LetBind(var_name.to_string(), cd_load, body_with_drop));
+        result = Rc::new(EvmExpr::LetBind(
+            (*var_name).clone(),
+            cd_load,
+            body_with_drop,
+        ));
     }
 
     result
