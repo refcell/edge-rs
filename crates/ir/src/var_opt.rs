@@ -12,7 +12,7 @@
 
 use std::{collections::{HashMap, HashSet}, rc::Rc};
 
-use crate::schema::{EvmExpr, EvmTernaryOp, EvmType, RcExpr};
+use crate::schema::{EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, RcExpr};
 
 /// How a variable should be allocated at codegen time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,9 +49,8 @@ struct VarInfo {
 /// map default to `Memory` with `read_count` 0.
 ///
 /// A variable is eligible for stack allocation if:
-/// - It is never reassigned (`write_count == 0`)
 /// - It is not referenced inside a loop
-/// - It has a bounded number of reads (`read_count <= 8`)
+/// - It has a bounded number of reads (`read_count <= 16`)
 pub fn analyze_allocations(expr: &RcExpr) -> HashMap<String, VarAllocation> {
     let mut result = HashMap::new();
     collect_allocations(expr, &mut result);
@@ -63,7 +62,7 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
         EvmExpr::LetBind(name, init, body) => {
             collect_allocations(init, result);
             let info = analyze_var(name, body);
-            let mode = if info.write_count == 0 && !info.in_loop && info.read_count <= 8 {
+            let mode = if !info.in_loop && info.read_count <= 16 {
                 AllocationMode::Stack
             } else {
                 AllocationMode::Memory
@@ -1887,6 +1886,437 @@ fn rename_locals_rec(
         }
         _ => Rc::clone(expr),
     }
+}
+
+// ============================================================
+// Dead Store Elimination
+// ============================================================
+// Removes VarStore(x, val) when x hasn't been read since its last write
+// (LetBind init or previous VarStore). This handles patterns like:
+//   let x = 0; x = 0; ... → remove redundant VarStore
+//   let x = 0; x = real_val; ... → forward real_val into LetBind init
+
+/// Eliminate dead stores across the whole program.
+pub fn dead_store_elim_program(program: &mut crate::schema::EvmProgram) {
+    for contract in &mut program.contracts {
+        contract.runtime = dead_store_elim_rec(&contract.runtime);
+        for func in &mut contract.internal_functions {
+            *func = dead_store_elim_rec(func);
+        }
+    }
+}
+
+/// Check if an expression reads a variable (contains Var(name)).
+/// Unlike references_var_dataflow, this does NOT count VarStore(name, _) as a read —
+/// only the value inside VarStore or standalone Var nodes count.
+fn reads_var(expr: &RcExpr, name: &str) -> bool {
+    match expr.as_ref() {
+        EvmExpr::Var(n) => n == name,
+        EvmExpr::VarStore(n, val) => {
+            // Writing to name is not a read. But reading name inside the value IS.
+            // Also, VarStore to a DIFFERENT var might read our var in its value.
+            if n == name {
+                reads_var(val, name)
+            } else {
+                reads_var(val, name)
+            }
+        }
+        EvmExpr::Drop(_) => false,
+        EvmExpr::LetBind(n, init, body) => {
+            reads_var(init, name) || (n != name && reads_var(body, name))
+        }
+        EvmExpr::Concat(a, b) => reads_var(a, name) || reads_var(b, name),
+        EvmExpr::Bop(op, a, b) => {
+            use crate::schema::EvmBinaryOp::*;
+            let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
+            reads_var(a, name) || (!b_is_state && reads_var(b, name))
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => reads_var(a, name),
+        EvmExpr::Top(op, a, b, c) => {
+            use crate::schema::EvmTernaryOp::*;
+            let c_is_state =
+                matches!(op, SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy);
+            reads_var(a, name) || reads_var(b, name) || (!c_is_state && reads_var(c, name))
+        }
+        EvmExpr::If(c, i, t, e) => {
+            reads_var(c, name) || reads_var(i, name) || reads_var(t, name) || reads_var(e, name)
+        }
+        EvmExpr::DoWhile(inputs, body) => reads_var(inputs, name) || reads_var(body, name),
+        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(|inp| reads_var(inp, name)),
+        EvmExpr::Call(_, args) => args.iter().any(|a| reads_var(a, name)),
+        EvmExpr::ReturnOp(_, size, offset) | EvmExpr::Revert(_, size, offset) => {
+            reads_var(size, name) || reads_var(offset, name)
+        }
+        EvmExpr::Log(_, topics, doff, dsz, _) => {
+            topics.iter().any(|t| reads_var(t, name))
+                || reads_var(doff, name)
+                || reads_var(dsz, name)
+        }
+        _ => false,
+    }
+}
+
+fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::LetBind(name, init, body) => {
+            let new_init = dead_store_elim_rec(init);
+            let new_body = dead_store_elim_rec(body);
+
+            // Flatten body into statement list
+            let mut stmts = Vec::new();
+            flatten_concat(&new_body, &mut stmts);
+
+            // Scan for dead stores: VarStore(name, val) where name hasn't been read
+            // since the LetBind init (or previous VarStore to name).
+            let mut read_since_write = false;
+            let mut changed = false;
+            let mut forwarded_init = Rc::clone(&new_init);
+
+            for i in 0..stmts.len() {
+                // Check if this statement reads name
+                if reads_var(&stmts[i], name) {
+                    read_since_write = true;
+                }
+
+                // Extract VarStore info before mutating stmts
+                let store_info = if let EvmExpr::VarStore(n, val) = stmts[i].as_ref() {
+                    if n == name {
+                        Some((Rc::clone(val), is_pure(val), reads_var(val, name)))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some((val, val_is_pure, val_reads_name)) = store_info {
+                    if !read_since_write && is_pure(&forwarded_init) {
+                        if val_is_pure || is_pure(&forwarded_init) {
+                            // Dead store: forward new value into LetBind init,
+                            // replace VarStore with Empty.
+                            forwarded_init = val.clone();
+                            let ctx = EvmContext::InFunction("__opt__".to_string());
+                            stmts[i] = Rc::new(EvmExpr::Empty(
+                                EvmType::Base(crate::schema::EvmBaseType::UnitT),
+                                ctx,
+                            ));
+                            changed = true;
+                        }
+                    }
+                    // This VarStore writes name — reset read tracking.
+                    read_since_write = val_reads_name;
+                }
+            }
+
+            if changed {
+                let new_body = rebuild_concat(&stmts);
+                Rc::new(EvmExpr::LetBind(name.clone(), forwarded_init, new_body))
+            } else {
+                if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                    return Rc::clone(expr);
+                }
+                Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
+            }
+        }
+        EvmExpr::Concat(a, b) => {
+            let na = dead_store_elim_rec(a);
+            let nb = dead_store_elim_rec(b);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Concat(na, nb))
+        }
+        EvmExpr::If(cond, inputs, then_b, else_b) => {
+            let nc = dead_store_elim_rec(cond);
+            let ni = dead_store_elim_rec(inputs);
+            let nt = dead_store_elim_rec(then_b);
+            let ne = dead_store_elim_rec(else_b);
+            if Rc::ptr_eq(&nc, cond) && Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nt, then_b) && Rc::ptr_eq(&ne, else_b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::If(nc, ni, nt, ne))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let ni = dead_store_elim_rec(inputs);
+            let nb = dead_store_elim_rec(body);
+            if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DoWhile(ni, nb))
+        }
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            let nb = dead_store_elim_rec(body);
+            if Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+        }
+        _ => Rc::clone(expr),
+    }
+}
+
+// ============================================================
+// CalldataLoad CSE
+// ============================================================
+// After egglog extraction, identical CalldataLoad(offset, state) nodes may
+// appear multiple times in the IR tree. This pass hoists repeated calldata
+// loads into LetBind variables at the top of the expression scope, replacing
+// duplicates with Var references. Since calldata is immutable, this is always safe.
+
+/// Deduplicate CalldataLoad nodes across the whole program.
+pub fn calldataload_cse_program(program: &mut crate::schema::EvmProgram) {
+    for contract in &mut program.contracts {
+        contract.runtime = calldataload_cse(&contract.runtime);
+        for func in &mut contract.internal_functions {
+            *func = calldataload_cse(func);
+        }
+    }
+}
+
+/// Count CalldataLoad(Const(offset), _) occurrences by offset value.
+fn count_calldataloads(expr: &RcExpr, counts: &mut HashMap<i64, usize>) {
+    match expr.as_ref() {
+        EvmExpr::Bop(EvmBinaryOp::CalldataLoad, offset, _state) => {
+            if let EvmExpr::Const(EvmConstant::SmallInt(n), _, _) = offset.as_ref() {
+                *counts.entry(*n).or_insert(0) += 1;
+            }
+        }
+        // Recurse into all sub-expressions
+        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
+            count_calldataloads(a, counts);
+            count_calldataloads(b, counts);
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::Function(_, _, _, a) => {
+            count_calldataloads(a, counts);
+        }
+        EvmExpr::Top(_, a, b, c) => {
+            count_calldataloads(a, counts);
+            count_calldataloads(b, counts);
+            count_calldataloads(c, counts);
+        }
+        EvmExpr::If(cond, inputs, then_b, else_b) => {
+            count_calldataloads(cond, counts);
+            count_calldataloads(inputs, counts);
+            count_calldataloads(then_b, counts);
+            count_calldataloads(else_b, counts);
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            count_calldataloads(init, counts);
+            count_calldataloads(body, counts);
+        }
+        EvmExpr::VarStore(_, val) => {
+            count_calldataloads(val, counts);
+        }
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            for inp in inputs {
+                count_calldataloads(inp, counts);
+            }
+        }
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                count_calldataloads(a, counts);
+            }
+        }
+        EvmExpr::ReturnOp(_, size, offset) | EvmExpr::Revert(_, size, offset) => {
+            count_calldataloads(size, counts);
+            count_calldataloads(offset, counts);
+        }
+        EvmExpr::Log(_, topics, doff, dsz, _) => {
+            for t in topics {
+                count_calldataloads(t, counts);
+            }
+            count_calldataloads(doff, counts);
+            count_calldataloads(dsz, counts);
+        }
+        _ => {}
+    }
+}
+
+/// Replace CalldataLoad(Const(offset), _) with Var references for hoisted offsets.
+fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExpr {
+    match expr.as_ref() {
+        EvmExpr::Bop(EvmBinaryOp::CalldataLoad, offset, _state) => {
+            if let EvmExpr::Const(EvmConstant::SmallInt(n), _, _) = offset.as_ref() {
+                if let Some(var_name) = hoisted.get(n) {
+                    return Rc::new(EvmExpr::Var(var_name.clone()));
+                }
+            }
+            Rc::clone(expr)
+        }
+        EvmExpr::Bop(op, a, b) => {
+            let na = replace_calldataloads(a, hoisted);
+            let nb = replace_calldataloads(b, hoisted);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Bop(*op, na, nb))
+        }
+        EvmExpr::Uop(op, a) => {
+            let na = replace_calldataloads(a, hoisted);
+            if Rc::ptr_eq(&na, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Uop(*op, na))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let na = replace_calldataloads(a, hoisted);
+            let nb = replace_calldataloads(b, hoisted);
+            let nc = replace_calldataloads(c, hoisted);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Top(*op, na, nb, nc))
+        }
+        EvmExpr::Concat(a, b) => {
+            let na = replace_calldataloads(a, hoisted);
+            let nb = replace_calldataloads(b, hoisted);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Concat(na, nb))
+        }
+        EvmExpr::If(cond, inputs, then_b, else_b) => {
+            let nc = replace_calldataloads(cond, hoisted);
+            let ni = replace_calldataloads(inputs, hoisted);
+            let nt = replace_calldataloads(then_b, hoisted);
+            let ne = replace_calldataloads(else_b, hoisted);
+            if Rc::ptr_eq(&nc, cond) && Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nt, then_b) && Rc::ptr_eq(&ne, else_b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::If(nc, ni, nt, ne))
+        }
+        EvmExpr::LetBind(name, init, body) => {
+            let ni = replace_calldataloads(init, hoisted);
+            let nb = replace_calldataloads(body, hoisted);
+            if Rc::ptr_eq(&ni, init) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::LetBind(name.clone(), ni, nb))
+        }
+        EvmExpr::VarStore(name, val) => {
+            let nv = replace_calldataloads(val, hoisted);
+            if Rc::ptr_eq(&nv, val) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::VarStore(name.clone(), nv))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let ni = replace_calldataloads(inputs, hoisted);
+            let nb = replace_calldataloads(body, hoisted);
+            if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DoWhile(ni, nb))
+        }
+        EvmExpr::Get(inner, idx) => {
+            let ni = replace_calldataloads(inner, hoisted);
+            if Rc::ptr_eq(&ni, inner) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Get(ni, *idx))
+        }
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            let nb = replace_calldataloads(body, hoisted);
+            if Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+        }
+        EvmExpr::InlineAsm(inputs, hex, num_out) => {
+            let new_inputs: Vec<_> = inputs.iter().map(|i| replace_calldataloads(i, hoisted)).collect();
+            let changed = new_inputs.iter().zip(inputs.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            if !changed {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_out))
+        }
+        EvmExpr::Call(name, args) => {
+            let new_args: Vec<_> = args.iter().map(|a| replace_calldataloads(a, hoisted)).collect();
+            let changed = new_args.iter().zip(args.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            if !changed {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
+        }
+        EvmExpr::ReturnOp(state, size, offset) => {
+            let ns = replace_calldataloads(size, hoisted);
+            let no = replace_calldataloads(offset, hoisted);
+            if Rc::ptr_eq(&ns, size) && Rc::ptr_eq(&no, offset) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::ReturnOp(Rc::clone(state), ns, no))
+        }
+        EvmExpr::Revert(state, size, offset) => {
+            let ns = replace_calldataloads(size, hoisted);
+            let no = replace_calldataloads(offset, hoisted);
+            if Rc::ptr_eq(&ns, size) && Rc::ptr_eq(&no, offset) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Revert(Rc::clone(state), ns, no))
+        }
+        EvmExpr::Log(count, topics, doff, dsz, state) => {
+            let new_topics: Vec<_> = topics.iter().map(|t| replace_calldataloads(t, hoisted)).collect();
+            let nd = replace_calldataloads(doff, hoisted);
+            let nz = replace_calldataloads(dsz, hoisted);
+            let topics_changed = new_topics.iter().zip(topics.iter()).any(|(n, o)| !Rc::ptr_eq(n, o));
+            if !topics_changed && Rc::ptr_eq(&nd, doff) && Rc::ptr_eq(&nz, dsz) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Log(*count, new_topics, nd, nz, Rc::clone(state)))
+        }
+        _ => Rc::clone(expr),
+    }
+}
+
+/// Apply CalldataLoad CSE to an expression tree.
+/// Hoists repeated CalldataLoad(const_offset) into LetBind variables.
+fn calldataload_cse(expr: &RcExpr) -> RcExpr {
+    let mut counts = HashMap::new();
+    count_calldataloads(expr, &mut counts);
+
+    // Only hoist offsets that appear more than once
+    let hoisted: HashMap<i64, String> = counts
+        .iter()
+        .filter(|(_, &count)| count > 1)
+        .map(|(&offset, _)| (offset, format!("__cd_{offset}")))
+        .collect();
+
+    if hoisted.is_empty() {
+        return Rc::clone(expr);
+    }
+
+    // Replace all CalldataLoad references with Var references
+    let replaced = replace_calldataloads(expr, &hoisted);
+
+    // Wrap in LetBind chain: LetBind(__cd_4, CalldataLoad(4, state), LetBind(__cd_36, ..., body))
+    let state = Rc::new(EvmExpr::Arg(
+        EvmType::Base(crate::schema::EvmBaseType::StateT),
+        EvmContext::InFunction("__opt__".to_string()),
+    ));
+    let uint_ty = EvmType::Base(crate::schema::EvmBaseType::UIntT(256));
+    let ctx = EvmContext::InFunction("__opt__".to_string());
+
+    // Sort offsets for deterministic output
+    let mut sorted_offsets: Vec<_> = hoisted.iter().collect();
+    sorted_offsets.sort_by_key(|(offset, _)| *offset);
+
+    let mut result = replaced;
+    // Wrap innermost first (reverse order so outermost LetBind has smallest offset)
+    for (&offset, var_name) in sorted_offsets.iter().rev() {
+        let cd_load = Rc::new(EvmExpr::Bop(
+            EvmBinaryOp::CalldataLoad,
+            Rc::new(EvmExpr::Const(EvmConstant::SmallInt(offset), uint_ty.clone(), ctx.clone())),
+            Rc::clone(&state),
+        ));
+        // Wrap body in Concat(body, Drop(var)) to mark lifetime end
+        let body_with_drop = Rc::new(EvmExpr::Concat(
+            result,
+            Rc::new(EvmExpr::Drop(var_name.to_string())),
+        ));
+        result = Rc::new(EvmExpr::LetBind(var_name.to_string(), cd_load, body_with_drop));
+    }
+
+    result
 }
 
 #[cfg(test)]

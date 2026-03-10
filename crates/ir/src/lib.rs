@@ -301,6 +301,16 @@ pub fn lower_and_optimize(
     var_opt::tighten_drops_program(&mut result);
     tracing::debug!("  tighten_drops: {:?}", t.elapsed());
 
+    // Eliminate dead stores (write-before-write with no intervening read)
+    let t = std::time::Instant::now();
+    var_opt::dead_store_elim_program(&mut result);
+    tracing::debug!("  dead_store_elim: {:?}", t.elapsed());
+
+    // Deduplicate CalldataLoad nodes (hoist repeated loads into LetBind vars)
+    let t = std::time::Instant::now();
+    var_opt::calldataload_cse_program(&mut result);
+    tracing::debug!("  calldataload_cse: {:?}", t.elapsed());
+
     tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
 
     Ok(result)
