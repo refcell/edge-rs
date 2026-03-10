@@ -118,16 +118,17 @@ jobs:
         with:
           tools: cargo-nextest
           rust-cache-shared-key: "stable"
-      - run: just e2e-ci
       - name: Gas snapshot diff
         if: github.event_name == 'pull_request'
         run: |
-          git show origin/${{ github.base_ref }}:crates/e2e/.gas-snapshot > /tmp/base-gas-snapshot || true
-          if [ -f /tmp/base-gas-snapshot ] && [ -f crates/e2e/.gas-snapshot ]; then
-            python3 scripts/gas-diff.py /tmp/base-gas-snapshot crates/e2e/.gas-snapshot > /tmp/gas-diff.md
+          git show origin/${{ github.base_ref }}:crates/e2e/.gas-snapshot > /tmp/base-gas-snapshot 2>/dev/null || true
+          git show HEAD:crates/e2e/.gas-snapshot > /tmp/head-gas-snapshot 2>/dev/null || true
+          if [ -s /tmp/base-gas-snapshot ] && [ -s /tmp/head-gas-snapshot ]; then
+            python3 scripts/gas-diff.py /tmp/base-gas-snapshot /tmp/head-gas-snapshot > /tmp/gas-diff.md
           else
             echo "No gas snapshots to compare." > /tmp/gas-diff.md
           fi
+      - run: just e2e-ci
       - name: Post gas diff comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7

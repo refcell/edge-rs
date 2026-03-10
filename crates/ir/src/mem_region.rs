@@ -22,9 +22,9 @@ use crate::schema::{EvmBaseType, EvmConstant, EvmContext, EvmExpr, EvmType, RcEx
 /// branches of an `If` can share the same memory offsets.
 enum RegionScope {
     /// Children execute sequentially — all must be non-overlapping.
-    Sequential(Vec<RegionScope>),
+    Sequential(Vec<Self>),
     /// Children are mutually exclusive (If branches) — can share base offset.
-    Exclusive(Vec<RegionScope>),
+    Exclusive(Vec<Self>),
     /// A single memory region allocation.
     Leaf { region_id: i64, size_bytes: usize },
 }

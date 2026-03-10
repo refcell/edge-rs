@@ -2212,14 +2212,13 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
                 // Pattern: LetBind("a", 0, LetBind("b", 0, LetBind("c", 0,
                 //   Concat(VarStore("a", val), ...))))
                 // The VarStore for "a" is in the innermost body, invisible to flat scan.
-                forward_through_nested_letbinds(name, &new_init, &new_body)
-                    .unwrap_or_else(|| {
-                        if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
-                            Rc::clone(expr)
-                        } else {
-                            Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
-                        }
-                    })
+                forward_through_nested_letbinds(name, &new_init, &new_body).unwrap_or_else(|| {
+                    if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                        Rc::clone(expr)
+                    } else {
+                        Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
+                    }
+                })
             } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
                 Rc::clone(expr)
             } else {
