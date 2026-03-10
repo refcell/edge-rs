@@ -1985,7 +1985,8 @@ fn forward_through_nested_letbinds(
     // Walk through nested LetBinds, collecting sibling variable names
     let mut sibling_names: HashSet<&str> = HashSet::new();
     let mut innermost = body;
-    // Walk through nested LetBinds, collecting sibling variable names
+    // Can't use `while let` — early returns inside the loop body.
+    #[allow(clippy::while_let_loop)]
     loop {
         match innermost.as_ref() {
             EvmExpr::LetBind(inner_name, inner_init, inner_body) => {
@@ -2068,7 +2069,10 @@ fn collect_varstore_names<'a>(expr: &'a RcExpr, names: &mut HashSet<&'a str>) {
             names.insert(n.as_str());
             collect_varstore_names(val, names);
         }
-        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+        EvmExpr::Concat(a, b)
+        | EvmExpr::Bop(_, a, b)
+        | EvmExpr::LetBind(_, a, b)
+        | EvmExpr::DoWhile(a, b) => {
             collect_varstore_names(a, names);
             collect_varstore_names(b, names);
         }
@@ -2077,14 +2081,6 @@ fn collect_varstore_names<'a>(expr: &'a RcExpr, names: &mut HashSet<&'a str>) {
             collect_varstore_names(i, names);
             collect_varstore_names(t, names);
             collect_varstore_names(e, names);
-        }
-        EvmExpr::LetBind(_, init, body) => {
-            collect_varstore_names(init, names);
-            collect_varstore_names(body, names);
-        }
-        EvmExpr::DoWhile(a, b) => {
-            collect_varstore_names(a, names);
-            collect_varstore_names(b, names);
         }
         _ => {}
     }
@@ -2095,12 +2091,10 @@ fn references_any_in_set(expr: &RcExpr, names: &HashSet<&str>) -> bool {
     match expr.as_ref() {
         EvmExpr::Var(n) => names.contains(n.as_str()),
         EvmExpr::VarStore(_, val) => references_any_in_set(val, names),
-        EvmExpr::Drop(_) => false,
-        EvmExpr::Const(..) | EvmExpr::Arg(..) | EvmExpr::Selector(..) | EvmExpr::Empty(..) => false,
-        EvmExpr::LetBind(_, init, body) => {
-            references_any_in_set(init, names) || references_any_in_set(body, names)
-        }
-        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+        EvmExpr::LetBind(_, a, b)
+        | EvmExpr::Concat(a, b)
+        | EvmExpr::Bop(_, a, b)
+        | EvmExpr::DoWhile(a, b) => {
             references_any_in_set(a, names) || references_any_in_set(b, names)
         }
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_in_set(a, names),
@@ -2114,9 +2108,6 @@ fn references_any_in_set(expr: &RcExpr, names: &HashSet<&str>) -> bool {
                 || references_any_in_set(i, names)
                 || references_any_in_set(t, names)
                 || references_any_in_set(e, names)
-        }
-        EvmExpr::DoWhile(a, b) => {
-            references_any_in_set(a, names) || references_any_in_set(b, names)
         }
         EvmExpr::InlineAsm(inputs, _, _) => {
             inputs.iter().any(|inp| references_any_in_set(inp, names))
@@ -2221,13 +2212,14 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
                 // Pattern: LetBind("a", 0, LetBind("b", 0, LetBind("c", 0,
                 //   Concat(VarStore("a", val), ...))))
                 // The VarStore for "a" is in the innermost body, invisible to flat scan.
-                if let Some(result) = forward_through_nested_letbinds(name, &new_init, &new_body) {
-                    result
-                } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
-                    Rc::clone(expr)
-                } else {
-                    Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
-                }
+                forward_through_nested_letbinds(name, &new_init, &new_body)
+                    .unwrap_or_else(|| {
+                        if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                            Rc::clone(expr)
+                        } else {
+                            Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
+                        }
+                    })
             } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
                 Rc::clone(expr)
             } else {

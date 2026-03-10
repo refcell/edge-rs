@@ -2,8 +2,8 @@
 
 //! Regression test for inlined-function halt detection in codegen.
 //!
-//! bisect14.edge triggers a stack-depth mismatch at O3 when the
-//! remaining_reads consume optimization fires inside dead code
+//! `bisect14.edge` triggers a stack-depth mismatch at O3 when the
+//! `remaining_reads` consume optimization fires inside dead code
 //! produced by inlined returns.
 
 use crate::helpers::*;

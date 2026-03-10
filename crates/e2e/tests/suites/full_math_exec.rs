@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 
-//! Regression test for full_math (bisect1) - previously crashed with
-//! Arg DUP depth 0 at O3 due to InlineAsm inputs not being traversed
-//! by substitute_args during monomorphization.
+//! Regression test for `full_math` (`bisect1`) - previously crashed with
+//! Arg DUP depth 0 at O3 due to `InlineAsm` inputs not being traversed
+//! by `substitute_args` during monomorphization.
 
 use crate::helpers::*;
 

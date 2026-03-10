@@ -230,6 +230,7 @@ pub(crate) struct CallResult {
     pub success: bool,
     pub output: Vec<u8>,
     pub logs: Vec<LogEntry>,
+    #[allow(dead_code)]
     pub gas_used: u64,
 }
 
