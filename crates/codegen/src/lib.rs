@@ -83,7 +83,8 @@ pub fn compile(
         }
         let instructions = asm.take_instructions();
         let optimized = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
-        let asm = assembler::Assembler::from_instructions(optimized);
+        let mut asm = assembler::Assembler::from_instructions(optimized);
+        asm.thread_jumps();
         Ok(asm.assemble())
     } else {
         Err(CodegenError::NoContracts)

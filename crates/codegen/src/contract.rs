@@ -142,7 +142,8 @@ fn generate_runtime_bytecode(
     } else {
         optimized
     };
-    let asm = Assembler::from_instructions(optimized);
+    let mut asm = Assembler::from_instructions(optimized);
+    asm.thread_jumps();
 
     Ok(asm.assemble())
 }
@@ -174,6 +175,14 @@ pub fn generate_contract_asm(
     if optimize_for == OptimizeFor::Size {
         runtime = crate::subroutine_extract::extract_subroutines(runtime);
     }
+    // Thread jumps on asm output too
+    let mut rt_asm = Assembler::from_instructions(runtime);
+    rt_asm.thread_jumps();
+    let runtime = rt_asm.take_instructions().to_vec();
+
+    let mut ct_asm = Assembler::from_instructions(constructor);
+    ct_asm.thread_jumps();
+    let constructor = ct_asm.take_instructions().to_vec();
 
     Ok(crate::AsmOutput {
         constructor,

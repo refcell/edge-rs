@@ -49,6 +49,8 @@ pub struct ExprCompiler<'a> {
     stack_depth: usize,
     /// Label for shared overflow revert trampoline (lazily created)
     overflow_revert_label: Option<String>,
+    /// Label for shared revert(0,0) trampoline (lazily created)
+    revert_trampoline_label: Option<String>,
     /// Inner function metadata: name -> (`param_count`, `return_count`)
     /// Populated by a pre-pass over the IR tree before compilation.
     fn_info: HashMap<String, (usize, usize)>,
@@ -90,6 +92,7 @@ impl<'a> ExprCompiler<'a> {
             halting_context: false,
             stack_depth: 0,
             overflow_revert_label: None,
+            revert_trampoline_label: None,
             fn_info: HashMap::new(),
         }
     }
@@ -281,10 +284,17 @@ impl<'a> ExprCompiler<'a> {
             }
 
             EvmExpr::Revert(offset, size, _state) => {
-                self.compile_expr(size);
-                self.compile_expr(offset);
-                self.asm.emit_op(Opcode::Revert);
-                self.stack_depth -= 2; // REVERT pops offset + size
+                // revert(0, 0) is extremely common (bounds checks, dispatch fallback).
+                // Share a single trampoline instead of emitting Push0+Push0+Revert each time.
+                if Self::is_const_zero(offset) && Self::is_const_zero(size) {
+                    let label = self.get_revert_trampoline_label();
+                    self.asm.emit(AsmInstruction::JumpTo(label));
+                } else {
+                    self.compile_expr(size);
+                    self.compile_expr(offset);
+                    self.asm.emit_op(Opcode::Revert);
+                    self.stack_depth -= 2; // REVERT pops offset + size
+                }
             }
 
             EvmExpr::ReturnOp(offset, size, _state) => {
@@ -914,6 +924,16 @@ impl<'a> ExprCompiler<'a> {
         }
     }
 
+    /// Get or create the shared revert(0,0) trampoline label.
+    fn get_revert_trampoline_label(&mut self) -> String {
+        if let Some(ref label) = self.revert_trampoline_label {
+            return label.clone();
+        }
+        let label = self.asm.fresh_label("revert_trampoline");
+        self.revert_trampoline_label = Some(label.clone());
+        label
+    }
+
     /// Get or create the shared overflow revert label.
     fn get_overflow_revert_label(&mut self) -> String {
         if let Some(ref label) = self.overflow_revert_label {
@@ -925,8 +945,7 @@ impl<'a> ExprCompiler<'a> {
         }
     }
 
-    /// Emit the shared overflow revert trampoline (if any checked op was compiled).
-    /// Call this after all expressions have been compiled.
+    /// Emit shared revert trampolines. Call after all expressions are compiled.
     pub fn emit_overflow_revert_trampoline(&mut self) {
         if let Some(label) = self.overflow_revert_label.take() {
             self.asm.emit(AsmInstruction::Label(label));
@@ -934,6 +953,21 @@ impl<'a> ExprCompiler<'a> {
             self.asm.emit_op(Opcode::Push0);
             self.asm.emit_op(Opcode::Revert);
         }
+        if let Some(label) = self.revert_trampoline_label.take() {
+            self.asm.emit(AsmInstruction::Label(label));
+            self.asm.emit_op(Opcode::Push0);
+            self.asm.emit_op(Opcode::Push0);
+            self.asm.emit_op(Opcode::Revert);
+        }
+    }
+
+    /// Check if an expression is a constant zero.
+    fn is_const_zero(expr: &RcExpr) -> bool {
+        matches!(
+            expr.as_ref(),
+            EvmExpr::Const(EvmConstant::SmallInt(0), _, _)
+                | EvmExpr::Const(EvmConstant::Bool(false), _, _)
+        )
     }
 
     /// Compile checked addition: a + b, revert if overflow.

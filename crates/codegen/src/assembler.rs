@@ -156,6 +156,116 @@ impl Assembler {
         self.instructions.is_empty()
     }
 
+    /// Jump threading: if Label(X) is immediately followed by JumpTo(Y)
+    /// (skipping Comments), rewrite any JumpTo(X)/JumpITo(X)/PushLabel(X) to
+    /// target Y instead. Iterates to a fixed point for chains.
+    pub fn thread_jumps(&mut self) {
+        use std::collections::HashMap;
+        loop {
+            // Build redirect map: label X → label Y when Label(X) is followed by JumpTo(Y)
+            let mut redirects: HashMap<String, String> = HashMap::new();
+            let mut i = 0;
+            while i < self.instructions.len() {
+                if let AsmInstruction::Label(ref label) = self.instructions[i] {
+                    // Find next non-comment instruction after this label
+                    let mut j = i + 1;
+                    while j < self.instructions.len() {
+                        if matches!(self.instructions[j], AsmInstruction::Comment(_)) {
+                            j += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    if j < self.instructions.len() {
+                        if let AsmInstruction::JumpTo(ref target) = self.instructions[j] {
+                            if target != label {
+                                redirects.insert(label.clone(), target.clone());
+                            }
+                        }
+                    }
+                }
+                i += 1;
+            }
+
+            if redirects.is_empty() {
+                break;
+            }
+
+            // Apply redirects
+            let mut changed = false;
+            for inst in &mut self.instructions {
+                let target = match inst {
+                    AsmInstruction::JumpTo(ref t)
+                    | AsmInstruction::JumpITo(ref t)
+                    | AsmInstruction::PushLabel(ref t) => redirects.get(t).cloned(),
+                    _ => None,
+                };
+                if let Some(new_target) = target {
+                    match inst {
+                        AsmInstruction::JumpTo(ref mut t)
+                        | AsmInstruction::JumpITo(ref mut t)
+                        | AsmInstruction::PushLabel(ref mut t) => {
+                            *t = new_target;
+                            changed = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        // Remove dead labels: Label(X) that no jump/push references anymore.
+        // Also remove the JumpTo that follows a dead label (and intervening comments).
+        use std::collections::HashSet;
+        let referenced: HashSet<String> = self
+            .instructions
+            .iter()
+            .filter_map(|inst| match inst {
+                AsmInstruction::JumpTo(t)
+                | AsmInstruction::JumpITo(t)
+                | AsmInstruction::PushLabel(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let mut keep = vec![true; self.instructions.len()];
+        let mut i = 0;
+        while i < self.instructions.len() {
+            if let AsmInstruction::Label(ref label) = self.instructions[i] {
+                if !referenced.contains(label) {
+                    // Mark label and subsequent comments + JumpTo for removal
+                    keep[i] = false;
+                    let mut j = i + 1;
+                    while j < self.instructions.len() {
+                        match &self.instructions[j] {
+                            AsmInstruction::Comment(_) => {
+                                keep[j] = false;
+                                j += 1;
+                            }
+                            AsmInstruction::JumpTo(_) => {
+                                keep[j] = false;
+                                break;
+                            }
+                            _ => break,
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        let mut idx = 0;
+        self.instructions.retain(|_| {
+            let k = keep[idx];
+            idx += 1;
+            k
+        });
+    }
+
     /// Assemble into final bytecode, resolving all labels to offsets.
     ///
     /// Tries PUSH1 (short) jumps first. If any label offset >= 256,
