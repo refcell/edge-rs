@@ -70,7 +70,12 @@
 ;; Var (let-binding reference) is pure
 (rule ((= e (Var name)))                   ((IsPure e)) :ruleset dead-code)
 
-;; Drop (lifetime marker) is pure — no side effects
+;; Drop (lifetime marker) is pure — no side effects.
+;; Drops in the `a` position of Concat(Drop, rest) may be eliminated by DCE,
+;; which is acceptable: compile_let_bind handles cleanup as a fallback.
+;; All Drop placement passes put Drop in `b` position (Concat(stuff, Drop))
+;; where DCE doesn't touch it, except insert_early_drops which intentionally
+;; lets halting-branch Drops be eliminated (cleanup is irrelevant before halt).
 (rule ((= e (Drop name)))                  ((IsPure e)) :ruleset dead-code)
 
 ;; MemRegion (symbolic allocation) is pure — just a compile-time constant
@@ -116,5 +121,11 @@
 
 ;; Dead variable: pure init, body is just Drop → eliminate
 (rule ((= e (LetBind name init (Drop name))) (IsPure init))
+      ((union e (Empty (Base (UnitT)) (InFunction "__dead__"))))
+      :ruleset dead-code)
+
+;; Written-but-never-read variable: VarStore then Drop with pure values.
+(rule ((= e (LetBind name init (Concat (VarStore name val) (Drop name))))
+       (IsPure init) (IsPure val))
       ((union e (Empty (Base (UnitT)) (InFunction "__dead__"))))
       :ruleset dead-code)

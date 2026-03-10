@@ -103,3 +103,34 @@
 (rewrite (Bop (OpTLoad) slot (Log n topics doff dsz state))
          (Bop (OpTLoad) slot state)
          :subsume :ruleset storage-opt)
+
+;; ============================================================
+;; CalldataLoad Forwarding Through All State Changes
+;; ============================================================
+;; Calldata is immutable during execution. CalldataLoad can be
+;; forwarded through ANY state change, enabling hash-consing to
+;; deduplicate identical loads separated by state operations.
+
+;; ---- CalldataLoad through storage ----
+(rewrite (Bop (OpCalldataLoad) offset (Top (OpSStore) slot val state))
+         (Bop (OpCalldataLoad) offset state)
+         :subsume :ruleset storage-opt)
+
+;; ---- CalldataLoad through transient storage ----
+(rewrite (Bop (OpCalldataLoad) offset (Top (OpTStore) slot val state))
+         (Bop (OpCalldataLoad) offset state)
+         :subsume :ruleset storage-opt)
+
+;; ---- CalldataLoad through memory ----
+(rewrite (Bop (OpCalldataLoad) offset (Top (OpMStore) moff val state))
+         (Bop (OpCalldataLoad) offset state)
+         :subsume :ruleset storage-opt)
+
+(rewrite (Bop (OpCalldataLoad) offset (Top (OpMStore8) moff val state))
+         (Bop (OpCalldataLoad) offset state)
+         :subsume :ruleset storage-opt)
+
+;; ---- CalldataLoad through Log ----
+(rewrite (Bop (OpCalldataLoad) offset (Log n topics doff dsz state))
+         (Bop (OpCalldataLoad) offset state)
+         :subsume :ruleset storage-opt)

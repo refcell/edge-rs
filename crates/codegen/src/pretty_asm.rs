@@ -36,7 +36,7 @@ fn pp_instructions(instructions: &[AsmInstruction], buf: &mut String) {
                 if i > 0 {
                     buf.push('\n');
                 }
-                buf.push_str(&format!("{name}:\n"));
+                buf.push_str(&format!("{name}:  ; {byte_offset:04x} JUMPDEST\n"));
                 in_block = true;
                 byte_offset += 1; // JUMPDEST
             }

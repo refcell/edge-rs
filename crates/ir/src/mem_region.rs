@@ -3,8 +3,9 @@
 //! After egglog extraction, the IR contains `MemRegion(id, size_words)` nodes
 //! representing symbolic memory allocations. This pass:
 //!
-//! 1. Collects all `MemRegion` nodes from the IR tree
-//! 2. Assigns concrete byte offsets via a bump allocator (starting at 0)
+//! 1. Builds a scope tree reflecting control-flow mutual exclusivity
+//! 2. Assigns concrete byte offsets — regions in mutually exclusive branches
+//!    (If then/else) share the same base offset
 //! 3. Replaces each `MemRegion(id, size)` with `Const(SmallInt(offset))`
 //! 4. Returns the total memory used (memory high water mark)
 //!
@@ -15,28 +16,209 @@ use std::{collections::BTreeMap, rc::Rc};
 
 use crate::schema::{EvmBaseType, EvmConstant, EvmContext, EvmExpr, EvmType, RcExpr};
 
+/// Scope tree node for memory region allocation.
+///
+/// Models control-flow mutual exclusivity so that regions in different
+/// branches of an `If` can share the same memory offsets.
+enum RegionScope {
+    /// Children execute sequentially — all must be non-overlapping.
+    Sequential(Vec<Self>),
+    /// Children are mutually exclusive (If branches) — can share base offset.
+    Exclusive(Vec<Self>),
+    /// A single memory region allocation.
+    Leaf { region_id: i64, size_bytes: usize },
+}
+
 /// Assign concrete memory offsets to all `MemRegion` nodes in an expression.
 ///
 /// Returns `(rewritten_expr, memory_high_water)` where `memory_high_water` is
 /// the first free byte offset after all allocated regions.
 pub fn assign_memory_offsets(expr: &RcExpr) -> (RcExpr, usize) {
-    let mut regions = BTreeMap::new();
-    collect_regions(expr, &mut regions);
+    let scope = collect_region_scopes(expr);
+    let scope = simplify_scope(scope);
 
-    if regions.is_empty() {
+    let mut assignments = BTreeMap::new();
+    let hw = assign_scoped_offsets(&scope, 0, &mut assignments);
+
+    if assignments.is_empty() {
         return (Rc::clone(expr), 0);
     }
 
-    // Assign concrete offsets via bump allocator
-    let mut offset = 0usize;
-    let mut assignments = BTreeMap::new();
-    for (id, size_words) in &regions {
-        assignments.insert(*id, offset);
-        offset += (*size_words as usize) * 32;
-    }
+    tracing::debug!("  mem_region hw={hw} ({} regions)", assignments.len());
 
     let rewritten = replace_regions(expr, &assignments);
-    (rewritten, offset)
+    (rewritten, hw)
+}
+
+/// Recursively assign offsets respecting mutual exclusivity.
+///
+/// Returns the total bytes consumed from `base_offset`.
+fn assign_scoped_offsets(
+    scope: &RegionScope,
+    base_offset: usize,
+    assignments: &mut BTreeMap<i64, usize>,
+) -> usize {
+    match scope {
+        RegionScope::Leaf {
+            region_id,
+            size_bytes,
+        } => {
+            // Only count size for the first occurrence of a region.
+            // Shared Rc nodes cause the same region to appear multiple times.
+            if assignments.contains_key(region_id) {
+                0
+            } else {
+                assignments.insert(*region_id, base_offset);
+                *size_bytes
+            }
+        }
+        RegionScope::Sequential(children) => {
+            let mut cursor = base_offset;
+            for child in children {
+                let used = assign_scoped_offsets(child, cursor, assignments);
+                cursor += used;
+            }
+            cursor - base_offset
+        }
+        RegionScope::Exclusive(branches) => {
+            let mut max_used = 0;
+            for branch in branches {
+                let used = assign_scoped_offsets(branch, base_offset, assignments);
+                max_used = max_used.max(used);
+            }
+            max_used
+        }
+    }
+}
+
+/// Build a scope tree from an IR expression.
+fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
+    match expr.as_ref() {
+        EvmExpr::MemRegion(id, size_words) => RegionScope::Leaf {
+            region_id: *id,
+            size_bytes: (*size_words as usize) * 32,
+        },
+
+        // If: condition+inputs sequential, then/else exclusive
+        EvmExpr::If(cond, inputs, then_br, else_br) => RegionScope::Sequential(vec![
+            collect_region_scopes(cond),
+            collect_region_scopes(inputs),
+            RegionScope::Exclusive(vec![
+                collect_region_scopes(then_br),
+                collect_region_scopes(else_br),
+            ]),
+        ]),
+
+        // Sequential composition
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(b)])
+        }
+        EvmExpr::LetBind(_, init, body) => RegionScope::Sequential(vec![
+            collect_region_scopes(init),
+            collect_region_scopes(body),
+        ]),
+        EvmExpr::DoWhile(inputs, body) => RegionScope::Sequential(vec![
+            collect_region_scopes(inputs),
+            collect_region_scopes(body),
+        ]),
+        EvmExpr::Function(_, _, _, body) => collect_region_scopes(body),
+
+        // Ternary children — sequential
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            RegionScope::Sequential(vec![
+                collect_region_scopes(a),
+                collect_region_scopes(b),
+                collect_region_scopes(c),
+            ])
+        }
+
+        // Unary children
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::VarStore(_, a) => {
+            collect_region_scopes(a)
+        }
+
+        // Multi-child nodes
+        EvmExpr::Log(_, topics, d, s, st) => {
+            let mut children: Vec<_> = topics.iter().map(collect_region_scopes).collect();
+            children.push(collect_region_scopes(d));
+            children.push(collect_region_scopes(s));
+            children.push(collect_region_scopes(st));
+            RegionScope::Sequential(children)
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => RegionScope::Sequential(
+            [a, b, c, d, e, f, g]
+                .into_iter()
+                .map(collect_region_scopes)
+                .collect(),
+        ),
+        EvmExpr::Call(_, args) => {
+            RegionScope::Sequential(args.iter().map(collect_region_scopes).collect())
+        }
+        EvmExpr::EnvRead(_, s) => collect_region_scopes(s),
+        EvmExpr::EnvRead1(_, a, s) => {
+            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(s)])
+        }
+        EvmExpr::InlineAsm(inputs, ..) => {
+            RegionScope::Sequential(inputs.iter().map(collect_region_scopes).collect())
+        }
+
+        // Leaf nodes — no regions
+        EvmExpr::Const(..)
+        | EvmExpr::Arg(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Var(_)
+        | EvmExpr::Drop(_)
+        | EvmExpr::Selector(_)
+        | EvmExpr::StorageField(..) => RegionScope::Sequential(vec![]),
+    }
+}
+
+/// Returns true if a scope tree contains any Leaf nodes.
+fn has_regions(scope: &RegionScope) -> bool {
+    match scope {
+        RegionScope::Leaf { .. } => true,
+        RegionScope::Sequential(children) | RegionScope::Exclusive(children) => {
+            children.iter().any(has_regions)
+        }
+    }
+}
+
+/// Simplify a scope tree: remove empty nodes, flatten nested Sequential.
+fn simplify_scope(scope: RegionScope) -> RegionScope {
+    match scope {
+        RegionScope::Leaf { .. } => scope,
+        RegionScope::Sequential(children) => {
+            // Recursively simplify, drop empty, flatten nested Sequential
+            let mut flat = Vec::new();
+            for child in children {
+                let simplified = simplify_scope(child);
+                if !has_regions(&simplified) {
+                    continue;
+                }
+                match simplified {
+                    RegionScope::Sequential(inner) => flat.extend(inner),
+                    other => flat.push(other),
+                }
+            }
+            match flat.len() {
+                0 => RegionScope::Sequential(vec![]),
+                1 => flat.into_iter().next().unwrap(),
+                _ => RegionScope::Sequential(flat),
+            }
+        }
+        RegionScope::Exclusive(children) => {
+            let simplified: Vec<_> = children
+                .into_iter()
+                .map(simplify_scope)
+                .filter(has_regions)
+                .collect();
+            match simplified.len() {
+                0 => RegionScope::Sequential(vec![]),
+                1 => simplified.into_iter().next().unwrap(),
+                _ => RegionScope::Exclusive(simplified),
+            }
+        }
+    }
 }
 
 /// Assign memory offsets for an entire program.
@@ -61,85 +243,6 @@ pub fn assign_program_offsets(program: &mut crate::schema::EvmProgram) {
         max_hw = max_hw.max(ctor_hw);
 
         contract.memory_high_water = max_hw;
-    }
-}
-
-/// Collect all `MemRegion(id, size_words)` from an expression tree.
-fn collect_regions(expr: &RcExpr, regions: &mut BTreeMap<i64, i64>) {
-    match expr.as_ref() {
-        EvmExpr::MemRegion(id, size) => {
-            // If the same region ID appears multiple times (shared via Rc),
-            // verify the size is consistent.
-            regions
-                .entry(*id)
-                .and_modify(|existing_size| {
-                    debug_assert_eq!(
-                        *existing_size, *size,
-                        "MemRegion {id} has inconsistent sizes: {existing_size} vs {size}"
-                    );
-                })
-                .or_insert(*size);
-        }
-        // Recurse into all children
-        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
-            collect_regions(a, regions);
-            collect_regions(b, regions);
-        }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::VarStore(_, a) => {
-            collect_regions(a, regions);
-        }
-        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            collect_regions(a, regions);
-            collect_regions(b, regions);
-            collect_regions(c, regions);
-        }
-        EvmExpr::If(c, i, t, e) => {
-            collect_regions(c, regions);
-            collect_regions(i, regions);
-            collect_regions(t, regions);
-            collect_regions(e, regions);
-        }
-        EvmExpr::LetBind(_, init, body) => {
-            collect_regions(init, regions);
-            collect_regions(body, regions);
-        }
-        EvmExpr::Log(_, topics, d, s, st) => {
-            for t in topics {
-                collect_regions(t, regions);
-            }
-            collect_regions(d, regions);
-            collect_regions(s, regions);
-            collect_regions(st, regions);
-        }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            for x in [a, b, c, d, e, f, g] {
-                collect_regions(x, regions);
-            }
-        }
-        EvmExpr::Call(_, args) => {
-            for a in args {
-                collect_regions(a, regions);
-            }
-        }
-        EvmExpr::Function(_, _, _, body) => collect_regions(body, regions),
-        EvmExpr::EnvRead(_, s) => collect_regions(s, regions),
-        EvmExpr::EnvRead1(_, a, s) => {
-            collect_regions(a, regions);
-            collect_regions(s, regions);
-        }
-        EvmExpr::InlineAsm(inputs, ..) => {
-            for inp in inputs {
-                collect_regions(inp, regions);
-            }
-        }
-        // Leaf nodes — no children
-        EvmExpr::Const(..)
-        | EvmExpr::Arg(..)
-        | EvmExpr::Empty(..)
-        | EvmExpr::Var(_)
-        | EvmExpr::Drop(_)
-        | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => {}
     }
 }
 
@@ -352,5 +455,68 @@ mod tests {
         let (result, hw) = assign_memory_offsets(&expr);
         assert_eq!(hw, 0);
         assert_eq!(*result, *expr);
+    }
+
+    #[test]
+    fn test_exclusive_branches_share_offsets() {
+        let ctx = EvmContext::InFunction("test".to_owned());
+        let r0 = ast_helpers::mem_region(0, 2); // 64 bytes — then branch
+        let r1 = ast_helpers::mem_region(1, 3); // 96 bytes — else branch
+        let val = ast_helpers::const_int(1, ctx.clone());
+        let state = Rc::new(EvmExpr::Arg(
+            EvmType::Base(EvmBaseType::StateT),
+            ctx.clone(),
+        ));
+        let cond = ast_helpers::const_int(1, ctx.clone());
+        let inputs = Rc::new(EvmExpr::Empty(EvmType::Base(EvmBaseType::UnitT), ctx));
+
+        let then_br = ast_helpers::mstore(r0, Rc::clone(&val), Rc::clone(&state));
+        let else_br = ast_helpers::mstore(r1, val, state);
+        let if_expr = Rc::new(EvmExpr::If(cond, inputs, then_br, else_br));
+
+        let (result, hw) = assign_memory_offsets(&if_expr);
+        // Branches are exclusive: hw = max(64, 96) = 96, NOT 64+96=160
+        assert_eq!(hw, 96);
+
+        // Both regions should start at offset 0
+        if let EvmExpr::If(_, _, then_b, else_b) = result.as_ref() {
+            if let EvmExpr::Top(_, off, _, _) = then_b.as_ref() {
+                assert!(
+                    matches!(off.as_ref(), EvmExpr::Const(EvmConstant::SmallInt(0), _, _)),
+                    "then branch region should be at offset 0"
+                );
+            }
+            if let EvmExpr::Top(_, off, _, _) = else_b.as_ref() {
+                assert!(
+                    matches!(off.as_ref(), EvmExpr::Const(EvmConstant::SmallInt(0), _, _)),
+                    "else branch region should be at offset 0"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_sequential_before_exclusive() {
+        let ctx = EvmContext::InFunction("test".to_owned());
+        let r_shared = ast_helpers::mem_region(0, 1); // 32 bytes — before if
+        let r_then = ast_helpers::mem_region(1, 2); // 64 bytes — then branch
+        let r_else = ast_helpers::mem_region(2, 3); // 96 bytes — else branch
+        let val = ast_helpers::const_int(1, ctx.clone());
+        let state = Rc::new(EvmExpr::Arg(
+            EvmType::Base(EvmBaseType::StateT),
+            ctx.clone(),
+        ));
+        let cond = ast_helpers::const_int(1, ctx.clone());
+        let inputs = Rc::new(EvmExpr::Empty(EvmType::Base(EvmBaseType::UnitT), ctx));
+
+        let pre = ast_helpers::mstore(r_shared, Rc::clone(&val), Rc::clone(&state));
+        let then_br = ast_helpers::mstore(r_then, Rc::clone(&val), Rc::clone(&state));
+        let else_br = ast_helpers::mstore(r_else, val, state);
+        let if_expr = Rc::new(EvmExpr::If(cond, inputs, then_br, else_br));
+        let expr = ast_helpers::concat(pre, if_expr);
+
+        let (_result, hw) = assign_memory_offsets(&expr);
+        // r_shared=32 bytes, then branches max(64,96)=96 → total 32+96=128
+        assert_eq!(hw, 128);
     }
 }

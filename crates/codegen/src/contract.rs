@@ -142,7 +142,9 @@ fn generate_runtime_bytecode(
     } else {
         optimized
     };
-    let asm = Assembler::from_instructions(optimized);
+    let mut asm = Assembler::from_instructions(optimized);
+    asm.thread_jumps();
+    asm.eliminate_pre_halt_cleanup();
 
     Ok(asm.assemble())
 }
@@ -174,6 +176,16 @@ pub fn generate_contract_asm(
     if optimize_for == OptimizeFor::Size {
         runtime = crate::subroutine_extract::extract_subroutines(runtime);
     }
+    // Thread jumps and eliminate pre-halt cleanup on asm output
+    let mut rt_asm = Assembler::from_instructions(runtime);
+    rt_asm.thread_jumps();
+    rt_asm.eliminate_pre_halt_cleanup();
+    let runtime = rt_asm.take_instructions();
+
+    let mut ct_asm = Assembler::from_instructions(constructor);
+    ct_asm.thread_jumps();
+    ct_asm.eliminate_pre_halt_cleanup();
+    let constructor = ct_asm.take_instructions();
 
     Ok(crate::AsmOutput {
         constructor,

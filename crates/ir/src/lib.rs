@@ -153,6 +153,15 @@ pub fn lower_and_optimize(
         let t = std::time::Instant::now();
         storage_hoist::forward_stores_program(&mut ir_program);
         tracing::debug!("  forward_stores: {:?}", t.elapsed());
+
+        let t = std::time::Instant::now();
+        var_opt::tighten_drops_program(&mut ir_program);
+        tracing::debug!("  tighten_drops: {:?}", t.elapsed());
+
+        let t = std::time::Instant::now();
+        var_opt::dead_store_elim_program(&mut ir_program);
+        tracing::debug!("  dead_store_elim: {:?}", t.elapsed());
+
         tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
         return Ok(ir_program);
     }
@@ -291,6 +300,20 @@ pub fn lower_and_optimize(
     // Egglog's storage-opt rules only handle state-threaded SStore chains, not Concat-chained
     // SStores (which use Arg(StateT) as state). This pass handles the Concat case.
     storage_hoist::forward_stores_program(&mut result);
+
+    let t = std::time::Instant::now();
+    var_opt::tighten_drops_program(&mut result);
+    tracing::debug!("  tighten_drops: {:?}", t.elapsed());
+
+    // Eliminate dead stores (write-before-write with no intervening read)
+    let t = std::time::Instant::now();
+    var_opt::dead_store_elim_program(&mut result);
+    tracing::debug!("  dead_store_elim: {:?}", t.elapsed());
+
+    // Deduplicate CalldataLoad nodes (hoist repeated loads into LetBind vars)
+    let t = std::time::Instant::now();
+    var_opt::calldataload_cse_program(&mut result);
+    tracing::debug!("  calldataload_cse: {:?}", t.elapsed());
 
     tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
 
