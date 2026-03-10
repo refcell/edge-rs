@@ -39,6 +39,7 @@ pub mod var_opt;
 use std::rc::Rc;
 
 pub use costs::OptimizeFor;
+use schema::{EvmBaseType, EvmConstant, EvmType};
 pub use schema::{EvmContract, EvmExpr, EvmProgram, RcExpr};
 
 /// Errors that can occur during IR lowering or optimization.
@@ -220,6 +221,21 @@ pub fn lower_and_optimize(
 
         let mut optimized_runtime = sexp::sexp_to_expr(extracted_sexp)?;
 
+        // Check for compile-time-detectable constant overflows in narrow types.
+        // This catches overflow revealed by egglog const-folding (e.g. through
+        // inlined constants). The lowering-time check catches literal cases with
+        // source spans; this is the fallback for optimization-revealed cases.
+        let overflow_errors = check_const_overflow(&optimized_runtime);
+        if !overflow_errors.is_empty() {
+            let mut diag = edge_diagnostics::Diagnostic::error(
+                "arithmetic overflow detected after optimization",
+            );
+            for err in &overflow_errors {
+                diag = diag.with_note(err.clone());
+            }
+            return Err(IrError::Diagnostic(diag));
+        }
+
         // Post-egglog cleanup: simplify state params and remove dead code
         optimized_runtime = cleanup::cleanup_expr_pub(&optimized_runtime);
 
@@ -376,6 +392,139 @@ fn collect_call_names_rec(expr: &schema::RcExpr, names: &mut std::collections::H
             collect_call_names_rec(g, names);
         }
         EvmExpr::Function(_, _, _, body) => collect_call_names_rec(body, names),
+        _ => {}
+    }
+}
+
+/// Check for constant values that overflow their declared narrow type.
+///
+/// After egglog optimization + extraction, walk the IR tree and look for
+/// `Const(val, UIntT(N))` where `N < 256` and `val >= 2^N`. This detects
+/// compile-time-provable overflows like `250u8 + 250u8`.
+fn check_const_overflow(expr: &schema::RcExpr) -> Vec<String> {
+    let mut errors = Vec::new();
+    check_const_overflow_rec(expr, &mut errors);
+    errors
+}
+
+fn check_const_overflow_rec(expr: &schema::RcExpr, errors: &mut Vec<String>) {
+    match expr.as_ref() {
+        EvmExpr::Const(val, EvmType::Base(EvmBaseType::UIntT(width)), _) if *width < 256 => {
+            let max_val = if *width == 0 {
+                0u128
+            } else {
+                (1u128 << *width) - 1
+            };
+            let exceeds = match val {
+                EvmConstant::SmallInt(n) => {
+                    if *n < 0 {
+                        true // negative value in unsigned type
+                    } else {
+                        *n as u128 > max_val
+                    }
+                }
+                EvmConstant::LargeInt(hex) => {
+                    // LargeInt always exceeds narrow types (it's > i64::MAX)
+                    // unless the hex happens to be small. Parse and check.
+                    ruint::aliases::U256::from_str_radix(hex, 16)
+                        .map(|v| v > ruint::aliases::U256::from(max_val))
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+            if exceeds {
+                errors.push(format!(
+                    "constant value {} overflows u{} (max {})",
+                    match val {
+                        EvmConstant::SmallInt(n) => format!("{n}"),
+                        EvmConstant::LargeInt(hex) => format!("0x{hex}"),
+                        _ => "?".to_string(),
+                    },
+                    width,
+                    max_val
+                ));
+            }
+        }
+        EvmExpr::Const(val, EvmType::Base(EvmBaseType::IntT(width)), _) if *width < 256 => {
+            let half = if *width <= 1 {
+                1i128
+            } else {
+                1i128 << (*width - 1)
+            };
+            let min_val = -half;
+            let max_val = half - 1;
+            let exceeds = match val {
+                EvmConstant::SmallInt(n) => (*n as i128) < min_val || (*n as i128) > max_val,
+                _ => false,
+            };
+            if exceeds {
+                errors.push(format!(
+                    "constant value {} overflows i{} (range {}..={})",
+                    match val {
+                        EvmConstant::SmallInt(n) => format!("{n}"),
+                        _ => "?".to_string(),
+                    },
+                    width,
+                    min_val,
+                    max_val
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    // Recurse into children
+    match expr.as_ref() {
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
+            check_const_overflow_rec(a, errors);
+            check_const_overflow_rec(b, errors);
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::VarStore(_, a) | EvmExpr::Get(a, _) => {
+            check_const_overflow_rec(a, errors);
+        }
+        EvmExpr::If(c, i, t, e) => {
+            check_const_overflow_rec(c, errors);
+            check_const_overflow_rec(i, errors);
+            check_const_overflow_rec(t, errors);
+            check_const_overflow_rec(e, errors);
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            check_const_overflow_rec(init, errors);
+            check_const_overflow_rec(body, errors);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            check_const_overflow_rec(a, errors);
+            check_const_overflow_rec(b, errors);
+            check_const_overflow_rec(c, errors);
+        }
+        EvmExpr::Log(_, topics, d, s, st) => {
+            for t in topics {
+                check_const_overflow_rec(t, errors);
+            }
+            check_const_overflow_rec(d, errors);
+            check_const_overflow_rec(s, errors);
+            check_const_overflow_rec(st, errors);
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            check_const_overflow_rec(a, errors);
+            check_const_overflow_rec(b, errors);
+            check_const_overflow_rec(c, errors);
+            check_const_overflow_rec(d, errors);
+            check_const_overflow_rec(e, errors);
+            check_const_overflow_rec(f, errors);
+            check_const_overflow_rec(g, errors);
+        }
+        EvmExpr::EnvRead(_, s) => check_const_overflow_rec(s, errors),
+        EvmExpr::EnvRead1(_, a, s) => {
+            check_const_overflow_rec(a, errors);
+            check_const_overflow_rec(s, errors);
+        }
+        EvmExpr::Function(_, _, _, body) => check_const_overflow_rec(body, errors),
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                check_const_overflow_rec(a, errors);
+            }
+        }
         _ => {}
     }
 }

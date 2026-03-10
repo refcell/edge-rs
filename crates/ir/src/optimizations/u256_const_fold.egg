@@ -223,6 +223,44 @@
                  (Base (UIntT 256)) (InFunction "__opt__")))))
       :ruleset u256-const-fold)
 
+;; ---- Narrow-type-preserving constant folding ----
+;; When both operands are Const with the same narrow type UIntT(w) where
+;; w < 256, produce a result with UIntT(w) so that post-extraction overflow
+;; detection can catch compile-time-detectable overflows like 250u8 + 250u8.
+
+;; ADD (narrow type preserving)
+(rule ((= e (Bop (OpAdd) a b))
+       (= a (Const ca (Base (UIntT w)) ctxa))
+       (= b (Const cb (Base (UIntT w)) ctxb))
+       (< w 256)
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-add va vb)))
+                       (Base (UIntT w)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; SUB (narrow type preserving)
+(rule ((= e (Bop (OpSub) a b))
+       (= a (Const ca (Base (UIntT w)) ctxa))
+       (= b (Const cb (Base (UIntT w)) ctxb))
+       (< w 256)
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-sub va vb)))
+                       (Base (UIntT w)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
+;; MUL (narrow type preserving)
+(rule ((= e (Bop (OpMul) a b))
+       (= a (Const ca (Base (UIntT w)) ctxa))
+       (= b (Const cb (Base (UIntT w)) ctxb))
+       (< w 256)
+       (= va (const-u256-val a))
+       (= vb (const-u256-val b)))
+      ((union e (Const (LargeInt (u256-to-hex (u256-mul va vb)))
+                       (Base (UIntT w)) (InFunction "__opt__"))))
+      :ruleset u256-const-fold)
+
 ;; ---- Normalization: small LargeInt → SmallInt ----
 ;; When a LargeInt hex result fits in i64, convert back to SmallInt for
 ;; better extraction cost and compatibility with existing i64 rules.

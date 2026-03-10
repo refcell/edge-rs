@@ -22,6 +22,23 @@ pub struct Parser {
 }
 
 impl Parser {
+    /// Convert a token-level `PrimitiveType` to an AST-level `PrimitiveType`.
+    /// Returns `None` for types that don't have AST equivalents (e.g. Pointer).
+    const fn token_prim_to_ast_prim(
+        tok_prim: &edge_types::tokens::PrimitiveType,
+    ) -> Option<edge_ast::ty::PrimitiveType> {
+        use edge_types::tokens::PrimitiveType as TP;
+        match tok_prim {
+            TP::UInt(bits) => Some(edge_ast::ty::PrimitiveType::UInt(*bits)),
+            TP::Int(bits) => Some(edge_ast::ty::PrimitiveType::Int(*bits)),
+            TP::FixedBytes(bytes) => Some(edge_ast::ty::PrimitiveType::FixedBytes(*bytes)),
+            TP::Address => Some(edge_ast::ty::PrimitiveType::Address),
+            TP::Bool => Some(edge_ast::ty::PrimitiveType::Bool),
+            TP::Bit => Some(edge_ast::ty::PrimitiveType::Bit),
+            TP::Pointer(_) => None,
+        }
+    }
+
     /// Create a new parser from source code
     pub fn new(source: &str) -> ParseResult<Self> {
         let mut lexer = Lexer::new(source);
@@ -1646,7 +1663,7 @@ impl Parser {
 
                             expr = Expr::FieldAccess(Box::new(expr), field, span);
                         }
-                        TokenKind::Literal(lit_bytes) => {
+                        TokenKind::Literal(lit_bytes, _) => {
                             // Tuple field access: expr.0, expr.1, etc.
                             let mut value: u64 = 0;
                             for byte in lit_bytes {
@@ -1663,6 +1680,16 @@ impl Parser {
                         _ => {}
                     }
                 }
+                TokenKind::Keyword(Keyword::As) => {
+                    self.advance();
+                    let target_type = self.parse_type_sig()?;
+                    let span = Span {
+                        start: expr.span().start,
+                        end: self.tokens[self.cursor - 1].span.end,
+                        file: expr.span().file.clone(),
+                    };
+                    expr = Expr::Cast(Box::new(expr), target_type, span);
+                }
                 _ => break,
             }
         }
@@ -1676,12 +1703,14 @@ impl Parser {
 
         let kind = self.peek().kind.clone();
         match kind {
-            TokenKind::Literal(lit_bytes) => {
+            TokenKind::Literal(lit_bytes, suffix_ty) => {
                 let token = self.advance();
                 let mut bytes = [0u8; 32];
                 let len = lit_bytes.len().min(32);
                 bytes[32 - len..].copy_from_slice(&lit_bytes[lit_bytes.len() - len..]);
-                let lit = Lit::Int(bytes, None, token.span);
+                // Convert token-level PrimitiveType to AST-level PrimitiveType
+                let ast_ty = suffix_ty.as_ref().and_then(Self::token_prim_to_ast_prim);
+                let lit = Lit::Int(bytes, ast_ty, token.span);
                 Ok(Expr::Literal(Box::new(lit)))
             }
             TokenKind::StringLiteral(s) => {
@@ -2052,10 +2081,10 @@ impl Parser {
                         ops.push(AsmOp::Ident(name.clone(), tok.span));
                     }
                 }
-                TokenKind::Literal(_) => {
+                TokenKind::Literal(_, _) => {
                     self.advance();
                     let hex = match &tok.kind {
-                        TokenKind::Literal(bytes) => {
+                        TokenKind::Literal(bytes, _) => {
                             let mut val: u128 = 0;
                             for b in bytes {
                                 val = (val << 8) | (*b as u128);

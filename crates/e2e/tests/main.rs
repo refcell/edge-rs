@@ -54,5 +54,9 @@ mod utils_exec;
 #[path = "suites/warnings.rs"]
 mod warnings;
 
+#[path = "suites/int_widths_exec.rs"]
+mod int_widths_exec;
 #[path = "suites/large_int_literals.rs"]
 mod large_int_literals;
+#[path = "suites/signed_widths_exec.rs"]
+mod signed_widths_exec;

@@ -477,6 +477,7 @@ impl AstToEgglog {
         match expr {
             edge_ast::Expr::Literal(lit) => match lit.as_ref() {
                 edge_ast::Lit::Bool(_, _) => EvmType::Base(EvmBaseType::BoolT),
+                edge_ast::Lit::Int(_, Some(pt), _) => self.lower_primitive_type(pt),
                 _ => EvmType::Base(EvmBaseType::UIntT(256)),
             },
             edge_ast::Expr::Ident(ident) => {
@@ -487,6 +488,12 @@ impl AstToEgglog {
                 }
                 EvmType::Base(EvmBaseType::UIntT(256))
             }
+            edge_ast::Expr::Cast(_, target_type, _) => self.lower_type_sig(target_type),
+            edge_ast::Expr::Paren(inner, _) => self.infer_expr_type(inner),
+            edge_ast::Expr::At(name, _, _) => match name.name.as_str() {
+                "caller" | "origin" | "coinbase" | "address" => EvmType::Base(EvmBaseType::AddrT),
+                _ => EvmType::Base(EvmBaseType::UIntT(256)),
+            },
             _ => EvmType::Base(EvmBaseType::UIntT(256)),
         }
     }

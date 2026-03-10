@@ -53,8 +53,8 @@ pub enum TokenKind {
     DocComment(String),
     /// Whitespace
     Whitespace,
-    /// A numeric literal
-    Literal(B256),
+    /// A numeric literal with optional type suffix (e.g. `42u8`, `0xffi16`)
+    Literal(B256, Option<PrimitiveType>),
     /// A string literal
     StringLiteral(String),
     /// An Identifier
@@ -120,7 +120,7 @@ impl fmt::Display for TokenKind {
             TokenKind::DocComment(s) => return write!(f, "{s}"),
             TokenKind::Keyword(k) => return write!(f, "{k}"),
             TokenKind::Pointer(l) => return write!(f, "{l}"),
-            TokenKind::Literal(l) => {
+            TokenKind::Literal(l, _suffix) => {
                 let mut s = String::new();
                 for b in l.iter() {
                     let _ = write!(&mut s, "{b:02x}");

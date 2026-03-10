@@ -107,6 +107,9 @@ pub enum Keyword {
     /// Inline assembly block
     #[display("asm")]
     Asm,
+    /// Type cast operator
+    #[display("as")]
+    As,
 }
 
 impl Keyword {
@@ -148,6 +151,7 @@ impl Keyword {
             "super" => Some(Keyword::Super),
             "emit" => Some(Keyword::Emit),
             "asm" => Some(Keyword::Asm),
+            "as" => Some(Keyword::As),
             _ => None,
         }
     }
@@ -189,6 +193,7 @@ impl Keyword {
             Keyword::Super,
             Keyword::Emit,
             Keyword::Asm,
+            Keyword::As,
         ]
     }
 }

@@ -90,6 +90,9 @@ pub enum Expr {
     /// Inline assembly block: asm(inputs...) -> (outputs...) { opcodes... }
     /// Fields: inputs, output names ("_" for discarded), asm ops, span
     InlineAsm(Vec<Self>, Vec<Option<Ident>>, Vec<AsmOp>, Span),
+
+    /// Type cast: expr as Type
+    Cast(Box<Self>, crate::ty::TypeSig, Span),
 }
 
 impl Expr {
@@ -118,6 +121,7 @@ impl Expr {
             Self::At(_, _, span) => span.clone(),
             Self::Assign(_, _, span) => span.clone(),
             Self::InlineAsm(_, _, _, span) => span.clone(),
+            Self::Cast(_, _, span) => span.clone(),
         }
     }
 }

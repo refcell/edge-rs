@@ -201,13 +201,13 @@ fn lex_string_literal_with_escape() {
 #[test]
 fn lex_hex_literal() {
     let tok = Lexer::new("0xff").next().unwrap().unwrap();
-    assert!(matches!(tok.kind, TokenKind::Literal(_)));
+    assert!(matches!(tok.kind, TokenKind::Literal(_, _)));
 }
 
 #[test]
 fn lex_hex_literal_single_digit() {
     let tok = Lexer::new("0x01").next().unwrap().unwrap();
-    assert!(matches!(tok.kind, TokenKind::Literal(_)));
+    assert!(matches!(tok.kind, TokenKind::Literal(_, _)));
 }
 
 // ─── Decimal Literals ───────────────────────────────────────────────
@@ -215,11 +215,11 @@ fn lex_hex_literal_single_digit() {
 #[test]
 fn lex_decimal_literal() {
     let tok = Lexer::new("42").next().unwrap().unwrap();
-    assert!(matches!(tok.kind, TokenKind::Literal(_)));
+    assert!(matches!(tok.kind, TokenKind::Literal(_, _)));
     // Decimal 42 = 0x2a
     assert_eq!(
         tok.kind,
-        TokenKind::Literal(decimal_to_bytes32("42").into())
+        TokenKind::Literal(decimal_to_bytes32("42").into(), None)
     );
 }
 
@@ -392,8 +392,8 @@ fn lex_assignment_operator() {
 fn lex_bool_literals() {
     // true and false are syntax sugar for literals
     let kinds = lex_non_ws("true");
-    assert!(matches!(kinds[0], TokenKind::Literal(_)));
+    assert!(matches!(kinds[0], TokenKind::Literal(_, _)));
 
     let kinds = lex_non_ws("false");
-    assert!(matches!(kinds[0], TokenKind::Literal(_)));
+    assert!(matches!(kinds[0], TokenKind::Literal(_, _)));
 }

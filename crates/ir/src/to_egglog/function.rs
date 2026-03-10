@@ -81,18 +81,21 @@ impl AstToEgglog {
                     ast_helpers::const_int(calldata_offset as i64, self.current_ctx.clone()),
                     Rc::clone(&self.current_state),
                 ));
-                // Mask address-typed params to 20 bytes to clean dirty upper bits
-                let param_val = if ty == EvmType::Base(EvmBaseType::AddrT) {
-                    Rc::new(EvmExpr::Bop(
-                        EvmBinaryOp::And,
-                        raw_val,
-                        ast_helpers::const_bigint(
-                            "ffffffffffffffffffffffffffffffffffffffff".to_owned(),
-                            self.current_ctx.clone(),
-                        ),
-                    ))
-                } else {
-                    raw_val
+                // Mask/sign-extend sub-256-bit params to clean dirty upper bits
+                let param_val = match &ty {
+                    EvmType::Base(EvmBaseType::AddrT) => {
+                        ast_helpers::mask_to_width(raw_val, 160, self.current_ctx.clone())
+                    }
+                    EvmType::Base(EvmBaseType::UIntT(bits)) if *bits < 256 => {
+                        ast_helpers::mask_to_width(raw_val, *bits, self.current_ctx.clone())
+                    }
+                    EvmType::Base(EvmBaseType::IntT(bits)) if *bits < 256 => {
+                        ast_helpers::sign_extend(raw_val, *bits, self.current_ctx.clone())
+                    }
+                    EvmType::Base(EvmBaseType::BoolT) => {
+                        ast_helpers::mask_to_width(raw_val, 8, self.current_ctx.clone())
+                    }
+                    _ => raw_val,
                 };
                 let binding = VarBinding {
                     value: param_val,
