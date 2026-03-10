@@ -158,6 +158,10 @@ pub fn lower_and_optimize(
         var_opt::tighten_drops_program(&mut ir_program);
         tracing::debug!("  tighten_drops: {:?}", t.elapsed());
 
+        let t = std::time::Instant::now();
+        var_opt::dead_store_elim_program(&mut ir_program);
+        tracing::debug!("  dead_store_elim: {:?}", t.elapsed());
+
         tracing::debug!("  total IR pipeline: {:?}", pipeline_start.elapsed());
         return Ok(ir_program);
     }

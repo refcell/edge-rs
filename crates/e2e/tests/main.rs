@@ -17,10 +17,10 @@ mod examples;
 mod expressions;
 #[path = "suites/features_exec.rs"]
 mod features_exec;
-#[path = "suites/full_math_exec.rs"]
-mod full_math_exec;
 #[path = "suites/finance_exec.rs"]
 mod finance_exec;
+#[path = "suites/full_math_exec.rs"]
+mod full_math_exec;
 #[path = "suites/generics_exec.rs"]
 mod generics_exec;
 #[path = "suites/generics_negative.rs"]

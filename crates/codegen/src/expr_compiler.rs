@@ -632,7 +632,14 @@ impl<'a> ExprCompiler<'a> {
         } else {
             // Memory mode: compile value, push offset, MSTORE
             self.compile_expr(value);
-            let offset = self.let_bindings[name];
+            let offset = *self.let_bindings.get(name).unwrap_or_else(|| {
+                panic!(
+                    "VarStore: variable {name:?} not found in stack_vars or let_bindings. \
+                     stack_vars={:?}, let_bindings={:?}",
+                    self.stack_vars.keys().collect::<Vec<_>>(),
+                    self.let_bindings.keys().collect::<Vec<_>>()
+                )
+            });
             self.asm.emit_push_usize(offset);
             self.stack_depth += 1;
             self.asm.emit_op(Opcode::MStore);

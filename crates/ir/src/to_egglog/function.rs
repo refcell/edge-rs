@@ -427,7 +427,10 @@ impl AstToEgglog {
                 // return value doesn't reference this variable.
                 let drop_node = ast_helpers::drop_var(var_name.clone());
                 if let EvmExpr::Concat(prefix, ret_val) = result.as_ref() {
-                    if !references_any_var(ret_val, &std::collections::HashSet::from([var_name.as_str()])) {
+                    if !references_any_var(
+                        ret_val,
+                        &std::collections::HashSet::from([var_name.as_str()]),
+                    ) {
                         // Safe: return value doesn't use this var.
                         // Insert Drop between prefix and return value.
                         result = ast_helpers::concat(
@@ -437,7 +440,10 @@ impl AstToEgglog {
                     }
                     // else: return value references the var — skip Drop,
                     // let compile_let_bind handle cleanup.
-                } else if !references_any_var(&result, &std::collections::HashSet::from([var_name.as_str()])) {
+                } else if !references_any_var(
+                    &result,
+                    &std::collections::HashSet::from([var_name.as_str()]),
+                ) {
                     // Single expression that doesn't reference the var:
                     // prepend Drop before it.
                     result = ast_helpers::concat(drop_node, result);

@@ -1898,9 +1898,25 @@ fn rename_locals_rec(
 /// Eliminate dead stores across the whole program.
 pub fn dead_store_elim_program(program: &mut crate::schema::EvmProgram) {
     for contract in &mut program.contracts {
-        contract.runtime = dead_store_elim_rec(&contract.runtime);
+        // Run DSE in a fixed-point loop: each iteration can forward one "layer" of
+        // variables through nested LetBinds. Once variable `a` is forwarded (its
+        // VarStore removed), the next iteration sees `a` as non-mutable, allowing
+        // variables that depend on `a` to be forwarded too.
+        loop {
+            let new = dead_store_elim_rec(&contract.runtime);
+            if Rc::ptr_eq(&new, &contract.runtime) {
+                break;
+            }
+            contract.runtime = new;
+        }
         for func in &mut contract.internal_functions {
-            *func = dead_store_elim_rec(func);
+            loop {
+                let new = dead_store_elim_rec(func);
+                if Rc::ptr_eq(&new, func) {
+                    break;
+                }
+                *func = new;
+            }
         }
     }
 }
@@ -1951,6 +1967,184 @@ fn reads_var(expr: &RcExpr, name: &str) -> bool {
     }
 }
 
+/// Walk through a nested `LetBind` chain to find and forward a `VarStore` for `name`.
+///
+/// When lowering creates `LetBind("a", 0, LetBind("b", 0, ... Concat(VarStore("a", val), ...)))`,
+/// the normal flat DSE can't see the `VarStore` for "a" because it's buried in nested bodies.
+/// This function walks through the chain, checking that:
+/// 1. No nested `LetBind` init reads `name`
+/// 2. No statement before the first `VarStore(name)` reads `name`
+/// 3. The forwarded value doesn't reference any sibling `LetBind` variable names
+///    (those variables have init=0 and get their real values from `VarStore`s in the
+///    Concat chain, which haven't executed when the outer `LetBind` init is evaluated)
+fn forward_through_nested_letbinds(
+    name: &str,
+    current_init: &RcExpr,
+    body: &RcExpr,
+) -> Option<RcExpr> {
+    // Walk through nested LetBinds, collecting sibling variable names
+    let mut sibling_names: HashSet<&str> = HashSet::new();
+    let mut innermost = body;
+    // Walk through nested LetBinds, collecting sibling variable names
+    loop {
+        match innermost.as_ref() {
+            EvmExpr::LetBind(inner_name, inner_init, inner_body) => {
+                if reads_var(inner_init, name) {
+                    return None;
+                }
+                if inner_name == name {
+                    return None;
+                }
+                sibling_names.insert(inner_name.as_str());
+                innermost = inner_body;
+            }
+            _ => break,
+        }
+    }
+    let depth = sibling_names.len();
+
+    if depth == 0 {
+        return None;
+    }
+
+    // Flatten the innermost body and scan for VarStore(name)
+    let mut stmts = Vec::new();
+    flatten_concat(innermost, &mut stmts);
+
+    // Collect ALL variable names that are modified by VarStores in the Concat chain
+    // (both at top level and inside If branches). Any variable with a VarStore has
+    // a mutable value — reading it in a LetBind init (which runs before the chain)
+    // would get the stale init value, not the updated one.
+    let mut mutable_vars: HashSet<&str> = HashSet::new();
+    for stmt in &stmts {
+        collect_varstore_names(stmt, &mut mutable_vars);
+    }
+    // Also include sibling LetBind names — their inits are typically 0 placeholders
+    mutable_vars.extend(sibling_names.iter());
+
+    let mut read_before = false;
+    for (idx, stmt) in stmts.iter().enumerate() {
+        if let EvmExpr::VarStore(n, val) = stmt.as_ref() {
+            if n == name {
+                if read_before {
+                    return None;
+                }
+                if !is_pure(current_init) {
+                    return None;
+                }
+                // The forwarded value must not reference any mutable variable,
+                // because those vars may have different values at LetBind init time
+                // vs VarStore execution time.
+                if references_any_in_set(val, &mutable_vars) {
+                    return None;
+                }
+                let forwarded = Rc::clone(val);
+                let ctx = EvmContext::InFunction("__opt__".to_string());
+                let mut new_stmts = stmts;
+                new_stmts[idx] = Rc::new(EvmExpr::Empty(
+                    EvmType::Base(crate::schema::EvmBaseType::UnitT),
+                    ctx,
+                ));
+                let new_innermost = rebuild_concat(&new_stmts);
+                let rebuilt = rebuild_nested_letbinds(body, depth, &new_innermost);
+                return Some(Rc::new(EvmExpr::LetBind(
+                    name.to_owned(),
+                    forwarded,
+                    rebuilt,
+                )));
+            }
+        }
+        if reads_var(stmt, name) {
+            read_before = true;
+        }
+    }
+    None
+}
+
+/// Collect all variable names that are targets of `VarStore` nodes in an expression tree.
+fn collect_varstore_names<'a>(expr: &'a RcExpr, names: &mut HashSet<&'a str>) {
+    match expr.as_ref() {
+        EvmExpr::VarStore(n, val) => {
+            names.insert(n.as_str());
+            collect_varstore_names(val, names);
+        }
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+            collect_varstore_names(a, names);
+            collect_varstore_names(b, names);
+        }
+        EvmExpr::If(c, i, t, e) => {
+            collect_varstore_names(c, names);
+            collect_varstore_names(i, names);
+            collect_varstore_names(t, names);
+            collect_varstore_names(e, names);
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            collect_varstore_names(init, names);
+            collect_varstore_names(body, names);
+        }
+        EvmExpr::DoWhile(a, b) => {
+            collect_varstore_names(a, names);
+            collect_varstore_names(b, names);
+        }
+        _ => {}
+    }
+}
+
+/// Check if an expression references any variable name in the given set.
+fn references_any_in_set(expr: &RcExpr, names: &HashSet<&str>) -> bool {
+    match expr.as_ref() {
+        EvmExpr::Var(n) => names.contains(n.as_str()),
+        EvmExpr::VarStore(_, val) => references_any_in_set(val, names),
+        EvmExpr::Drop(_) => false,
+        EvmExpr::Const(..) | EvmExpr::Arg(..) | EvmExpr::Selector(..) | EvmExpr::Empty(..) => false,
+        EvmExpr::LetBind(_, init, body) => {
+            references_any_in_set(init, names) || references_any_in_set(body, names)
+        }
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
+            references_any_in_set(a, names) || references_any_in_set(b, names)
+        }
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_in_set(a, names),
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            references_any_in_set(a, names)
+                || references_any_in_set(b, names)
+                || references_any_in_set(c, names)
+        }
+        EvmExpr::If(c, i, t, e) => {
+            references_any_in_set(c, names)
+                || references_any_in_set(i, names)
+                || references_any_in_set(t, names)
+                || references_any_in_set(e, names)
+        }
+        EvmExpr::DoWhile(a, b) => {
+            references_any_in_set(a, names) || references_any_in_set(b, names)
+        }
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            inputs.iter().any(|inp| references_any_in_set(inp, names))
+        }
+        EvmExpr::Call(_, args) => args.iter().any(|a| references_any_in_set(a, names)),
+        EvmExpr::Log(_, topics, doff, dsz, _) => {
+            topics.iter().any(|t| references_any_in_set(t, names))
+                || references_any_in_set(doff, names)
+                || references_any_in_set(dsz, names)
+        }
+        _ => false,
+    }
+}
+
+/// Rebuild a nested `LetBind` chain, replacing the innermost body.
+fn rebuild_nested_letbinds(body: &RcExpr, depth: usize, new_innermost: &RcExpr) -> RcExpr {
+    if depth == 0 {
+        return Rc::clone(new_innermost);
+    }
+    match body.as_ref() {
+        EvmExpr::LetBind(n, init, inner) => {
+            let rebuilt_inner = rebuild_nested_letbinds(inner, depth - 1, new_innermost);
+            Rc::new(EvmExpr::LetBind(n.clone(), Rc::clone(init), rebuilt_inner))
+        }
+        _ => Rc::clone(new_innermost), // shouldn't happen
+    }
+}
+
 fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
@@ -1960,6 +2154,20 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             // Flatten body into statement list
             let mut stmts = Vec::new();
             flatten_concat(&new_body, &mut stmts);
+
+            // Collect all variable names modified by VarStores in the body (excluding
+            // the current variable). If the forwarded value references any of these,
+            // it would read stale init values when moved to the LetBind init position.
+            let body_mutable_owned: HashSet<String> = {
+                let mut vars: HashSet<&str> = HashSet::new();
+                for stmt in &stmts {
+                    collect_varstore_names(stmt, &mut vars);
+                }
+                vars.remove(name.as_str());
+                vars.into_iter().map(String::from).collect()
+            };
+            let body_mutable_vars: HashSet<&str> =
+                body_mutable_owned.iter().map(|s| s.as_str()).collect();
 
             // Scan for dead stores: VarStore(name, val) where name hasn't been read
             // since the LetBind init (or previous VarStore to name).
@@ -1988,6 +2196,7 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
                     if !read_since_write
                         && is_pure(&forwarded_init)
                         && (val_is_pure || is_pure(&forwarded_init))
+                        && !references_any_in_set(&val, &body_mutable_vars)
                     {
                         // Dead store: forward new value into LetBind init,
                         // replace VarStore with Empty.
@@ -2007,6 +2216,18 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             if changed {
                 let new_body = rebuild_concat(&stmts);
                 Rc::new(EvmExpr::LetBind(name.clone(), forwarded_init, new_body))
+            } else if is_pure(&new_init) {
+                // Try to look through nested LetBind chains for VarStores of `name`.
+                // Pattern: LetBind("a", 0, LetBind("b", 0, LetBind("c", 0,
+                //   Concat(VarStore("a", val), ...))))
+                // The VarStore for "a" is in the innermost body, invisible to flat scan.
+                if let Some(result) = forward_through_nested_letbinds(name, &new_init, &new_body) {
+                    result
+                } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                    Rc::clone(expr)
+                } else {
+                    Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
+                }
             } else if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
                 Rc::clone(expr)
             } else {
@@ -2054,6 +2275,62 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
                 out_ty.clone(),
                 nb,
             ))
+        }
+        EvmExpr::VarStore(name, val) => {
+            let nv = dead_store_elim_rec(val);
+            if Rc::ptr_eq(&nv, val) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::VarStore(name.clone(), nv))
+        }
+        EvmExpr::Bop(op, a, b) => {
+            let na = dead_store_elim_rec(a);
+            let nb = dead_store_elim_rec(b);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Bop(*op, na, nb))
+        }
+        EvmExpr::Uop(op, a) => {
+            let na = dead_store_elim_rec(a);
+            if Rc::ptr_eq(&na, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Uop(*op, na))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let na = dead_store_elim_rec(a);
+            let nb = dead_store_elim_rec(b);
+            let nc = dead_store_elim_rec(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Top(*op, na, nb, nc))
+        }
+        EvmExpr::Get(a, idx) => {
+            let na = dead_store_elim_rec(a);
+            if Rc::ptr_eq(&na, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Get(na, *idx))
+        }
+        EvmExpr::ReturnOp(a, b, c) => {
+            let na = dead_store_elim_rec(a);
+            let nb = dead_store_elim_rec(b);
+            let nc = dead_store_elim_rec(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::ReturnOp(na, nb, nc))
+        }
+        EvmExpr::Revert(a, b, c) => {
+            let na = dead_store_elim_rec(a);
+            let nb = dead_store_elim_rec(b);
+            let nc = dead_store_elim_rec(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Revert(na, nb, nc))
         }
         _ => Rc::clone(expr),
     }
