@@ -274,17 +274,10 @@ impl AstToEgglog {
                 }
 
                 // Check compiler-provided stateful methods (derive_slot, sload, sstore)
+                if let Some(result) =
+                    self.try_compiler_stateful_dispatch(receiver, method_name, args)?
                 {
-                    let recv_ir = self.lower_expr(receiver)?;
-                    let args_ir: Vec<RcExpr> = args
-                        .iter()
-                        .map(|a| self.lower_expr(a))
-                        .collect::<Result<_, _>>()?;
-                    if let Some(result) =
-                        self.compiler_provided_stateful_method(method_name, Some(recv_ir), &args_ir)
-                    {
-                        return Ok(result);
-                    }
+                    return Ok(result);
                 }
             }
 
@@ -351,17 +344,10 @@ impl AstToEgglog {
             }
 
             // Also check stateful methods for unknown receiver
+            if let Some(result) =
+                self.try_compiler_stateful_dispatch(receiver, method_name, args)?
             {
-                let recv_ir = self.lower_expr(receiver)?;
-                let args_ir: Vec<RcExpr> = args
-                    .iter()
-                    .map(|a| self.lower_expr(a))
-                    .collect::<Result<_, _>>()?;
-                if let Some(result) =
-                    self.compiler_provided_stateful_method(method_name, Some(recv_ir), &args_ir)
-                {
-                    return Ok(result);
-                }
+                return Ok(result);
             }
         }
 
@@ -619,22 +605,42 @@ impl AstToEgglog {
     }
 
     /// Infer the type of a receiver expression (best-effort).
-    pub(crate) fn infer_receiver_type(&self, expr: &edge_ast::Expr) -> Option<String> {
-        match expr {
-            edge_ast::Expr::Ident(ident) => {
-                for scope in self.scopes.iter().rev() {
-                    if let Some(binding) = scope.bindings.get(&ident.name) {
-                        // Composite type (struct/union/array) takes priority
-                        if let Some(ref ct) = binding.composite_type {
-                            return Some(ct.clone());
-                        }
-                        // Fall back to primitive type name from EvmType
-                        let result = Self::evm_type_to_name(&binding._ty);
-                        return result;
+    /// Look up the scope binding for an expression (Ident or self.field).
+    /// Returns the variable name and binding reference if found.
+    fn lookup_binding_for_expr<'a>(&'a self, expr: &edge_ast::Expr) -> Option<&'a super::VarBinding> {
+        let var_name = match expr {
+            edge_ast::Expr::Ident(ident) => &ident.name,
+            edge_ast::Expr::FieldAccess(obj, field, _) => {
+                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
+                    if ident.name == "self" {
+                        &field.name
+                    } else {
+                        return None;
                     }
+                } else {
+                    return None;
                 }
-                None
             }
+            _ => return None,
+        };
+        for scope in self.scopes.iter().rev() {
+            if let Some(binding) = scope.bindings.get(var_name) {
+                return Some(binding);
+            }
+        }
+        None
+    }
+
+    pub(crate) fn infer_receiver_type(&self, expr: &edge_ast::Expr) -> Option<String> {
+        // Try direct binding lookup first
+        if let Some(binding) = self.lookup_binding_for_expr(expr) {
+            if let Some(ref ct) = binding.composite_type {
+                return Some(ct.clone());
+            }
+            return Self::evm_type_to_name(&binding._ty);
+        }
+
+        match expr {
             edge_ast::Expr::StructInstantiation(_, type_name, _, _) => Some(type_name.name.clone()),
             edge_ast::Expr::Literal(lit) => match lit.as_ref() {
                 edge_ast::Lit::Bool(_, _) => Some("bool".to_string()),
@@ -644,30 +650,12 @@ impl AstToEgglog {
                 edge_ast::Lit::Int(_, None, _) => Some("u256".to_string()),
                 _ => None,
             },
-            // FieldAccess on self: `self.field` — look up the field binding
-            edge_ast::Expr::FieldAccess(obj, field, _) => {
-                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
-                    if ident.name == "self" {
-                        // Look up the field in scope
-                        for scope in self.scopes.iter().rev() {
-                            if let Some(binding) = scope.bindings.get(&field.name) {
-                                if let Some(ref ct) = binding.composite_type {
-                                    return Some(ct.clone());
-                                }
-                                return Self::evm_type_to_name(&binding._ty);
-                            }
-                        }
-                    }
-                }
-                None
-            }
             // ArrayIndex: base[index] — if base is a Map, the result type is the value type (V)
             edge_ast::Expr::ArrayIndex(base, _, _, _) => {
                 let base_type = self.infer_receiver_type(base);
                 let base_args = self.infer_receiver_type_args(base);
                 if let Some(ref bt) = base_type {
                     if bt.starts_with("Map") && base_args.len() == 2 {
-                        // V is the second type arg — use mangled name
                         return Some(Self::type_sig_mangle(&base_args[1]));
                     }
                 }
@@ -679,27 +667,11 @@ impl AstToEgglog {
 
     /// Get the concrete type arguments for a receiver's generic composite type.
     pub(crate) fn infer_receiver_type_args(&self, expr: &edge_ast::Expr) -> Vec<edge_ast::ty::TypeSig> {
+        if let Some(binding) = self.lookup_binding_for_expr(expr) {
+            return binding.composite_type_args.clone();
+        }
+
         match expr {
-            edge_ast::Expr::Ident(ident) => {
-                for scope in self.scopes.iter().rev() {
-                    if let Some(binding) = scope.bindings.get(&ident.name) {
-                        return binding.composite_type_args.clone();
-                    }
-                }
-                Vec::new()
-            }
-            edge_ast::Expr::FieldAccess(obj, field, _) => {
-                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
-                    if ident.name == "self" {
-                        for scope in self.scopes.iter().rev() {
-                            if let Some(binding) = scope.bindings.get(&field.name) {
-                                return binding.composite_type_args.clone();
-                            }
-                        }
-                    }
-                }
-                Vec::new()
-            }
             // ArrayIndex: base[index] — if base is a Map, the result's type args come from V
             edge_ast::Expr::ArrayIndex(base, _, _, _) => {
                 let base_args = self.infer_receiver_type_args(base);
@@ -806,6 +778,22 @@ impl AstToEgglog {
 
     /// Compiler-provided complex trait methods for primitive types.
     /// Unlike `compiler_provided_method` (simple binary ops), these produce
+    /// Lower receiver + args and try compiler-provided stateful method dispatch.
+    /// Used for `.derive_slot()`, `.sload()`, `.sstore()` on primitives.
+    fn try_compiler_stateful_dispatch(
+        &mut self,
+        receiver: &edge_ast::Expr,
+        method_name: &str,
+        args: &[edge_ast::Expr],
+    ) -> Result<Option<RcExpr>, IrError> {
+        let recv_ir = self.lower_expr(receiver)?;
+        let args_ir: Vec<RcExpr> = args
+            .iter()
+            .map(|a| self.lower_expr(a))
+            .collect::<Result<_, _>>()?;
+        Ok(self.compiler_provided_stateful_method(method_name, Some(recv_ir), &args_ir))
+    }
+
     /// full IR expression trees with state threading.
     ///
     /// Returns `Some(ir_expr)` if the method was handled, `None` otherwise.

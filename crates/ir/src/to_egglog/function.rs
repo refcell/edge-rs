@@ -75,9 +75,8 @@ impl AstToEgglog {
                     .bindings
                     .insert(ident.name.clone(), binding);
                 calldata_offset += n * 32;
-            } else if let Some(struct_info) = self.resolve_struct_param_type(type_sig) {
+            } else if let Some((struct_name, n_fields)) = self.resolve_struct_param_type(type_sig) {
                 // Struct parameter: allocate memory and copy fields from calldata
-                let n_fields = struct_info.fields.len();
                 let base_ir = self.alloc_region(n_fields);
 
                 // Copy each field from calldata to memory
@@ -93,7 +92,7 @@ impl AstToEgglog {
                     storage_slot: None,
                     _ty: ty,
                     let_bind_name: None,
-                    composite_type: Some(struct_info.name),
+                    composite_type: Some(struct_name),
                     composite_base: Some(base_ir),
                     composite_type_args: Vec::new(),
                 };
@@ -608,11 +607,11 @@ impl AstToEgglog {
     }
 
     /// Check if a parameter type sig resolves to a known struct type.
-    /// Returns (struct_name, field_count) if so.
+    /// Returns `(struct_name, field_count)` if so.
     pub(crate) fn resolve_struct_param_type(
         &self,
         type_sig: &edge_ast::ty::TypeSig,
-    ) -> Option<StructParamInfo> {
+    ) -> Option<(String, usize)> {
         let resolved = self.resolve_type_alias(type_sig);
         let name = match resolved {
             edge_ast::ty::TypeSig::Named(ident, _) => &ident.name,
@@ -621,28 +620,16 @@ impl AstToEgglog {
 
         // Direct lookup
         if let Some(info) = self.struct_types.get(name.as_str()) {
-            return Some(StructParamInfo {
-                name: name.clone(),
-                fields: info.fields.clone(),
-            });
+            return Some((name.clone(), info.fields.len()));
         }
 
         // Try resolving through type_param_subst (for generic params like V → CustomSStore)
         if let Some(resolved_name) = self.type_param_subst.get(name.as_str()) {
             if let Some(info) = self.struct_types.get(resolved_name.as_str()) {
-                return Some(StructParamInfo {
-                    name: resolved_name.clone(),
-                    fields: info.fields.clone(),
-                });
+                return Some((resolved_name.clone(), info.fields.len()));
             }
         }
 
         None
     }
-}
-
-/// Info about a struct-typed function parameter.
-pub(crate) struct StructParamInfo {
-    pub name: String,
-    pub fields: Vec<(String, EvmType)>,
 }
