@@ -129,7 +129,28 @@ impl<'a> Lexer<'a> {
                 span.clone(),
             )
         })?;
-        let kind = TokenKind::Literal(literal);
+
+        // Check for optional type suffix (e.g. 0xffu8, 0x100i16)
+        let saved_pos = self.position;
+        if let Some(ch) = self.peek() {
+            if ch.is_ascii_alphabetic() && !ch.is_ascii_hexdigit() {
+                let (suffix_word, _, end_pos) = self.eat_while(None, |c| c.is_ascii_alphanumeric());
+                if let Some(ty) = Self::parse_evm_type(&suffix_word) {
+                    return Ok(Token {
+                        kind: TokenKind::Literal(literal, Some(ty)),
+                        span: Span {
+                            start: span.start,
+                            end: end_pos as usize,
+                            file: None,
+                        },
+                    });
+                } else {
+                    self.position = saved_pos;
+                }
+            }
+        }
+
+        let kind = TokenKind::Literal(literal, None);
         Ok(Token { kind, span })
     }
 
@@ -208,8 +229,8 @@ impl<'a> Lexer<'a> {
 
         if !suffix_word.is_empty() {
             // We have a potential type suffix
-            if Self::parse_evm_type(&suffix_word).is_some() {
-                // Valid type suffix, consume it
+            if let Some(suffix_ty) = Self::parse_evm_type(&suffix_word) {
+                // Valid type suffix, consume it and carry the type info
                 let span = Span {
                     start: start as usize,
                     end: suffix_end as usize,
@@ -217,7 +238,7 @@ impl<'a> Lexer<'a> {
                 };
                 let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
                 return Ok(Token {
-                    kind: TokenKind::Literal(literal.into()),
+                    kind: TokenKind::Literal(literal.into(), Some(suffix_ty)),
                     span,
                 });
             } else {
@@ -233,7 +254,7 @@ impl<'a> Lexer<'a> {
         };
         let literal = decimal_to_bytes32(integer_str.replace('_', "").as_ref());
         Ok(Token {
-            kind: TokenKind::Literal(literal.into()),
+            kind: TokenKind::Literal(literal.into(), None),
             span,
         })
     }
@@ -249,11 +270,15 @@ impl<'a> Lexer<'a> {
         let (suffix_word, _, suffix_end) =
             self.eat_while(None, |c| c.is_alphanumeric() || c == '_');
 
-        let end_pos = if !suffix_word.is_empty() && Self::parse_evm_type(&suffix_word).is_some() {
-            suffix_end
+        let (end_pos, suffix_ty) = if !suffix_word.is_empty() {
+            if let Some(ty) = Self::parse_evm_type(&suffix_word) {
+                (suffix_end, Some(ty))
+            } else {
+                self.position = suffix_start;
+                (end, None)
+            }
         } else {
-            self.position = suffix_start;
-            end
+            (end, None)
         };
 
         let span = Span {
@@ -268,7 +293,7 @@ impl<'a> Lexer<'a> {
             )
         })?;
         Ok(Token {
-            kind: TokenKind::Literal(literal),
+            kind: TokenKind::Literal(literal, suffix_ty),
             span,
         })
     }
@@ -488,6 +513,7 @@ impl<'a> Lexer<'a> {
                     found_kind = Some(TokenKind::Literal(
                         str_to_bytes32(if word.as_str() == "true" { "1" } else { "0" })
                             .expect("single hex digit is always valid"),
+                        None,
                     ));
                     self.eat_while(None, |c| c.is_alphanumeric());
                 }

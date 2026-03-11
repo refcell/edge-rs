@@ -93,6 +93,8 @@ impl Sort for U256Sort {
         add_primitives!(eg, "u256-gt"      = |a: W, b: W| -> Opt { (a.0 > b.0).then_some(()) });
         add_primitives!(eg, "u256-eq"      = |a: W, b: W| -> Opt { (a.0 == b.0).then_some(()) });
         add_primitives!(eg, "u256-ne"      = |a: W, b: W| -> Opt { (a.0 != b.0).then_some(()) });
+        add_primitives!(eg, "u256-le"      = |a: W, b: W| -> Opt { (a.0 <= b.0).then_some(()) });
+        add_primitives!(eg, "u256-ge"      = |a: W, b: W| -> Opt { (a.0 >= b.0).then_some(()) });
         add_primitives!(eg, "u256-is-zero" = |a: W| -> Opt { a.0.is_zero().then_some(()) });
         add_primitives!(eg, "u256-nonzero" = |a: W| -> Opt { (!a.0.is_zero()).then_some(()) });
 

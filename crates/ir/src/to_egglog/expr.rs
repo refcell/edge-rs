@@ -12,6 +12,89 @@ use crate::{
     IrError,
 };
 
+/// Check if an expression is an untyped (unsuffixed) literal.
+/// Unsuffixed int literals and bool literals are considered untyped and
+/// will adopt the type of the other operand in a binary expression.
+fn is_untyped_literal(expr: &edge_ast::Expr) -> bool {
+    match expr {
+        edge_ast::Expr::Literal(lit) => match lit.as_ref() {
+            // no suffix
+            edge_ast::Lit::Int(_, None, _) | edge_ast::Lit::Bool(_, _) => true,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Format an `EvmBaseType` as a user-facing type name.
+fn fmt_base_type(bt: &EvmBaseType) -> String {
+    match bt {
+        EvmBaseType::UIntT(n) => format!("u{n}"),
+        EvmBaseType::IntT(n) => format!("i{n}"),
+        EvmBaseType::BytesT(n) => format!("bytes{n}"),
+        EvmBaseType::AddrT => "addr".to_string(),
+        EvmBaseType::BoolT => "bool".to_string(),
+        EvmBaseType::UnitT => "()".to_string(),
+        EvmBaseType::StateT => "state".to_string(),
+    }
+}
+
+/// Extract the source text for an AST expression from the file source.
+fn expr_src_text(expr: &edge_ast::Expr) -> String {
+    let span = expr.span();
+    // Walk up: try the expression's own file, which should have the source
+    if let Some(ref file) = span.file {
+        if let Some(ref src) = file.source {
+            if let Some(text) = src.get(span.start..=span.end) {
+                return text.trim().to_string();
+            }
+        }
+    }
+    // Fallback: extract name/value from common leaf nodes
+    match expr {
+        edge_ast::Expr::Ident(id) => id.name.clone(),
+        edge_ast::Expr::Literal(lit) => match lit.as_ref() {
+            edge_ast::Lit::Int(bytes, _, _) => {
+                let val = ruint::aliases::U256::from_be_bytes::<32>(*bytes);
+                format!("{val}")
+            }
+            edge_ast::Lit::Bool(b, _) => format!("{b}"),
+            edge_ast::Lit::Str(s, _) => format!("\"{s}\""),
+            edge_ast::Lit::Hex(bytes, _) => {
+                format!(
+                    "0x{}",
+                    bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                )
+            }
+            edge_ast::Lit::Bin(bytes, _) => {
+                format!(
+                    "0b{}",
+                    bytes.iter().map(|b| format!("{b:08b}")).collect::<String>()
+                )
+            }
+        },
+        _ => "expr".to_string(),
+    }
+}
+
+/// Extract a constant U256 value from an IR Const node, if it is one.
+fn const_value(expr: &RcExpr) -> Option<ruint::aliases::U256> {
+    match expr.as_ref() {
+        EvmExpr::Const(EvmConstant::SmallInt(n), _, _) => {
+            if *n >= 0 {
+                Some(ruint::aliases::U256::from(*n as u64))
+            } else {
+                // Negative values wrap around in U256
+                Some(ruint::aliases::U256::MAX - ruint::aliases::U256::from((-*n - 1) as u64))
+            }
+        }
+        EvmExpr::Const(EvmConstant::LargeInt(hex), _, _) => {
+            ruint::aliases::U256::from_str_radix(hex, 16).ok()
+        }
+        _ => None,
+    }
+}
+
 impl AstToEgglog {
     /// Lower a statement.
     pub(crate) fn lower_stmt(&mut self, stmt: &edge_ast::Stmt) -> Result<RcExpr, IrError> {
@@ -253,14 +336,52 @@ impl AstToEgglog {
                 if let Some(result) = self.try_operator_overload(lhs, op, rhs, span)? {
                     return Ok(result);
                 }
+                let lhs_ty = self.infer_expr_type(lhs);
+                let rhs_ty = self.infer_expr_type(rhs);
+
+                // Unsuffixed literals adopt the type of the other operand.
+                // e.g. `x: u8 = 3; x - 2;` → the `2` becomes u8.
+                let lhs_untyped = is_untyped_literal(lhs);
+                let rhs_untyped = is_untyped_literal(rhs);
+                let operand_ty = if lhs_untyped && !rhs_untyped {
+                    rhs_ty
+                } else if rhs_untyped && !lhs_untyped {
+                    lhs_ty
+                } else {
+                    // Both typed (or both untyped) — check for mismatches
+                    if let (EvmType::Base(ref lbt), EvmType::Base(ref rbt)) = (&lhs_ty, &rhs_ty) {
+                        let lw = lbt.bit_width();
+                        let rw = rbt.bit_width();
+                        let l_signed = matches!(lbt, EvmBaseType::IntT(_));
+                        let r_signed = matches!(rbt, EvmBaseType::IntT(_));
+                        if (lw != rw || l_signed != r_signed) && lw > 0 && rw > 0 {
+                            let lty_name = fmt_base_type(lbt);
+                            let rty_name = fmt_base_type(rbt);
+                            let lhs_src = expr_src_text(lhs);
+                            let rhs_src = expr_src_text(rhs);
+                            return Err(IrError::Diagnostic(
+                                edge_diagnostics::Diagnostic::error(format!(
+                                    "mismatched types: `{lty_name}` and `{rty_name}`"
+                                ))
+                                .with_label(span.clone(), format!("cannot apply `{op:?}` to `{lty_name}` and `{rty_name}`"))
+                                .with_note(format!(
+                                    "use an explicit cast: `{lhs_src} as {rty_name}` or `{rhs_src} as {lty_name}`"
+                                )),
+                            ));
+                        }
+                    }
+                    lhs_ty
+                };
+
                 let lhs_ir = self.lower_expr(lhs)?;
                 let rhs_ir = self.lower_expr(rhs)?;
-                self.lower_binary_op(op, lhs_ir, rhs_ir)
+                self.lower_binary_op(op, lhs_ir, rhs_ir, &operand_ty, span)
             }
 
             edge_ast::Expr::Unary(op, expr, _span) => {
+                let operand_ty = self.infer_expr_type(expr);
                 let expr_ir = self.lower_expr(expr)?;
-                self.lower_unary_op(op, expr_ir)
+                self.lower_unary_op(op, expr_ir, &operand_ty)
             }
 
             edge_ast::Expr::Ternary(cond, true_expr, false_expr, _span) => {
@@ -461,6 +582,8 @@ impl AstToEgglog {
             edge_ast::Expr::InlineAsm(inputs, outputs, ops, span) => {
                 self.lower_inline_asm(inputs, outputs, ops, span)
             }
+
+            edge_ast::Expr::Cast(expr, target_type, _span) => self.lower_cast(expr, target_type),
 
             // TODO: implement remaining expression types
             other => Err(IrError::Unsupported(format!(
@@ -704,19 +827,78 @@ impl AstToEgglog {
         }
     }
 
-    /// Lower a binary operator.
+    /// Lower a binary operator with type-aware operator selection and width truncation.
+    ///
+    /// For signed integer types (`IntT`), uses signed EVM opcodes (SDIV, SMOD, SLT, SGT, SAR).
+    /// For sub-256-bit types, truncates results to the correct width after arithmetic.
     pub(crate) fn lower_binary_op(
         &self,
         op: &edge_ast::BinOp,
         lhs: RcExpr,
         rhs: RcExpr,
+        operand_ty: &EvmType,
+        span: &edge_types::span::Span,
     ) -> Result<RcExpr, IrError> {
+        let is_signed = matches!(operand_ty, EvmType::Base(EvmBaseType::IntT(_)));
+        let bit_width = match operand_ty {
+            EvmType::Base(bt) => bt.bit_width(),
+            _ => 256,
+        };
+
         let ir_op = match op {
-            edge_ast::BinOp::Add | edge_ast::BinOp::AddAssign => EvmBinaryOp::CheckedAdd,
-            edge_ast::BinOp::Sub | edge_ast::BinOp::SubAssign => EvmBinaryOp::CheckedSub,
-            edge_ast::BinOp::Mul | edge_ast::BinOp::MulAssign => EvmBinaryOp::CheckedMul,
-            edge_ast::BinOp::Div | edge_ast::BinOp::DivAssign => EvmBinaryOp::Div,
-            edge_ast::BinOp::Mod | edge_ast::BinOp::ModAssign => EvmBinaryOp::Mod,
+            edge_ast::BinOp::Add | edge_ast::BinOp::AddAssign => {
+                if bit_width < 256 {
+                    return self.width_checked_op(
+                        EvmBinaryOp::Add,
+                        lhs,
+                        rhs,
+                        bit_width,
+                        is_signed,
+                        span,
+                    );
+                }
+                EvmBinaryOp::CheckedAdd
+            }
+            edge_ast::BinOp::Sub | edge_ast::BinOp::SubAssign => {
+                if bit_width < 256 {
+                    return self.width_checked_op(
+                        EvmBinaryOp::Sub,
+                        lhs,
+                        rhs,
+                        bit_width,
+                        is_signed,
+                        span,
+                    );
+                }
+                EvmBinaryOp::CheckedSub
+            }
+            edge_ast::BinOp::Mul | edge_ast::BinOp::MulAssign => {
+                if bit_width < 256 {
+                    return self.width_checked_op(
+                        EvmBinaryOp::Mul,
+                        lhs,
+                        rhs,
+                        bit_width,
+                        is_signed,
+                        span,
+                    );
+                }
+                EvmBinaryOp::CheckedMul
+            }
+            edge_ast::BinOp::Div | edge_ast::BinOp::DivAssign => {
+                if is_signed {
+                    EvmBinaryOp::SDiv
+                } else {
+                    EvmBinaryOp::Div
+                }
+            }
+            edge_ast::BinOp::Mod | edge_ast::BinOp::ModAssign => {
+                if is_signed {
+                    EvmBinaryOp::SMod
+                } else {
+                    EvmBinaryOp::Mod
+                }
+            }
             edge_ast::BinOp::Exp | edge_ast::BinOp::ExpAssign => EvmBinaryOp::Exp,
             edge_ast::BinOp::BitwiseAnd | edge_ast::BinOp::BitwiseAndAssign => EvmBinaryOp::And,
             edge_ast::BinOp::BitwiseOr | edge_ast::BinOp::BitwiseOrAssign => EvmBinaryOp::Or,
@@ -724,12 +906,19 @@ impl AstToEgglog {
             edge_ast::BinOp::Shl | edge_ast::BinOp::ShlAssign => {
                 // IR convention: Bop(Shl, shift_amount, value)
                 // AST: value << shift → swap to (shift, value)
-                return Ok(ast_helpers::bop(EvmBinaryOp::Shl, rhs, lhs));
+                let result = ast_helpers::bop(EvmBinaryOp::Shl, rhs, lhs);
+                return Ok(self.truncate_to_width(result, bit_width, is_signed));
             }
             edge_ast::BinOp::Shr | edge_ast::BinOp::ShrAssign => {
                 // IR convention: Bop(Shr, shift_amount, value)
                 // AST: value >> shift → swap to (shift, value)
-                return Ok(ast_helpers::bop(EvmBinaryOp::Shr, rhs, lhs));
+                // Signed: use SAR (arithmetic shift right)
+                let shr_op = if is_signed {
+                    EvmBinaryOp::Sar
+                } else {
+                    EvmBinaryOp::Shr
+                };
+                return Ok(ast_helpers::bop(shr_op, rhs, lhs));
             }
             edge_ast::BinOp::LogicalAnd => EvmBinaryOp::LogAnd,
             edge_ast::BinOp::LogicalOr => EvmBinaryOp::LogOr,
@@ -739,20 +928,203 @@ impl AstToEgglog {
                 let eq_expr = ast_helpers::eq(lhs, rhs);
                 return Ok(ast_helpers::iszero(eq_expr));
             }
-            edge_ast::BinOp::Lt => EvmBinaryOp::Lt,
+            edge_ast::BinOp::Lt => {
+                if is_signed {
+                    EvmBinaryOp::SLt
+                } else {
+                    EvmBinaryOp::Lt
+                }
+            }
             edge_ast::BinOp::Lte => {
                 // a <= b -> IsZero(Gt(a, b))
-                let gt_expr = ast_helpers::bop(EvmBinaryOp::Gt, lhs, rhs);
+                let gt_op = if is_signed {
+                    EvmBinaryOp::SGt
+                } else {
+                    EvmBinaryOp::Gt
+                };
+                let gt_expr = ast_helpers::bop(gt_op, lhs, rhs);
                 return Ok(ast_helpers::iszero(gt_expr));
             }
-            edge_ast::BinOp::Gt => EvmBinaryOp::Gt,
+            edge_ast::BinOp::Gt => {
+                if is_signed {
+                    EvmBinaryOp::SGt
+                } else {
+                    EvmBinaryOp::Gt
+                }
+            }
             edge_ast::BinOp::Gte => {
                 // a >= b -> IsZero(Lt(a, b))
-                let lt_expr = ast_helpers::bop(EvmBinaryOp::Lt, lhs, rhs);
+                let lt_op = if is_signed {
+                    EvmBinaryOp::SLt
+                } else {
+                    EvmBinaryOp::Lt
+                };
+                let lt_expr = ast_helpers::bop(lt_op, lhs, rhs);
                 return Ok(ast_helpers::iszero(lt_expr));
             }
         };
-        Ok(ast_helpers::bop(ir_op, lhs, rhs))
+
+        let result = ast_helpers::bop(ir_op, lhs, rhs);
+
+        // Truncate arithmetic results to the correct width for sub-256-bit types.
+        // Comparisons and logical ops return booleans — no truncation needed.
+        let needs_truncation = matches!(
+            op,
+            edge_ast::BinOp::Add
+                | edge_ast::BinOp::AddAssign
+                | edge_ast::BinOp::Sub
+                | edge_ast::BinOp::SubAssign
+                | edge_ast::BinOp::Mul
+                | edge_ast::BinOp::MulAssign
+                | edge_ast::BinOp::Div
+                | edge_ast::BinOp::DivAssign
+                | edge_ast::BinOp::Mod
+                | edge_ast::BinOp::ModAssign
+                | edge_ast::BinOp::Exp
+                | edge_ast::BinOp::ExpAssign
+                | edge_ast::BinOp::BitwiseOr
+                | edge_ast::BinOp::BitwiseOrAssign
+                | edge_ast::BinOp::BitwiseXor
+                | edge_ast::BinOp::BitwiseXorAssign
+        );
+
+        if needs_truncation {
+            Ok(self.truncate_to_width(result, bit_width, is_signed))
+        } else {
+            Ok(result)
+        }
+    }
+
+    /// Truncate a value to the given integer width.
+    /// For unsigned: AND with mask. For signed: sign-extend. No-op for 256-bit.
+    fn truncate_to_width(&self, value: RcExpr, bit_width: u16, is_signed: bool) -> RcExpr {
+        if bit_width >= 256 {
+            return value;
+        }
+        if is_signed {
+            ast_helpers::sign_extend(value, bit_width, self.current_ctx.clone())
+        } else {
+            ast_helpers::mask_to_width(value, bit_width, self.current_ctx.clone())
+        }
+    }
+
+    /// Emit a width-specific checked arithmetic operation for sub-256-bit types.
+    ///
+    /// For sub-256-bit integers, the u256-level `CheckedAdd`/`CheckedSub`/`CheckedMul`
+    /// never trigger (inputs are too small to overflow u256). Instead, we:
+    /// 1. Compute the full u256 result with an unchecked op
+    /// 2. Truncate to the target width (mask for unsigned, sign-extend for signed)
+    /// 3. Compare truncated vs full — if different, the result overflowed the width
+    /// 4. Revert on overflow
+    fn width_checked_op(
+        &self,
+        op: EvmBinaryOp,
+        lhs: RcExpr,
+        rhs: RcExpr,
+        bit_width: u16,
+        is_signed: bool,
+        span: &edge_types::span::Span,
+    ) -> Result<RcExpr, IrError> {
+        // Compile-time overflow detection: if both operands are constants,
+        // compute the result and check if it fits in the target width.
+        if let (Some(lv), Some(rv)) = (const_value(&lhs), const_value(&rhs)) {
+            let result = match op {
+                EvmBinaryOp::Add => lv.wrapping_add(rv),
+                EvmBinaryOp::Sub => lv.wrapping_sub(rv),
+                EvmBinaryOp::Mul => lv.wrapping_mul(rv),
+                _ => lv, // won't happen for checked ops
+            };
+            let max_val = if bit_width == 0 {
+                ruint::aliases::U256::ZERO
+            } else {
+                (ruint::aliases::U256::from(1u64) << bit_width) - ruint::aliases::U256::from(1u64)
+            };
+            if result > max_val {
+                let op_name = match op {
+                    EvmBinaryOp::Add => "+",
+                    EvmBinaryOp::Sub => "-",
+                    EvmBinaryOp::Mul => "*",
+                    _ => "?",
+                };
+                let ty_name = if is_signed {
+                    format!("i{bit_width}")
+                } else {
+                    format!("u{bit_width}")
+                };
+                return Err(IrError::Diagnostic(
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "attempt to compute `{lv}_{ty_name} {op_name} {rv}_{ty_name}`, which would overflow"
+                    ))
+                    .with_label(span.clone(), format!("overflows `{ty_name}` (max {max_val})"))
+                ));
+            }
+        }
+
+        let ctx = self.current_ctx.clone();
+
+        // Step 1: unchecked full-width result
+        let full = ast_helpers::bop(op, lhs, rhs);
+
+        // Step 2: truncate to target width
+        let truncated = if is_signed {
+            ast_helpers::sign_extend(Rc::clone(&full), bit_width, ctx.clone())
+        } else {
+            ast_helpers::mask_to_width(Rc::clone(&full), bit_width, ctx.clone())
+        };
+
+        // Step 3: overflow check — if truncated != full, width overflow occurred
+        let is_overflow = ast_helpers::iszero(ast_helpers::eq(Rc::clone(&truncated), full));
+
+        // Step 4: revert on overflow, otherwise return truncated value
+        let empty = ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), ctx.clone());
+        let revert_expr = ast_helpers::revert(
+            ast_helpers::const_int(0, ctx.clone()),
+            ast_helpers::const_int(0, ctx),
+            Rc::clone(&empty),
+        );
+
+        // If(overflow?, inputs, then=revert, else=truncated_value)
+        Ok(ast_helpers::if_then_else(
+            is_overflow,
+            empty,
+            revert_expr,
+            truncated,
+        ))
+    }
+
+    /// Lower a type cast: `expr as TargetType`.
+    ///
+    /// Casts between integer types:
+    /// - Narrowing unsigned: mask to target width
+    /// - Widening unsigned: no-op (already zero-extended in u256)
+    /// - Narrowing signed: mask then sign-extend to target width
+    /// - Widening signed → unsigned: mask to remove sign extension
+    /// - Unsigned → signed: sign-extend to target width
+    /// - Same width: no-op (or reinterpret signedness)
+    fn lower_cast(
+        &mut self,
+        expr: &edge_ast::Expr,
+        target_type: &edge_ast::ty::TypeSig,
+    ) -> Result<RcExpr, IrError> {
+        let val = self.lower_expr(expr)?;
+        let target_evm_ty = self.lower_type_sig(target_type);
+        let ctx = self.current_ctx.clone();
+
+        let target_bits = match &target_evm_ty {
+            EvmType::Base(bt) => bt.bit_width(),
+            _ => return Ok(val), // Non-integer cast: no-op
+        };
+        let target_signed = matches!(target_evm_ty, EvmType::Base(EvmBaseType::IntT(_)));
+
+        if target_signed {
+            // Cast to signed: sign-extend from target width
+            // First mask to target width, then sign-extend
+            let masked = ast_helpers::mask_to_width(val, target_bits, ctx.clone());
+            Ok(ast_helpers::sign_extend(masked, target_bits, ctx))
+        } else {
+            // Cast to unsigned: mask to target width
+            Ok(ast_helpers::mask_to_width(val, target_bits, ctx))
+        }
     }
 
     /// Map a binary operator to its corresponding trait name and method.
@@ -863,18 +1235,28 @@ impl AstToEgglog {
         }
     }
 
-    /// Lower a unary operator.
+    /// Lower a unary operator with type-aware width truncation.
     pub(crate) fn lower_unary_op(
         &self,
         op: &edge_ast::UnaryOp,
         expr: RcExpr,
+        operand_ty: &EvmType,
     ) -> Result<RcExpr, IrError> {
+        let is_signed = matches!(operand_ty, EvmType::Base(EvmBaseType::IntT(_)));
+        let bit_width = match operand_ty {
+            EvmType::Base(bt) => bt.bit_width(),
+            _ => 256,
+        };
+
         let ir_op = match op {
             edge_ast::UnaryOp::Neg => EvmUnaryOp::Neg,
             edge_ast::UnaryOp::BitwiseNot => EvmUnaryOp::Not,
-            edge_ast::UnaryOp::LogicalNot => EvmUnaryOp::IsZero,
+            edge_ast::UnaryOp::LogicalNot => return Ok(ast_helpers::iszero(expr)),
         };
-        Ok(ast_helpers::uop(ir_op, expr))
+        let result = ast_helpers::uop(ir_op, expr);
+
+        // Neg and Not can produce values outside the width — truncate
+        Ok(self.truncate_to_width(result, bit_width, is_signed))
     }
 
     /// Resolve a multi-component path to a name.

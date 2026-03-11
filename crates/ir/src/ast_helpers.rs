@@ -112,6 +112,11 @@ pub fn shr(shift_amount: RcExpr, value: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::Shr, shift_amount, value)
 }
 
+/// Shorthand: arithmetic shift right (`SAR` `shift_amount`, `value` — EVM operand order)
+pub fn sar(shift_amount: RcExpr, value: RcExpr) -> RcExpr {
+    bop(EvmBinaryOp::Sar, shift_amount, value)
+}
+
 /// Shorthand: bitwise AND
 pub fn bitand(lhs: RcExpr, rhs: RcExpr) -> RcExpr {
     bop(EvmBinaryOp::And, lhs, rhs)
@@ -276,4 +281,82 @@ pub fn keccak256(offset: RcExpr, size: RcExpr, state: RcExpr) -> RcExpr {
 /// `region_id` must be unique per allocation site; `size_words` is the number of 32-byte words.
 pub fn mem_region(region_id: i64, size_words: i64) -> RcExpr {
     Rc::new(EvmExpr::MemRegion(region_id, size_words))
+}
+
+// ---- Integer width helpers ----
+
+/// Create a mask constant for the given bit width: `(1 << bit_width) - 1`.
+/// For `bit_width` >= 256, returns all-ones (no-op mask).
+pub fn width_mask(bit_width: u16, ctx: EvmContext) -> RcExpr {
+    if bit_width >= 256 {
+        const_bigint(
+            "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff".to_string(),
+            ctx,
+        )
+    } else if bit_width <= 63 {
+        let mask_val = (1i64 << bit_width) - 1;
+        const_int(mask_val, ctx)
+    } else {
+        // Build hex mask string: (1 << N) - 1
+        let full_nibbles = (bit_width / 4) as usize;
+        let remainder = bit_width % 4;
+        let mut hex = String::with_capacity(full_nibbles + 1);
+        if remainder > 0 {
+            hex.push(char::from_digit((1u32 << remainder) - 1, 16).unwrap());
+        }
+        for _ in 0..full_nibbles {
+            hex.push('f');
+        }
+        const_bigint(hex, ctx)
+    }
+}
+
+/// Mask a value to the given unsigned bit width: `value & ((1 << bits) - 1)`.
+/// No-op for 256-bit types.
+pub fn mask_to_width(value: RcExpr, bit_width: u16, ctx: EvmContext) -> RcExpr {
+    if bit_width >= 256 {
+        value
+    } else {
+        bitand(value, width_mask(bit_width, ctx))
+    }
+}
+
+/// Sign-extend a value from the given bit width to 256 bits.
+///
+/// Uses the branchless XOR-SUB trick:
+///   `sign_bit = 1 << (bits - 1)`
+///   `result = ((value & mask) ^ sign_bit) - sign_bit`
+///
+/// This correctly sign-extends without needing conditional logic.
+/// The SUB is unchecked (wrapping) since it intentionally underflows for negative values.
+/// No-op for 256-bit types.
+pub fn sign_extend(value: RcExpr, bit_width: u16, ctx: EvmContext) -> RcExpr {
+    if bit_width >= 256 {
+        return value;
+    }
+    let mask = width_mask(bit_width, ctx.clone());
+    let sign_bit = sign_bit_const(bit_width, ctx);
+    let truncated = bitand(value, mask);
+    // (truncated ^ sign_bit) - sign_bit  (wrapping SUB)
+    let xored = bop(EvmBinaryOp::Xor, truncated, Rc::clone(&sign_bit));
+    bop(EvmBinaryOp::Sub, xored, sign_bit)
+}
+
+/// Create a constant for the sign bit position: `1 << (bit_width - 1)`.
+fn sign_bit_const(bit_width: u16, ctx: EvmContext) -> RcExpr {
+    let shift = bit_width - 1;
+    if shift <= 62 {
+        const_int(1i64 << shift, ctx)
+    } else {
+        // Build hex: "1" followed by (shift/4) zeros, with leading nibble adjustment
+        let full_nibbles = (shift / 4) as usize;
+        let remainder = shift % 4;
+        let mut hex = String::with_capacity(full_nibbles + 1);
+        let lead = 1u32 << remainder;
+        hex.push(char::from_digit(lead, 16).unwrap());
+        for _ in 0..full_nibbles {
+            hex.push('0');
+        }
+        const_bigint(hex, ctx)
+    }
 }

@@ -82,7 +82,7 @@ contract ComptimeExample {
     // Storage that changes behavior based on hard fork target.
     let value: &s u256;
 
-    fn base_fee2(x: u8, y: u8) -> u8 {
+    fn base_fee2(x: u256, y: u256) -> u256 {
         return x + y;
     }
 

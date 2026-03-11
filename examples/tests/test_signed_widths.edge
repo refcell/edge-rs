@@ -1,0 +1,109 @@
+// test_signed_widths.edge — Tests for signed sub-256-bit integer width semantics
+
+use std::ops::UnsafeAdd;
+use std::ops::UnsafeSub;
+use std::ops::UnsafeMul;
+
+contract TestSignedWidths {
+    // ── i8 checked addition ──
+
+    // i8 addition that fits: 50 + 30 = 80 (within -128..127)
+    pub fn i8_add_ok(a: i8, b: i8) -> (i8) {
+        return a + b;
+    }
+
+    // i8 addition that overflows: 100 + 100 = 200 > 127 → revert
+    pub fn i8_add_overflow(a: i8, b: i8) -> (i8) {
+        return a + b;
+    }
+
+    // ── i8 checked subtraction ──
+
+    // i8 subtraction that fits: 50 - 30 = 20
+    pub fn i8_sub_ok(a: i8, b: i8) -> (i8) {
+        return a - b;
+    }
+
+    // i8 subtraction that underflows: -100 - 100 = -200 < -128 → revert
+    pub fn i8_sub_underflow(a: i8, b: i8) -> (i8) {
+        return a - b;
+    }
+
+    // ── i8 checked multiplication ──
+
+    // i8 multiplication that fits: 10 * 10 = 100 (within -128..127)
+    pub fn i8_mul_ok(a: i8, b: i8) -> (i8) {
+        return a * b;
+    }
+
+    // i8 multiplication that overflows: 20 * 20 = 400 > 127 → revert
+    pub fn i8_mul_overflow(a: i8, b: i8) -> (i8) {
+        return a * b;
+    }
+
+    // ── i8 signed division ──
+
+    // Signed division: 100 / 10 = 10 (positive / positive)
+    pub fn i8_sdiv(a: i8, b: i8) -> (i8) {
+        return a / b;
+    }
+
+    // ── i8 negation ──
+
+    // Unary negation: -x
+    pub fn i8_negate(a: i8) -> (i8) {
+        return -a;
+    }
+
+    // ── i8 comparisons ──
+
+    // Signed less-than
+    pub fn i8_slt(a: i8, b: i8) -> (u256) {
+        if (a < b) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // Signed greater-than
+    pub fn i8_sgt(a: i8, b: i8) -> (u256) {
+        if (a > b) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // ── Unsafe (unchecked) signed arithmetic ──
+
+    // Unsafe add: wraps without reverting
+    pub fn i8_unsafe_add(a: i8, b: i8) -> (i8) {
+        return UnsafeAdd::unsafe_add(a, b);
+    }
+
+    // Unsafe sub: wraps without reverting
+    pub fn i8_unsafe_sub(a: i8, b: i8) -> (i8) {
+        return UnsafeSub::unsafe_sub(a, b);
+    }
+
+    // Unsafe mul: wraps without reverting
+    pub fn i8_unsafe_mul(a: i8, b: i8) -> (i8) {
+        return UnsafeMul::unsafe_mul(a, b);
+    }
+
+    // ── Cast signed ↔ unsigned ──
+
+    // Cast i8 to u8 (reinterpret bits)
+    pub fn cast_i8_to_u8(a: i8) -> (u8) {
+        return a as u8;
+    }
+
+    // Cast u8 to i8 (reinterpret bits, sign-extend)
+    pub fn cast_u8_to_i8(a: u8) -> (i8) {
+        return a as i8;
+    }
+
+    // Cast i8 to u256 (sign-extend to 256)
+    pub fn cast_i8_to_u256(a: i8) -> (u256) {
+        return a as u256;
+    }
+}

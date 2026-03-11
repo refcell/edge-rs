@@ -1,0 +1,112 @@
+// test_int_widths.edge — Tests for sub-256-bit integer width semantics
+
+contract TestIntWidths {
+    // ── u8 arithmetic ──
+
+    // u8 addition that fits: 100 + 50 = 150
+    pub fn u8_add_ok(a: u8, b: u8) -> (u8) {
+        return a + b;
+    }
+
+    // u8 addition that overflows: 200 + 100 = 300 > 255 → revert
+    pub fn u8_add_overflow(a: u8, b: u8) -> (u8) {
+        return a + b;
+    }
+
+    // u8 subtraction that fits: 100 - 50 = 50
+    pub fn u8_sub_ok(a: u8, b: u8) -> (u8) {
+        return a - b;
+    }
+
+    // u8 subtraction that underflows: 50 - 100 → revert
+    pub fn u8_sub_underflow(a: u8, b: u8) -> (u8) {
+        return a - b;
+    }
+
+    // u8 multiplication that fits: 10 * 20 = 200
+    pub fn u8_mul_ok(a: u8, b: u8) -> (u8) {
+        return a * b;
+    }
+
+    // u8 multiplication that overflows: 20 * 20 = 400 > 255 → revert
+    pub fn u8_mul_overflow(a: u8, b: u8) -> (u8) {
+        return a * b;
+    }
+
+    // u8 bitwise AND: always safe, no truncation needed
+    pub fn u8_and(a: u8, b: u8) -> (u8) {
+        return a & b;
+    }
+
+    // u8 division: always fits (result <= dividend)
+    pub fn u8_div(a: u8, b: u8) -> (u8) {
+        return a / b;
+    }
+
+    // ── u128 arithmetic ──
+
+    // u128 addition that fits
+    pub fn u128_add_ok(a: u128, b: u128) -> (u128) {
+        return a + b;
+    }
+
+    // u128 addition that would overflow at u128 max
+    pub fn u128_add_overflow(a: u128, b: u128) -> (u128) {
+        return a + b;
+    }
+
+    // ── Truncation semantics ──
+
+    // u8 truncation on bitwise OR
+    pub fn u8_or_truncate(a: u8, b: u8) -> (u8) {
+        return a | b;
+    }
+
+    // u8 shift left — truncates result
+    pub fn u8_shl(a: u8, b: u8) -> (u8) {
+        return a << b;
+    }
+
+    // ── Mixed operations ──
+
+    // Chain of u8 ops
+    pub fn u8_chain(a: u8, b: u8) -> (u8) {
+        let x: u8 = a + b;
+        let y: u8 = x * 2;
+        return y;
+    }
+
+    // ── Literal suffix tests ──
+
+    // Literal with u8 suffix: 42u8 should produce a u8-typed constant
+    pub fn literal_u8_add() -> (u256) {
+        let x: u8 = 42u8;
+        let y: u8 = 10u8;
+        return x + y;
+    }
+
+    // Literal with u256 suffix (default behavior)
+    pub fn literal_u256_add() -> (u256) {
+        let x: u256 = 1000u256;
+        return x + 1u256;
+    }
+
+    // ── Cast tests ──
+
+    // Cast u256 down to u8 (narrowing)
+    pub fn cast_u256_to_u8(x: u256) -> (u256) {
+        let y: u8 = x as u8;
+        return y;
+    }
+
+    // Cast u8 up to u256 (widening, no-op)
+    pub fn cast_u8_to_u256(x: u8) -> (u256) {
+        return x as u256;
+    }
+
+    // Cast then arithmetic: narrowed value used in u8 add
+    pub fn cast_and_add(x: u256) -> (u256) {
+        let narrow: u8 = x as u8;
+        return narrow + 1u8;
+    }
+}
