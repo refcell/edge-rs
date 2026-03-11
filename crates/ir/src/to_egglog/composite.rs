@@ -33,8 +33,17 @@ impl AstToEgglog {
                 })
             })?
         } else {
-            let diag =
-                edge_diagnostics::Diagnostic::error(format!("unknown union type: `{type_name}`"));
+            // Check if resolution failed due to ambiguity (multiple monomorphizations)
+            let candidate_count = self.monomorphized_types.iter()
+                .filter(|((base, _), _)| base == type_name)
+                .count();
+            let diag = if candidate_count > 1 {
+                edge_diagnostics::Diagnostic::error(format!(
+                    "ambiguous generic type `{type_name}`: {candidate_count} monomorphizations exist",
+                )).with_note("provide explicit type arguments to disambiguate")
+            } else {
+                edge_diagnostics::Diagnostic::error(format!("unknown union type: `{type_name}`"))
+            };
             return Err(IrError::Diagnostic(if let Some(s) = span {
                 diag.with_label(s.clone(), "not found")
             } else {
@@ -74,9 +83,18 @@ impl AstToEgglog {
             type_name.to_string()
         } else {
             self.resolve_generic_type_name(type_name).ok_or_else(|| {
-                let diag = edge_diagnostics::Diagnostic::error(format!(
-                    "unknown union type: `{type_name}`",
-                ));
+                let candidate_count = self.monomorphized_types.iter()
+                    .filter(|((base, _), _)| base == type_name)
+                    .count();
+                let diag = if candidate_count > 1 {
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "ambiguous generic type `{type_name}`: {candidate_count} monomorphizations exist",
+                    )).with_note("provide explicit type arguments to disambiguate")
+                } else {
+                    edge_diagnostics::Diagnostic::error(format!(
+                        "unknown union type: `{type_name}`",
+                    ))
+                };
                 IrError::Diagnostic(if let Some(s) = span {
                     diag.with_label(s.clone(), "not found")
                 } else {
@@ -139,12 +157,28 @@ impl AstToEgglog {
         type_name: &str,
         fields: &[(edge_ast::Ident, edge_ast::Expr)],
     ) -> Result<RcExpr, IrError> {
-        // Resolve generic struct names to monomorphized versions
+        // Resolve generic struct names to monomorphized versions.
+        // Use type_sig_hint from VarDecl annotation when available for precise resolution.
         let resolved_name = if self.struct_types.contains_key(type_name) {
             type_name.to_string()
         } else {
-            self.resolve_generic_type_name(type_name)
-                .unwrap_or_else(|| type_name.to_string())
+            // Try precise resolution via type_sig_hint first
+            let from_hint = if let Some(edge_ast::ty::TypeSig::Named(ref hint_name, ref hint_args)) = self.type_sig_hint {
+                if (hint_name.name == type_name || hint_name.name.starts_with(type_name)) && !hint_args.is_empty() {
+                    self.resolve_generic_type_name_with_args(type_name, hint_args)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(resolved) = from_hint {
+                resolved
+            } else {
+                // Fall back to unambiguous resolution
+                self.resolve_generic_type_name(type_name)
+                    .unwrap_or_else(|| type_name.to_string())
+            }
         };
         let struct_info = self.struct_types.get(&resolved_name).cloned();
 

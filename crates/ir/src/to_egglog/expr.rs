@@ -143,7 +143,10 @@ impl AstToEgglog {
                 // If there's an initializer, emit VarStore for the assignment
                 if let Some(init) = init_expr {
                     self.last_composite_alloc = None;
+                    // Set type sig hint so struct instantiation can disambiguate generics
+                    self.type_sig_hint = type_sig.as_ref().cloned();
                     let rhs_ir = self.lower_expr(init)?;
+                    self.type_sig_hint = None;
                     // Track composite type from RHS if applicable
                     if let Some((comp_type, comp_base)) = self.last_composite_alloc.take() {
                         if let Some(scope) = self.scopes.last_mut() {

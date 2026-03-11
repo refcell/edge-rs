@@ -650,19 +650,40 @@ impl AstToEgglog {
                 edge_ast::Lit::Int(_, None, _) => Some("u256".to_string()),
                 _ => None,
             },
-            // ArrayIndex: base[index] — if base is a Map, the result type is the value type (V)
+            // ArrayIndex: base[index] — if base implements Index, the result type is Index::Output
             edge_ast::Expr::ArrayIndex(base, _, _, _) => {
                 let base_type = self.infer_receiver_type(base);
-                let base_args = self.infer_receiver_type_args(base);
                 if let Some(ref bt) = base_type {
-                    if bt.starts_with("Map") && base_args.len() == 2 {
-                        return Some(Self::type_sig_mangle(&base_args[1]));
+                    if let Some(output) = self.index_output_type(bt) {
+                        return Some(output);
                     }
                 }
                 None
             }
             _ => None,
         }
+    }
+
+    /// Look up the Index trait impl's Output type for a given type name.
+    /// Returns the mangled name of the Output type if the type implements Index.
+    pub(crate) fn index_output_type(&self, type_name: &str) -> Option<String> {
+        if let Some(impl_info) = self.trait_impls.get(&(type_name.to_string(), "Index".to_string())) {
+            // Index<Idx, Output> — Output is the second type arg
+            if impl_info.trait_type_args.len() >= 2 {
+                return Some(Self::type_sig_mangle(&impl_info.trait_type_args[1]));
+            }
+        }
+        None
+    }
+
+    /// Look up the Index trait impl's Output TypeSig for a given type name.
+    pub(crate) fn index_output_type_sig(&self, type_name: &str) -> Option<edge_ast::ty::TypeSig> {
+        if let Some(impl_info) = self.trait_impls.get(&(type_name.to_string(), "Index".to_string())) {
+            if impl_info.trait_type_args.len() >= 2 {
+                return Some(impl_info.trait_type_args[1].clone());
+            }
+        }
+        None
     }
 
     /// Get the concrete type arguments for a receiver's generic composite type.
@@ -672,12 +693,14 @@ impl AstToEgglog {
         }
 
         match expr {
-            // ArrayIndex: base[index] — if base is a Map, the result's type args come from V
+            // ArrayIndex: base[index] — result's type args come from Index::Output
             edge_ast::Expr::ArrayIndex(base, _, _, _) => {
-                let base_args = self.infer_receiver_type_args(base);
-                if base_args.len() == 2 {
-                    if let edge_ast::ty::TypeSig::Named(_, inner_args) = &base_args[1] {
-                        return inner_args.clone();
+                let base_type = self.infer_receiver_type(base);
+                if let Some(ref bt) = base_type {
+                    if let Some(output_sig) = self.index_output_type_sig(bt) {
+                        if let edge_ast::ty::TypeSig::Named(_, inner_args) = &output_sig {
+                            return inner_args.clone();
+                        }
                     }
                 }
                 Vec::new()
@@ -752,17 +775,13 @@ impl AstToEgglog {
 
     /// Check if a type name refers to a primitive type (not a user-defined composite).
     pub(crate) fn is_primitive_type(type_name: &str) -> bool {
-        type_name == "u256"
-            || type_name == "i256"
-            || type_name == "bool"
-            || type_name == "address"
-            || type_name == "b32"
-            || type_name.starts_with("u")
-                && type_name[1..].parse::<u16>().is_ok()
-            || type_name.starts_with("i")
-                && type_name[1..].parse::<u16>().is_ok()
-            || type_name.starts_with("bytes")
-                && type_name[5..].parse::<u8>().is_ok()
+        matches!(type_name, "bool" | "address" | "b32" | "bit")
+            || type_name.strip_prefix('u').and_then(|s| s.parse::<u16>().ok())
+                .is_some_and(|w| (8..=256).contains(&w) && w % 8 == 0)
+            || type_name.strip_prefix('i').and_then(|s| s.parse::<u16>().ok())
+                .is_some_and(|w| (8..=256).contains(&w) && w % 8 == 0)
+            || type_name.strip_prefix("bytes").and_then(|s| s.parse::<u8>().ok())
+                .is_some_and(|n| (1..=32).contains(&n))
     }
 
     /// Look up a compiler-provided trait method for a primitive type.
@@ -1029,7 +1048,11 @@ impl AstToEgglog {
             if let edge_ast::Expr::Ident(ident) = arg {
                 let info = self.lookup_composite_info(&ident.name);
                 if let Some((ct, cb)) = info {
-                    arg_composite.push(Some((ct, Some(cb), Vec::new())));
+                    // Also grab composite_type_args from the binding
+                    let type_args = self.lookup_binding_for_expr(arg)
+                        .map(|b| b.composite_type_args.clone())
+                        .unwrap_or_default();
+                    arg_composite.push(Some((ct, Some(cb), type_args)));
                 } else {
                     // Check for composite_type without composite_base (e.g., Map type aliases)
                     let mut found = false;
@@ -1048,14 +1071,12 @@ impl AstToEgglog {
                 }
             } else if let edge_ast::Expr::ArrayIndex(base, _, _, _) = arg {
                 // For ArrayIndex args (e.g., map[key] as self parameter),
-                // infer the value type from the base Map's type args.
+                // infer the value type from the base type's Index impl Output.
                 let base_type = self.infer_receiver_type(base);
-                let base_args = self.infer_receiver_type_args(base);
                 if let Some(ref bt) = base_type {
-                    if bt.starts_with("Map") && base_args.len() == 2 {
-                        let value_mangled = Self::type_sig_mangle(&base_args[1]);
-                        // Extract inner type args if V is a generic type
-                        let inner_args = if let edge_ast::ty::TypeSig::Named(_, inner) = &base_args[1] {
+                    if let Some(output_sig) = self.index_output_type_sig(bt) {
+                        let value_mangled = Self::type_sig_mangle(&output_sig);
+                        let inner_args = if let edge_ast::ty::TypeSig::Named(_, inner) = &output_sig {
                             inner.clone()
                         } else {
                             Vec::new()
@@ -1079,7 +1100,7 @@ impl AstToEgglog {
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
-            let (mut composite_type, mut composite_base, composite_type_args) = arg_composite
+            let (mut composite_type, mut composite_base, mut composite_type_args) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
                 .map(|(ct, cb, ta)| (Some(ct.clone()), cb.clone(), ta.clone()))
@@ -1113,6 +1134,10 @@ impl AstToEgglog {
                         || self.union_types.contains_key(&resolved_name)
                     {
                         composite_type = Some(resolved_name);
+                        // Propagate type args from the param type sig
+                        if composite_type_args.is_empty() && !type_args.is_empty() {
+                            composite_type_args = type_args.clone();
+                        }
                     } else if type_args.is_empty() {
                         // Check if resolved name is a generic type that was
                         // monomorphized (e.g., Result__u256)
@@ -1121,6 +1146,18 @@ impl AstToEgglog {
                             || self.union_types.contains_key(&mangled)
                         {
                             composite_type = Some(mangled);
+                        }
+                    } else {
+                        // Named type with type args — try monomorphizing
+                        if let Ok(Some(mangled)) = self.try_monomorphize_named_type(
+                            &resolved_name,
+                            type_args,
+                            None,
+                        ) {
+                            composite_type = Some(mangled);
+                            if composite_type_args.is_empty() {
+                                composite_type_args = type_args.clone();
+                            }
                         }
                     }
                 }

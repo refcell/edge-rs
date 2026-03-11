@@ -143,6 +143,8 @@ pub(crate) struct GenericTypeTemplate {
 pub(crate) struct GenericImplBlock {
     pub type_params: Vec<edge_ast::ty::TypeParam>,
     pub trait_impl: Option<String>, // trait name, or None for inherent impl
+    /// The trait's type arguments (e.g., `[K, V]` for `impl Foo: Index<K, V>`)
+    pub trait_type_params: Vec<edge_ast::ty::TypeParam>,
     pub items: Vec<edge_ast::item::ImplItem>,
 }
 
@@ -246,6 +248,8 @@ pub(crate) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct TraitImplInfo {
     pub methods: IndexMap<String, (edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
+    /// Trait type arguments from the impl declaration (e.g., `[K, V]` for `impl Foo: Index<K, V>`).
+    pub trait_type_args: Vec<edge_ast::ty::TypeSig>,
     pub span: edge_types::span::Span,
 }
 
@@ -332,6 +336,9 @@ pub struct AstToEgglog {
     /// Type hint from assignment target, used for generic return-type inference.
     /// Set before lowering the RHS of a typed variable assignment, cleared after.
     pub(crate) type_hint: Option<EvmType>,
+    /// TypeSig hint from assignment target, used to disambiguate generic struct instantiation.
+    /// Set before lowering the RHS of a typed variable declaration, cleared after.
+    pub(crate) type_sig_hint: Option<edge_ast::ty::TypeSig>,
     /// Compiler warnings collected during lowering
     pub(crate) warnings: Vec<edge_diagnostics::Diagnostic>,
 }
@@ -382,6 +389,7 @@ impl AstToEgglog {
             _self_type: None,
             std_ops_traits: HashSet::new(),
             type_hint: None,
+            type_sig_hint: None,
             warnings: Vec::new(),
         }
     }
@@ -514,6 +522,7 @@ impl AstToEgglog {
                         (prim.to_string(), trait_name.to_string()),
                         TraitImplInfo {
                             methods: IndexMap::new(),
+                            trait_type_args: Vec::new(),
                             span: edge_types::span::Span::EOF,
                         },
                     );
@@ -689,12 +698,16 @@ impl AstToEgglog {
                         || self.generic_type_templates.contains_key(&type_name)
                     {
                         let trait_name = impl_block.trait_impl.as_ref().map(|(n, _)| n.name.clone());
+                        let trait_type_params = impl_block.trait_impl.as_ref()
+                            .map(|(_, params)| params.clone())
+                            .unwrap_or_default();
                         self.generic_impl_blocks
                             .entry(type_name.clone())
                             .or_default()
                             .push(GenericImplBlock {
                                 type_params: impl_block.type_params.clone(),
                                 trait_impl: trait_name,
+                                trait_type_params,
                                 items: impl_block.items.clone(),
                             });
                     }
@@ -753,10 +766,20 @@ impl AstToEgglog {
                             }
                         }
 
+                        // Extract trait type args from the impl declaration
+                        let trait_type_args: Vec<edge_ast::ty::TypeSig> = impl_block.trait_impl
+                            .as_ref()
+                            .map(|(_, params)| {
+                                params.iter()
+                                    .map(|p| edge_ast::ty::TypeSig::Named(p.name.clone(), Vec::new()))
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         self.trait_impls.insert(
                             (type_name, trait_name.name.clone()),
                             TraitImplInfo {
                                 methods,
+                                trait_type_args,
                                 span: impl_block.span.clone(),
                             },
                         );

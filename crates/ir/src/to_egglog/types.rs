@@ -41,19 +41,61 @@ impl AstToEgglog {
     }
 
     /// Resolve a generic type name (e.g., "Result") to its monomorphized name (e.g., "`Result__u256`").
-    /// Searches `union_types` and `struct_types` for any key starting with `"{name}__"`.
-    /// Returns the first match found.
+    /// Returns `Some` only when there's exactly one monomorphization (unambiguous).
+    /// When there are multiple, returns `None` — caller should use
+    /// `resolve_generic_type_name_with_args` for precise resolution.
     pub(crate) fn resolve_generic_type_name(&self, name: &str) -> Option<String> {
+        // Check monomorphized_types cache for entries with this base name
+        let candidates: Vec<&String> = self.monomorphized_types.iter()
+            .filter(|((base, _), _)| base == name)
+            .map(|(_, mangled)| mangled)
+            .collect();
+        if candidates.len() == 1 {
+            return Some(candidates[0].clone());
+        }
+        if candidates.len() > 1 {
+            // Multiple monomorphizations — ambiguous, return None
+            return None;
+        }
+
+        // Fallback: scan union_types and struct_types for "{name}__" prefix,
+        // but only return if unambiguous.
+        let mut fallback_candidates = Vec::new();
         let prefix = format!("{name}__");
         for key in self.union_types.keys() {
             if key.starts_with(&prefix) {
-                return Some(key.clone());
+                fallback_candidates.push(key.clone());
             }
         }
         for key in self.struct_types.keys() {
             if key.starts_with(&prefix) {
-                return Some(key.clone());
+                fallback_candidates.push(key.clone());
             }
+        }
+        if fallback_candidates.len() == 1 {
+            return Some(fallback_candidates.into_iter().next().unwrap());
+        }
+        None
+    }
+
+    /// Resolve a generic type name with specific type args to its monomorphized name.
+    /// More precise than `resolve_generic_type_name` when multiple monomorphizations exist.
+    pub(crate) fn resolve_generic_type_name_with_args(
+        &self,
+        name: &str,
+        type_args: &[edge_ast::ty::TypeSig],
+    ) -> Option<String> {
+        let mangled_args: Vec<String> = type_args.iter()
+            .map(|a| Self::type_sig_mangle(a))
+            .collect();
+        let cache_key = (name.to_string(), mangled_args);
+        if let Some(mangled) = self.monomorphized_types.get(&cache_key) {
+            return Some(mangled.clone());
+        }
+        // Fallback: construct the expected mangled name and check if it exists
+        let expected = format!("{}_{}", name, cache_key.1.join("_"));
+        if self.union_types.contains_key(&expected) || self.struct_types.contains_key(&expected) {
+            return Some(expected);
         }
         None
     }
@@ -662,10 +704,18 @@ impl AstToEgglog {
                             methods.insert(fn_decl.name.name.clone(), (fn_decl.clone(), body.clone()));
                         }
                     }
+                    // Substitute type params in trait type args to get concrete types
+                    let trait_type_args: Vec<edge_ast::ty::TypeSig> = gib.trait_type_params.iter()
+                        .map(|p| {
+                            let sig = edge_ast::ty::TypeSig::Named(p.name.clone(), Vec::new());
+                            Self::substitute_type_params(&sig, &impl_subst)
+                        })
+                        .collect();
                     self.trait_impls.insert(
                         (mangled.clone(), trait_name.clone()),
                         super::TraitImplInfo {
                             methods,
+                            trait_type_args,
                             span: edge_types::span::Span::EOF,
                         },
                     );
