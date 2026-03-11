@@ -45,9 +45,6 @@ pub use schema::{EvmContract, EvmExpr, EvmProgram, RcExpr};
 /// Errors that can occur during IR lowering or optimization.
 #[derive(Debug, thiserror::Error)]
 pub enum IrError {
-    /// Error during AST lowering
-    #[error("lowering error: {0}")]
-    Lowering(String),
     /// Error during AST lowering with source span for diagnostics
     #[error("{message}")]
     LoweringSpanned {

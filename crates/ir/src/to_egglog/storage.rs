@@ -8,6 +8,7 @@ use crate::{
     schema::{DataLocation, EvmExpr, RcExpr},
     IrError,
 };
+use edge_diagnostics;
 
 impl AstToEgglog {
     /// Lower an emit statement.
@@ -333,8 +334,10 @@ impl AstToEgglog {
                 }
             }
         }
-        Err(IrError::Lowering(format!(
-            "cannot find storage field `{name}` in the current contract"
-        )))
+        Err(IrError::Diagnostic(
+            edge_diagnostics::Diagnostic::error(format!(
+                "cannot find storage field `{name}` in the current contract",
+            )),
+        ))
     }
 }

@@ -23,20 +23,20 @@ impl AstToEgglog {
                 let type_name = &components[0].name;
                 let variant_name = &components[1].name;
                 if self.union_types.contains_key(type_name) {
-                    return self.lower_union_instantiation_expr(type_name, variant_name, args);
+                    return self.lower_union_instantiation_expr(type_name, variant_name, args, Some(span));
                 }
                 // Check for generic union types (e.g., Result::Ok(42) where Result<T> was monomorphized)
                 if self.generic_type_templates.contains_key(type_name) {
                     // First try to find an already-monomorphized version
                     if let Some(mangled) = self.resolve_generic_type_name(type_name) {
-                        return self.lower_union_instantiation_expr(&mangled, variant_name, args);
+                        return self.lower_union_instantiation_expr(&mangled, variant_name, args, Some(span));
                     }
                     // No monomorphized version yet — try to infer type params from
                     // the constructor argument and monomorphize on the fly.
                     if let Some(mangled) =
                         self.try_monomorphize_union_from_constructor(type_name, variant_name, args)?
                     {
-                        return self.lower_union_instantiation_expr(&mangled, variant_name, args);
+                        return self.lower_union_instantiation_expr(&mangled, variant_name, args, Some(span));
                     }
                     return Err(IrError::Diagnostic(
                         edge_diagnostics::Diagnostic::error(format!(
@@ -199,6 +199,23 @@ impl AstToEgglog {
                     .collect();
                 return self.inline_function_call(&params, &body, &all_args);
             }
+
+            // Check compiler-provided trait methods for primitive types
+            if Self::is_primitive_type(type_name) {
+                if let Some(op) = self.compiler_provided_method(method_name) {
+                    if args.len() != 1 {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "`.{method_name}()` expects exactly 1 argument",
+                            ))
+                            .with_label(span.clone(), "expected 1 argument"),
+                        ));
+                    }
+                    let lhs = self.lower_expr(receiver)?;
+                    let rhs = self.lower_expr(&args[0])?;
+                    return Ok(ast_helpers::bop(op, lhs, rhs));
+                }
+            }
         }
 
         // If receiver type is known but no method found, give a clear error
@@ -221,6 +238,25 @@ impl AstToEgglog {
                 }
             }
             return Err(IrError::Diagnostic(diag));
+        }
+
+        // When receiver type is unknown, try compiler-provided trait methods
+        // (handles chained calls like `a.unsafe_add(b).unsafe_sub(c)`,
+        // paren expressions, and other cases where type inference fails)
+        if receiver_type.is_none() {
+            if let Some(op) = self.compiler_provided_method(method_name) {
+                if args.len() != 1 {
+                    return Err(IrError::Diagnostic(
+                        edge_diagnostics::Diagnostic::error(format!(
+                            "`.{method_name}()` expects exactly 1 argument",
+                        ))
+                        .with_label(span.clone(), "expected 1 argument"),
+                    ));
+                }
+                let lhs = self.lower_expr(receiver)?;
+                let rhs = self.lower_expr(&args[0])?;
+                return Ok(ast_helpers::bop(op, lhs, rhs));
+            }
         }
 
         // Fallback: treat as FunctionCall(FieldAccess(...), args) — lower normally
@@ -282,31 +318,27 @@ impl AstToEgglog {
             ));
         }
 
-        // Built-in UnsafeAdd/UnsafeSub/UnsafeMul for primitives
-        let unsafe_op = match (trait_name, method_name) {
-            ("UnsafeAdd", "unsafe_add") => Some(EvmBinaryOp::Add),
-            ("UnsafeSub", "unsafe_sub") => Some(EvmBinaryOp::Sub),
-            ("UnsafeMul", "unsafe_mul") => Some(EvmBinaryOp::Mul),
-            _ => None,
-        };
-        if let Some(op) = unsafe_op {
-            // Check if receiver is a primitive (not a user-defined type)
+        // Compiler-provided trait methods for primitive types
+        {
             let receiver_type = self.infer_receiver_type(&args[0]);
-            if receiver_type.is_none() {
-                // Primitive type — emit unchecked op directly
-                if args.len() != 2 {
-                    return Err(IrError::Diagnostic(
-                        edge_diagnostics::Diagnostic::error(format!(
-                            "`{trait_name}::{method_name}` expects exactly 2 arguments",
-                        ))
-                        .with_label(span.clone(), "expected 2 arguments"),
-                    ));
+            let is_primitive = receiver_type
+                .as_ref()
+                .map_or(true, |t| Self::is_primitive_type(t));
+            if is_primitive {
+                if let Some(op) = self.compiler_provided_method(method_name) {
+                    if args.len() != 2 {
+                        return Err(IrError::Diagnostic(
+                            edge_diagnostics::Diagnostic::error(format!(
+                                "`{trait_name}::{method_name}` expects exactly 2 arguments",
+                            ))
+                            .with_label(span.clone(), "expected 2 arguments"),
+                        ));
+                    }
+                    let lhs = self.lower_expr(&args[0])?;
+                    let rhs = self.lower_expr(&args[1])?;
+                    return Ok(ast_helpers::bop(op, lhs, rhs));
                 }
-                let lhs = self.lower_expr(&args[0])?;
-                let rhs = self.lower_expr(&args[1])?;
-                return Ok(ast_helpers::bop(op, lhs, rhs));
             }
-            // User-defined type — fall through to trait impl lookup
         }
 
         // Try to infer receiver type
@@ -457,17 +489,84 @@ impl AstToEgglog {
     pub(crate) fn infer_receiver_type(&self, expr: &edge_ast::Expr) -> Option<String> {
         match expr {
             edge_ast::Expr::Ident(ident) => {
-                // Check scope for composite type info
                 for scope in self.scopes.iter().rev() {
                     if let Some(binding) = scope.bindings.get(&ident.name) {
+                        // Composite type (struct/union/array) takes priority
                         if let Some(ref ct) = binding.composite_type {
                             return Some(ct.clone());
                         }
+                        // Fall back to primitive type name from EvmType
+                        return Self::evm_type_to_name(&binding._ty);
                     }
                 }
                 None
             }
             edge_ast::Expr::StructInstantiation(_, type_name, _, _) => Some(type_name.name.clone()),
+            edge_ast::Expr::Literal(lit) => match lit.as_ref() {
+                edge_ast::Lit::Bool(_, _) => Some("bool".to_string()),
+                edge_ast::Lit::Int(_, Some(pt), _) => {
+                    Some(Self::primitive_type_to_name(pt))
+                }
+                edge_ast::Lit::Int(_, None, _) => Some("u256".to_string()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Convert an EvmType to a type name string (for primitives).
+    fn evm_type_to_name(ty: &EvmType) -> Option<String> {
+        match ty {
+            EvmType::Base(base) => match base {
+                EvmBaseType::UIntT(256) => Some("u256".to_string()),
+                EvmBaseType::UIntT(w) => Some(format!("u{w}")),
+                EvmBaseType::IntT(256) => Some("i256".to_string()),
+                EvmBaseType::IntT(w) => Some(format!("i{w}")),
+                EvmBaseType::BoolT => Some("bool".to_string()),
+                EvmBaseType::AddrT => Some("address".to_string()),
+                EvmBaseType::BytesT(n) => Some(format!("bytes{n}")),
+                EvmBaseType::UnitT | EvmBaseType::StateT => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Convert a PrimitiveType to a type name string.
+    fn primitive_type_to_name(pt: &edge_ast::ty::PrimitiveType) -> String {
+        use edge_ast::ty::PrimitiveType;
+        match pt {
+            PrimitiveType::UInt(256) => "u256".to_string(),
+            PrimitiveType::UInt(w) => format!("u{w}"),
+            PrimitiveType::Int(256) => "i256".to_string(),
+            PrimitiveType::Int(w) => format!("i{w}"),
+            PrimitiveType::Bool => "bool".to_string(),
+            PrimitiveType::Address => "address".to_string(),
+            PrimitiveType::FixedBytes(n) => format!("bytes{n}"),
+            PrimitiveType::Bit => "bit".to_string(),
+        }
+    }
+
+    /// Check if a type name refers to a primitive type (not a user-defined composite).
+    pub(crate) fn is_primitive_type(type_name: &str) -> bool {
+        type_name == "u256"
+            || type_name == "i256"
+            || type_name == "bool"
+            || type_name == "address"
+            || type_name.starts_with("u")
+                && type_name[1..].parse::<u16>().is_ok()
+            || type_name.starts_with("i")
+                && type_name[1..].parse::<u16>().is_ok()
+            || type_name.starts_with("bytes")
+                && type_name[5..].parse::<u8>().is_ok()
+    }
+
+    /// Look up a compiler-provided trait method for a primitive type.
+    /// Returns the binary op if the method matches an imported std::ops trait.
+    fn compiler_provided_method(&self, method_name: &str) -> Option<EvmBinaryOp> {
+        match method_name {
+            "unsafe_add" if self.std_ops_traits.contains("UnsafeAdd") => Some(EvmBinaryOp::Add),
+            "unsafe_sub" if self.std_ops_traits.contains("UnsafeSub") => Some(EvmBinaryOp::Sub),
+            "unsafe_mul" if self.std_ops_traits.contains("UnsafeMul") => Some(EvmBinaryOp::Mul),
             _ => None,
         }
     }

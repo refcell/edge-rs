@@ -283,9 +283,25 @@ impl AstToEgglog {
 
             edge_ast::Stmt::Expr(expr) => self.lower_expr(expr),
 
-            edge_ast::Stmt::Break(_) | edge_ast::Stmt::Continue(_) => {
-                // Break/continue need special handling within loop context
-                // For now, return empty
+            edge_ast::Stmt::Break(span) => {
+                self.warnings.push(
+                    edge_diagnostics::Diagnostic::warning(
+                        "`break` is not yet implemented and will be ignored",
+                    )
+                    .with_label(span.clone(), "has no effect"),
+                );
+                Ok(ast_helpers::empty(
+                    EvmType::Base(EvmBaseType::UnitT),
+                    self.current_ctx.clone(),
+                ))
+            }
+            edge_ast::Stmt::Continue(span) => {
+                self.warnings.push(
+                    edge_diagnostics::Diagnostic::warning(
+                        "`continue` is not yet implemented and will be ignored",
+                    )
+                    .with_label(span.clone(), "has no effect"),
+                );
                 Ok(ast_helpers::empty(
                     EvmType::Base(EvmBaseType::UnitT),
                     self.current_ctx.clone(),
@@ -494,13 +510,13 @@ impl AstToEgglog {
                 self.lower_field_access(obj, &field.name)
             }
 
-            edge_ast::Expr::Path(components, _span) => {
+            edge_ast::Expr::Path(components, span) => {
                 // Check if this is a union variant path like Direction::North
                 if components.len() == 2 {
                     let type_name = &components[0].name;
                     let variant_name = &components[1].name;
                     if self.union_types.contains_key(type_name) {
-                        return self.lower_union_instantiation_expr(type_name, variant_name, &[]);
+                        return self.lower_union_instantiation_expr(type_name, variant_name, &[], Some(span));
                     }
                     // Check for generic union types (e.g., Option::None where Option<T> was monomorphized)
                     if self.generic_type_templates.contains_key(type_name) {
@@ -509,6 +525,7 @@ impl AstToEgglog {
                                 &mangled,
                                 variant_name,
                                 &[],
+                                Some(span),
                             );
                         }
                     }
@@ -571,8 +588,8 @@ impl AstToEgglog {
                 self.lower_array_instantiation(elements)
             }
 
-            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, _span) => {
-                self.lower_union_instantiation_expr(&type_name.name, &variant_name.name, args)
+            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, span) => {
+                self.lower_union_instantiation_expr(&type_name.name, &variant_name.name, args, Some(span))
             }
 
             edge_ast::Expr::PatternMatch(expr, pattern, _span) => {
@@ -691,17 +708,16 @@ impl AstToEgglog {
                 };
             }
         }
-        span.map_or_else(
-            || Err(IrError::Lowering(format!("undefined variable: {name}"))),
-            |span| {
-                Err(IrError::Diagnostic(
-                    edge_diagnostics::Diagnostic::error(format!(
-                        "cannot find value `{name}` in this scope",
-                    ))
-                    .with_label(span.clone(), "not found in this scope"),
-                ))
-            },
-        )
+        // Always emit a Diagnostic error — use span when available
+        let diag = edge_diagnostics::Diagnostic::error(format!(
+            "cannot find value `{name}` in this scope",
+        ));
+        let diag = if let Some(span) = span {
+            diag.with_label(span.clone(), "not found in this scope")
+        } else {
+            diag
+        };
+        Err(IrError::Diagnostic(diag))
     }
 
     /// Lower an assignment expression.
@@ -1163,9 +1179,12 @@ impl AstToEgglog {
             None => return Ok(None),
         };
 
-        // Check if the LHS is a user-defined type
+        // Check if the LHS is a user-defined type (skip primitives — they use built-in ops)
         let lhs_type = self.infer_receiver_type(lhs);
         if let Some(ref type_name) = lhs_type {
+            if Self::is_primitive_type(type_name) {
+                return Ok(None);
+            }
             // Only dispatch to operator traits from std::ops.
             // User-defined traits named "Add" etc. do NOT get operator overloading.
             if !self.std_ops_traits.contains(trait_name) {

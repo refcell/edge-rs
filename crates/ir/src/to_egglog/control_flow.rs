@@ -293,8 +293,22 @@ impl AstToEgglog {
             let item_ir = match item {
                 edge_ast::LoopItem::Stmt(stmt) => self.lower_stmt(stmt)?,
                 edge_ast::LoopItem::Expr(expr) => self.lower_expr(expr)?,
-                edge_ast::LoopItem::Break(_) | edge_ast::LoopItem::Continue(_) => {
-                    // TODO: handle break/continue with control flow markers
+                edge_ast::LoopItem::Break(span) => {
+                    self.warnings.push(
+                        edge_diagnostics::Diagnostic::warning(
+                            "`break` is not yet implemented and will be ignored",
+                        )
+                        .with_label(span.clone(), "has no effect"),
+                    );
+                    continue;
+                }
+                edge_ast::LoopItem::Continue(span) => {
+                    self.warnings.push(
+                        edge_diagnostics::Diagnostic::warning(
+                            "`continue` is not yet implemented and will be ignored",
+                        )
+                        .with_label(span.clone(), "has no effect"),
+                    );
                     continue;
                 }
             };
