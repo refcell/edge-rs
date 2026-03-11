@@ -1,9 +1,9 @@
 // test_mappings.edge — Execution tests for simple and nested mappings
 
 contract TestMappings {
-    let balances: &s u256;
-    let allowances: &s u256;
-    let counters: &s u256;
+    let balances: &s Map<addr, u256>;
+    let allowances: &s Map<addr, Map<addr, u256>>;
+    let counters: &s Map<addr, u256>;
 
     // Simple mapping: set and get
     pub fn map_set(key: addr, value: u256) {

@@ -10,14 +10,14 @@ fn _mulmod(a: u256, b: u256, n: u256) -> (u256) {
 
 fn _helper(a: u256, b: u256, c: u256, d: u256) -> (u256) {
     let remainder: u256 = _mulmod(a, b, c);
-    let result: u256 = UnsafeMul::unsafe_mul(d, remainder);
+    let result: u256 = d.unsafe_mul(remainder);
     return result;
 }
 
 fn _compute(a: u256, b: u256, denominator: u256) -> (u256) {
     let mm: u256 = _mulmod(a, b, ~0);
-    let prod0: u256 = UnsafeMul::unsafe_mul(a, b);
-    let prod1: u256 = UnsafeSub::unsafe_sub(mm, prod0);
+    let prod0: u256 = a.unsafe_mul(b);
+    let prod1: u256 = mm.unsafe_sub(prod0);
     let result: u256 = 0;
     if prod1 == 0 {
         if denominator == 0 {

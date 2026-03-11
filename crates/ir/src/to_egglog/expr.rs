@@ -132,6 +132,7 @@ impl AstToEgglog {
                     let_bind_name: Some(var_name.clone()),
                     composite_type,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -142,7 +143,10 @@ impl AstToEgglog {
                 // If there's an initializer, emit VarStore for the assignment
                 if let Some(init) = init_expr {
                     self.last_composite_alloc = None;
+                    // Set type sig hint so struct instantiation can disambiguate generics
+                    self.type_sig_hint = type_sig.as_ref().cloned();
                     let rhs_ir = self.lower_expr(init)?;
+                    self.type_sig_hint = None;
                     // Track composite type from RHS if applicable
                     if let Some((comp_type, comp_base)) = self.last_composite_alloc.take() {
                         if let Some(scope) = self.scopes.last_mut() {
@@ -194,6 +198,29 @@ impl AstToEgglog {
                     }
                 }
                 self.last_composite_alloc = None;
+
+                // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
+                if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs {
+                    if let Some(result) =
+                        self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)?
+                    {
+                        return Ok(result);
+                    }
+                    if let Some(result) =
+                        self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)?
+                    {
+                        return Ok(result);
+                    }
+                    if self.std_ops_traits.contains("Index") {
+                        return self.lower_method_call(
+                            arr_base,
+                            "set",
+                            &[arr_index.as_ref().clone(), rhs.clone()],
+                            arr_span,
+                        );
+                    }
+                }
+
                 self.lower_assignment_with_composite(lhs, rhs_ir, rhs_composite.as_ref())
             }
 
@@ -212,6 +239,7 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -283,9 +311,25 @@ impl AstToEgglog {
 
             edge_ast::Stmt::Expr(expr) => self.lower_expr(expr),
 
-            edge_ast::Stmt::Break(_) | edge_ast::Stmt::Continue(_) => {
-                // Break/continue need special handling within loop context
-                // For now, return empty
+            edge_ast::Stmt::Break(span) => {
+                self.warnings.push(
+                    edge_diagnostics::Diagnostic::warning(
+                        "`break` is not yet implemented and will be ignored",
+                    )
+                    .with_label(span.clone(), "has no effect"),
+                );
+                Ok(ast_helpers::empty(
+                    EvmType::Base(EvmBaseType::UnitT),
+                    self.current_ctx.clone(),
+                ))
+            }
+            edge_ast::Stmt::Continue(span) => {
+                self.warnings.push(
+                    edge_diagnostics::Diagnostic::warning(
+                        "`continue` is not yet implemented and will be ignored",
+                    )
+                    .with_label(span.clone(), "has no effect"),
+                );
                 Ok(ast_helpers::empty(
                     EvmType::Base(EvmBaseType::UnitT),
                     self.current_ctx.clone(),
@@ -425,6 +469,29 @@ impl AstToEgglog {
                     }
                 }
                 self.last_composite_alloc = None;
+
+                // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
+                if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs.as_ref() {
+                    if let Some(result) =
+                        self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)?
+                    {
+                        return Ok(result);
+                    }
+                    if let Some(result) =
+                        self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)?
+                    {
+                        return Ok(result);
+                    }
+                    if self.std_ops_traits.contains("Index") {
+                        return self.lower_method_call(
+                            arr_base,
+                            "set",
+                            &[arr_index.as_ref().clone(), rhs.as_ref().clone()],
+                            arr_span,
+                        );
+                    }
+                }
+
                 self.lower_assignment_with_composite(lhs, rhs_ir, rhs_composite.as_ref())
             }
 
@@ -484,8 +551,18 @@ impl AstToEgglog {
                 }
 
                 // Check if base is a memory-backed array/struct variable
-                self.try_lower_array_element_read(base, index)?
-                    .map_or_else(|| self.lower_mapping_read(base, index), Ok)
+                if let Some(result) = self.try_lower_array_element_read(base, index)? {
+                    return Ok(result);
+                }
+
+                // Try Index trait dispatch: base[index] → base.index(index)
+                if self.std_ops_traits.contains("Index") {
+                    return self.lower_method_call(base, "index", &[index.as_ref().clone()], _span);
+                }
+
+                Err(IrError::Unsupported(
+                    "array index on non-array type; use Map<K,V>.get(key) for mappings".to_owned(),
+                ))
             }
 
             edge_ast::Expr::Paren(inner, _span) => self.lower_expr(inner),
@@ -494,13 +571,18 @@ impl AstToEgglog {
                 self.lower_field_access(obj, &field.name)
             }
 
-            edge_ast::Expr::Path(components, _span) => {
+            edge_ast::Expr::Path(components, span) => {
                 // Check if this is a union variant path like Direction::North
                 if components.len() == 2 {
                     let type_name = &components[0].name;
                     let variant_name = &components[1].name;
                     if self.union_types.contains_key(type_name) {
-                        return self.lower_union_instantiation_expr(type_name, variant_name, &[]);
+                        return self.lower_union_instantiation_expr(
+                            type_name,
+                            variant_name,
+                            &[],
+                            Some(span),
+                        );
                     }
                     // Check for generic union types (e.g., Option::None where Option<T> was monomorphized)
                     if self.generic_type_templates.contains_key(type_name) {
@@ -509,6 +591,7 @@ impl AstToEgglog {
                                 &mangled,
                                 variant_name,
                                 &[],
+                                Some(span),
                             );
                         }
                     }
@@ -571,9 +654,13 @@ impl AstToEgglog {
                 self.lower_array_instantiation(elements)
             }
 
-            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, _span) => {
-                self.lower_union_instantiation_expr(&type_name.name, &variant_name.name, args)
-            }
+            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, span) => self
+                .lower_union_instantiation_expr(
+                    &type_name.name,
+                    &variant_name.name,
+                    args,
+                    Some(span),
+                ),
 
             edge_ast::Expr::PatternMatch(expr, pattern, _span) => {
                 self.lower_pattern_match(expr, pattern)
@@ -663,6 +750,18 @@ impl AstToEgglog {
         // Search scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.bindings.get(name) {
+                // Unit-typed storage fields return the slot constant directly.
+                // They have no data to SLOAD — their value IS the slot number.
+                // This enables types like Map<K,V> = () to work as slot references.
+                // Note: () can lower as either Base(UnitT) or TupleT([]).
+                let is_unit = matches!(binding._ty, EvmType::Base(EvmBaseType::UnitT))
+                    || matches!(&binding._ty, EvmType::TupleT(v) if v.is_empty());
+                if binding.storage_slot.is_some() && is_unit {
+                    return Ok(ast_helpers::const_int(
+                        binding.storage_slot.unwrap_or(0) as i64,
+                        self.current_ctx.clone(),
+                    ));
+                }
                 return match binding.location {
                     DataLocation::Storage => {
                         // Persistent storage variable: emit SLOAD
@@ -691,17 +790,16 @@ impl AstToEgglog {
                 };
             }
         }
-        span.map_or_else(
-            || Err(IrError::Lowering(format!("undefined variable: {name}"))),
-            |span| {
-                Err(IrError::Diagnostic(
-                    edge_diagnostics::Diagnostic::error(format!(
-                        "cannot find value `{name}` in this scope",
-                    ))
-                    .with_label(span.clone(), "not found in this scope"),
-                ))
-            },
-        )
+        // Always emit a Diagnostic error — use span when available
+        let diag = edge_diagnostics::Diagnostic::error(format!(
+            "cannot find value `{name}` in this scope",
+        ));
+        let diag = if let Some(span) = span {
+            diag.with_label(span.clone(), "not found in this scope")
+        } else {
+            diag
+        };
+        Err(IrError::Diagnostic(diag))
     }
 
     /// Lower an assignment expression.
@@ -805,8 +903,14 @@ impl AstToEgglog {
                 if let Some(result) = self.try_lower_storage_array_write(base, index, &rhs_ir)? {
                     return Ok(result);
                 }
-                self.try_lower_array_element_write(base, index, &rhs_ir)?
-                    .map_or_else(|| self.lower_mapping_write(base, index, rhs_ir), Ok)
+                if let Some(result) = self.try_lower_array_element_write(base, index, &rhs_ir)? {
+                    return Ok(result);
+                }
+                // Index write dispatch is handled in the Assign branch above
+                Err(IrError::Unsupported(
+                    "array index write on non-array type; use Map<K,V>.set(key, val) for mappings"
+                        .to_owned(),
+                ))
             }
             edge_ast::Expr::FieldAccess(obj, field, _span) => {
                 // Storage-backed packed struct sub-field write: self.color.r = 5
@@ -1163,9 +1267,12 @@ impl AstToEgglog {
             None => return Ok(None),
         };
 
-        // Check if the LHS is a user-defined type
+        // Check if the LHS is a user-defined type (skip primitives — they use built-in ops)
         let lhs_type = self.infer_receiver_type(lhs);
         if let Some(ref type_name) = lhs_type {
+            if Self::is_primitive_type(type_name) {
+                return Ok(None);
+            }
             // Only dispatch to operator traits from std::ops.
             // User-defined traits named "Add" etc. do NOT get operator overloading.
             if !self.std_ops_traits.contains(trait_name) {
@@ -1613,6 +1720,7 @@ impl AstToEgglog {
                     let_bind_name: Some(var_name.clone()),
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 // Get the original name (without prefix) for scope lookup
                 let orig_name = outputs

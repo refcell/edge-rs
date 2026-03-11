@@ -54,6 +54,9 @@ mod utils_exec;
 #[path = "suites/warnings.rs"]
 mod warnings;
 
+#[path = "suites/map_std_exec.rs"]
+mod map_std_exec;
+
 #[path = "suites/int_widths_exec.rs"]
 mod int_widths_exec;
 #[path = "suites/large_int_literals.rs"]

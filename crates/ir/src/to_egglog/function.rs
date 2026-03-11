@@ -67,6 +67,7 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: Some(format!("__array__{n}")),
                     composite_base: Some(base_ir),
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -74,6 +75,33 @@ impl AstToEgglog {
                     .bindings
                     .insert(ident.name.clone(), binding);
                 calldata_offset += n * 32;
+            } else if let Some((struct_name, n_fields)) = self.resolve_struct_param_type(type_sig) {
+                // Struct parameter: allocate memory and copy fields from calldata
+                let base_ir = self.alloc_region(n_fields);
+
+                // Copy each field from calldata to memory
+                let cd_off =
+                    ast_helpers::const_int(calldata_offset as i64, self.current_ctx.clone());
+                let size = ast_helpers::const_int((n_fields * 32) as i64, self.current_ctx.clone());
+                let copy = ast_helpers::calldatacopy(Rc::clone(&base_ir), cd_off, size);
+                array_param_prefix = ast_helpers::concat(array_param_prefix, copy);
+
+                let binding = VarBinding {
+                    value: Rc::clone(&base_ir),
+                    location: DataLocation::Stack,
+                    storage_slot: None,
+                    _ty: ty,
+                    let_bind_name: None,
+                    composite_type: Some(struct_name),
+                    composite_base: Some(base_ir),
+                    composite_type_args: Vec::new(),
+                };
+                self.scopes
+                    .last_mut()
+                    .expect("scope stack empty")
+                    .bindings
+                    .insert(ident.name.clone(), binding);
+                calldata_offset += n_fields * 32;
             } else {
                 // Scalar parameter: single 32-byte calldataload
                 let raw_val = Rc::new(EvmExpr::Bop(
@@ -105,6 +133,7 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -123,14 +152,37 @@ impl AstToEgglog {
         // Prepend array parameter loading before body
         let full_body = ast_helpers::concat(array_param_prefix, body_ir);
 
-        // Append a STOP (RETURN with 0 size) after the body.
-        // If the body already ends with RETURN, this is unreachable dead code.
-        let stop = ast_helpers::return_op(
-            ast_helpers::const_int(0, self.current_ctx.clone()),
-            ast_helpers::const_int(0, self.current_ctx.clone()),
-            Rc::clone(&self.current_state),
-        );
-        Ok(ast_helpers::concat(full_body, stop))
+        // If the function declares a return type and the body ends with a bare
+        // expression statement (trailing expression, Rust-style implicit return),
+        // wrap it with MSTORE + RETURN so the value is ABI-encoded in the output.
+        // Other endings (Return, Match, IfElse, etc.) handle their own returns.
+        let is_trailing_expr = body.stmts.last().is_some_and(|item| {
+            matches!(item, edge_ast::BlockItem::Stmt(s) if matches!(s.as_ref(), edge_ast::Stmt::Expr(..)))
+                || matches!(item, edge_ast::BlockItem::Expr(..))
+        });
+        if !fn_decl.returns.is_empty() && is_trailing_expr {
+            // Implicit return: body_ir's trailing value is the return value.
+            // Emit MSTORE(buf, value) + RETURN(buf, 32).
+            let ret_buf = self.alloc_region(1);
+            let size = ast_helpers::const_int(32, self.current_ctx.clone());
+            let mstore_expr = ast_helpers::mstore(
+                Rc::clone(&ret_buf),
+                full_body,
+                Rc::clone(&self.current_state),
+            );
+            self.current_state = Rc::clone(&mstore_expr);
+            let ret = ast_helpers::return_op(ret_buf, size, Rc::clone(&self.current_state));
+            Ok(ast_helpers::concat(mstore_expr, ret))
+        } else {
+            // No return type, or body already has explicit return.
+            // Append RETURN(0, 0) as a fallthrough stop.
+            let stop = ast_helpers::return_op(
+                ast_helpers::const_int(0, self.current_ctx.clone()),
+                ast_helpers::const_int(0, self.current_ctx.clone()),
+                Rc::clone(&self.current_state),
+            );
+            Ok(ast_helpers::concat(full_body, stop))
+        }
     }
 
     /// Lower a standalone function.
@@ -184,6 +236,7 @@ impl AstToEgglog {
                     None
                 },
                 composite_base: None, // dynamic base — resolved at element access
+                composite_type_args: Vec::new(),
             };
             self.scopes
                 .last_mut()
@@ -323,19 +376,21 @@ impl AstToEgglog {
 
         // Lower all statements
         let mut stmts: Vec<RcExpr> = Vec::new();
-        for item in &block.stmts {
+        let last_idx = block.stmts.len().saturating_sub(1);
+        for (idx, item) in block.stmts.iter().enumerate() {
             let ir = match item {
                 edge_ast::BlockItem::Stmt(stmt) => {
-                    // Check for expression-statements with unused return values
-                    if let edge_ast::Stmt::Expr(expr) = stmt.as_ref() {
-                        self.check_unused_return_value(expr);
+                    // Check for expression-statements with unused return values.
+                    // Skip the last statement — it's the tail expression (block's
+                    // return value) and its value IS consumed by the caller.
+                    if idx != last_idx {
+                        if let edge_ast::Stmt::Expr(expr) = stmt.as_ref() {
+                            self.check_unused_return_value(expr);
+                        }
                     }
                     self.lower_stmt(stmt)?
                 }
-                edge_ast::BlockItem::Expr(expr) => {
-                    self.check_unused_return_value(expr);
-                    self.lower_expr(expr)?
-                }
+                edge_ast::BlockItem::Expr(expr) => self.lower_expr(expr)?,
             };
             stmts.push(ir);
         }
@@ -514,6 +569,7 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type: None,
                 composite_base: None,
+                composite_type_args: Vec::new(),
             };
             self.scopes
                 .last_mut()
@@ -547,5 +603,32 @@ impl AstToEgglog {
         let func_node = ast_helpers::function(name.to_string(), in_ty, out_ty, body_ir);
         self.lowered_functions.push(func_node);
         Ok(())
+    }
+
+    /// Check if a parameter type sig resolves to a known struct type.
+    /// Returns `(struct_name, field_count)` if so.
+    pub(crate) fn resolve_struct_param_type(
+        &self,
+        type_sig: &edge_ast::ty::TypeSig,
+    ) -> Option<(String, usize)> {
+        let resolved = self.resolve_type_alias(type_sig);
+        let name = match resolved {
+            edge_ast::ty::TypeSig::Named(ident, _) => &ident.name,
+            _ => return None,
+        };
+
+        // Direct lookup
+        if let Some(info) = self.struct_types.get(name.as_str()) {
+            return Some((name.clone(), info.fields.len()));
+        }
+
+        // Try resolving through type_param_subst (for generic params like V → CustomSStore)
+        if let Some(resolved_name) = self.type_param_subst.get(name.as_str()) {
+            if let Some(info) = self.struct_types.get(resolved_name.as_str()) {
+                return Some((resolved_name.clone(), info.fields.len()));
+            }
+        }
+
+        None
     }
 }

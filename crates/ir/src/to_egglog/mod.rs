@@ -14,7 +14,10 @@ mod pattern;
 mod storage;
 mod types;
 
-use std::{collections::HashSet, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use indexmap::IndexMap;
 
@@ -93,6 +96,8 @@ pub(crate) struct VarBinding {
     pub composite_type: Option<String>,
     /// For struct/array-typed variables: the memory base offset
     pub composite_base: Option<RcExpr>,
+    /// For generic composite types: the concrete type arguments (e.g., [addr, u256] for Map<addr, u256>)
+    pub composite_type_args: Vec<edge_ast::ty::TypeSig>,
 }
 
 /// Scope for variable resolution during lowering.
@@ -134,6 +139,16 @@ pub(crate) struct FreeFnInfo {
 pub(crate) struct GenericTypeTemplate {
     pub type_params: Vec<edge_ast::ty::TypeParam>,
     pub type_sig: edge_ast::ty::TypeSig,
+}
+
+/// Stored impl block for a generic type, used during monomorphization.
+#[derive(Debug, Clone)]
+pub(crate) struct GenericImplBlock {
+    pub type_params: Vec<edge_ast::ty::TypeParam>,
+    pub trait_impl: Option<String>, // trait name, or None for inherent impl
+    /// The trait's type arguments (e.g., `[K, V]` for `impl Foo: Index<K, V>`)
+    pub trait_type_params: Vec<edge_ast::ty::TypeParam>,
+    pub items: Vec<edge_ast::item::ImplItem>,
 }
 
 /// Packed layout for a single field within a packed struct.
@@ -236,6 +251,8 @@ pub(crate) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct TraitImplInfo {
     pub methods: IndexMap<String, (edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
+    /// Trait type arguments from the impl declaration (e.g., `[K, V]` for `impl Foo: Index<K, V>`).
+    pub trait_type_args: Vec<edge_ast::ty::TypeSig>,
     pub span: edge_types::span::Span,
 }
 
@@ -276,6 +293,8 @@ pub struct AstToEgglog {
     pub(crate) inline_counter: usize,
     /// Prefix for variable names when inlining (empty at top level)
     pub(crate) inline_prefix: String,
+    /// Active type parameter substitutions (e.g., {"K": "addr", "V": "u256"} when inlining Map<addr, u256> methods)
+    pub(crate) type_param_subst: HashMap<String, String>,
     /// Union/enum type declarations: `type_name` -> `[(variant_name, has_data)]`
     /// Variant index is its position in the vector.
     pub(crate) union_types: IndexMap<String, Vec<(String, bool)>>,
@@ -298,8 +317,10 @@ pub struct AstToEgglog {
     // ---- Generics & Traits ----
     /// Generic type templates: name -> template info (type params + original `TypeSig`)
     pub(crate) generic_type_templates: IndexMap<String, GenericTypeTemplate>,
+    /// Generic impl blocks: `base_type_name` -> list of impl blocks (for monomorphization)
+    pub(crate) generic_impl_blocks: IndexMap<String, Vec<GenericImplBlock>>,
     /// Cache of monomorphized types: (`generic_name`, `concrete_types`) -> `mangled_name`
-    pub(crate) monomorphized_types: IndexMap<(String, Vec<EvmType>), String>,
+    pub(crate) monomorphized_types: IndexMap<(String, Vec<String>), String>,
     /// Generic function templates: name -> `FreeFnInfo` (with `type_params`)
     pub(crate) generic_fn_templates: IndexMap<String, FreeFnInfo>,
     /// Cache of monomorphized function bodies: `mangled_name` -> `FreeFnInfo`
@@ -318,6 +339,9 @@ pub struct AstToEgglog {
     /// Type hint from assignment target, used for generic return-type inference.
     /// Set before lowering the RHS of a typed variable assignment, cleared after.
     pub(crate) type_hint: Option<EvmType>,
+    /// `TypeSig` hint from assignment target, used to disambiguate generic struct instantiation.
+    /// Set before lowering the RHS of a typed variable declaration, cleared after.
+    pub(crate) type_sig_hint: Option<edge_ast::ty::TypeSig>,
     /// Compiler warnings collected during lowering
     pub(crate) warnings: Vec<edge_diagnostics::Diagnostic>,
 }
@@ -349,6 +373,7 @@ impl AstToEgglog {
             inline_depth: 0,
             inline_counter: 0,
             inline_prefix: String::new(),
+            type_param_subst: HashMap::new(),
             union_types: IndexMap::new(),
             struct_types: IndexMap::new(),
             type_aliases: IndexMap::new(),
@@ -357,6 +382,7 @@ impl AstToEgglog {
             last_composite_alloc: None,
             module_prefixes: HashSet::new(),
             generic_type_templates: IndexMap::new(),
+            generic_impl_blocks: IndexMap::new(),
             monomorphized_types: IndexMap::new(),
             generic_fn_templates: IndexMap::new(),
             monomorphized_fns: IndexMap::new(),
@@ -366,6 +392,7 @@ impl AstToEgglog {
             _self_type: None,
             std_ops_traits: HashSet::new(),
             type_hint: None,
+            type_sig_hint: None,
             warnings: Vec::new(),
         }
     }
@@ -377,6 +404,18 @@ impl AstToEgglog {
         let id = self.next_region_id;
         self.next_region_id += 1;
         crate::ast_helpers::mem_region(id, size_words as i64)
+    }
+
+    /// Extract the type name and type args from a Named type sig, unwrapping Pointer wrappers.
+    /// Returns (`base_name`, `type_args`), e.g., ("Map", [addr, u256]) from `&s Map<addr, u256>`.
+    fn extract_named_type(
+        type_sig: &edge_ast::ty::TypeSig,
+    ) -> Option<(String, Vec<edge_ast::ty::TypeSig>)> {
+        match type_sig {
+            edge_ast::ty::TypeSig::Named(name, args) => Some((name.name.clone(), args.clone())),
+            edge_ast::ty::TypeSig::Pointer(_, inner) => Self::extract_named_type(inner),
+            _ => None,
+        }
     }
 
     /// Lower an entire program.
@@ -420,7 +459,16 @@ impl AstToEgglog {
             "UnsafeAdd",
             "UnsafeSub",
             "UnsafeMul",
+            "UniqueSlot",
+            "Sload",
+            "Sstore",
+            "Index",
         ];
+        // Storage/hashing traits are fundamental (auto-imported from globals).
+        // Always enable them so compiler-provided impls work without explicit `use`.
+        for name in ["UniqueSlot", "Sload", "Sstore", "Index"] {
+            self.std_ops_traits.insert(name.to_string());
+        }
         for stmt in &program.stmts {
             if let edge_ast::Stmt::ModuleImport(import) = stmt {
                 if import.root.name == "std" {
@@ -452,6 +500,35 @@ impl AstToEgglog {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Register compiler-provided trait impls for primitive types so that
+        // trait bound validation in monomorphize_type() passes for types like
+        // `Map<addr, u256>` which requires `addr: UniqueSlot` and `u256: Sload & Sstore`.
+        {
+            let primitive_types = [
+                "u256", "u248", "u240", "u232", "u224", "u216", "u208", "u200", "u192", "u184",
+                "u176", "u168", "u160", "u152", "u144", "u136", "u128", "u120", "u112", "u104",
+                "u96", "u88", "u80", "u72", "u64", "u56", "u48", "u40", "u32", "u24", "u16", "u8",
+                "i256", "i248", "i240", "i232", "i224", "i216", "i208", "i200", "i192", "i184",
+                "i176", "i168", "i160", "i152", "i144", "i136", "i128", "i120", "i112", "i104",
+                "i96", "i88", "i80", "i72", "i64", "i56", "i48", "i40", "i32", "i24", "i16", "i8",
+                "address", "bool", "b32",
+            ];
+            let primitive_traits = ["UniqueSlot", "Sload", "Sstore"];
+            for prim in &primitive_types {
+                for trait_name in &primitive_traits {
+                    // Empty methods — compiler-provided dispatch handles actual codegen
+                    self.trait_impls.insert(
+                        (prim.to_string(), trait_name.to_string()),
+                        TraitImplInfo {
+                            methods: IndexMap::new(),
+                            trait_type_args: Vec::new(),
+                            span: edge_types::span::Span::EOF,
+                        },
+                    );
                 }
             }
         }
@@ -528,6 +605,7 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -617,6 +695,29 @@ impl AstToEgglog {
                 }
                 edge_ast::Stmt::ImplBlock(impl_block) => {
                     let type_name = impl_block.ty_name.name.clone();
+
+                    // Store generic impl blocks for monomorphization
+                    if !impl_block.type_params.is_empty()
+                        || self.generic_type_templates.contains_key(&type_name)
+                    {
+                        let trait_name =
+                            impl_block.trait_impl.as_ref().map(|(n, _)| n.name.clone());
+                        let trait_type_params = impl_block
+                            .trait_impl
+                            .as_ref()
+                            .map(|(_, params)| params.clone())
+                            .unwrap_or_default();
+                        self.generic_impl_blocks
+                            .entry(type_name.clone())
+                            .or_default()
+                            .push(GenericImplBlock {
+                                type_params: impl_block.type_params.clone(),
+                                trait_impl: trait_name,
+                                trait_type_params,
+                                items: impl_block.items.clone(),
+                            });
+                    }
+
                     if let Some((ref trait_name, _)) = impl_block.trait_impl {
                         // Trait impl — collect methods and validate against trait definition
                         let mut methods = IndexMap::new();
@@ -671,10 +772,24 @@ impl AstToEgglog {
                             }
                         }
 
+                        // Extract trait type args from the impl declaration
+                        let trait_type_args: Vec<edge_ast::ty::TypeSig> = impl_block
+                            .trait_impl
+                            .as_ref()
+                            .map(|(_, params)| {
+                                params
+                                    .iter()
+                                    .map(|p| {
+                                        edge_ast::ty::TypeSig::Named(p.name.clone(), Vec::new())
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         self.trait_impls.insert(
                             (type_name, trait_name.name.clone()),
                             TraitImplInfo {
                                 methods,
+                                trait_type_args,
                                 span: impl_block.span.clone(),
                             },
                         );
@@ -854,7 +969,26 @@ impl AstToEgglog {
             self.storage_fields.push(field_ir);
 
             // Check if the field type resolves to a packed struct
-            let composite_type = self.resolve_storage_packed_struct_type(type_sig);
+            let mut composite_type = self.resolve_storage_packed_struct_type(type_sig);
+
+            // For generic named types (e.g., Map<K,V>), set composite_type to
+            // the monomorphized name so method dispatch finds concrete methods.
+            let mut composite_type_args = Vec::new();
+            if composite_type.is_none() {
+                if let Some((name, args)) = Self::extract_named_type(type_sig) {
+                    if !args.is_empty() {
+                        // Use monomorphized name (e.g., "Map__address_u256")
+                        if let Ok(mangled) = self.try_monomorphize_named_type(&name, &args, None) {
+                            composite_type = mangled;
+                        } else {
+                            composite_type = Some(name);
+                        }
+                    } else {
+                        composite_type = Some(name);
+                    }
+                    composite_type_args = args;
+                }
+            }
 
             // Register in scope with the correct location
             let binding = VarBinding {
@@ -868,6 +1002,7 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type,
                 composite_base: None,
+                composite_type_args,
             };
             self.scopes
                 .last_mut()
@@ -892,6 +1027,7 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type: None,
                 composite_base: None,
+                composite_type_args: Vec::new(),
             };
             self.scopes
                 .last_mut()

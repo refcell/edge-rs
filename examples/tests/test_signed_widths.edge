@@ -77,17 +77,17 @@ contract TestSignedWidths {
 
     // Unsafe add: wraps without reverting
     pub fn i8_unsafe_add(a: i8, b: i8) -> (i8) {
-        return UnsafeAdd::unsafe_add(a, b);
+        return a.unsafe_add(b);
     }
 
     // Unsafe sub: wraps without reverting
     pub fn i8_unsafe_sub(a: i8, b: i8) -> (i8) {
-        return UnsafeSub::unsafe_sub(a, b);
+        return a.unsafe_sub(b);
     }
 
     // Unsafe mul: wraps without reverting
     pub fn i8_unsafe_mul(a: i8, b: i8) -> (i8) {
-        return UnsafeMul::unsafe_mul(a, b);
+        return a.unsafe_mul(b);
     }
 
     // ── Cast signed ↔ unsigned ──

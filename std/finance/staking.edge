@@ -4,7 +4,7 @@
 //   - Complex &s state: multiple maps, u256 arithmetic
 //   - Staked/Withdrawn/RewardPaid events
 //   - while loops for time-based reward calculations
-//   - map<addr, u256> storage mappings
+//   - Map<addr, u256> storage mappings
 //   - @caller() builtin
 //   - Internal helper functions for reward accumulation
 //   - Arithmetic: multiplication, division, addition, subtraction
@@ -47,13 +47,13 @@ contract Staking {
     let total_staked: &s u256;
 
     // Per-user staked balances.
-    let staked_balances: &s map<addr, u256>;
+    let staked_balances: &s Map<addr, u256>;
 
     // Per-user accumulated rewards.
-    let rewards: &s map<addr, u256>;
+    let rewards: &s Map<addr, u256>;
 
     // Per-user reward per token paid (for pro-rata calculation).
-    let user_reward_per_token_paid: &s map<addr, u256>;
+    let user_reward_per_token_paid: &s Map<addr, u256>;
 
     // Global reward per token stored.
     let reward_per_token_stored: &s u256;
