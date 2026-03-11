@@ -19,8 +19,8 @@ abi IStressStorage {
 
 contract StressStorage {
     let total: &s u256;
-    let balances: &s u256;
-    let nonces: &s u256;
+    let balances: &s Map<addr, u256>;
+    let nonces: &s Map<addr, u256>;
 
     // Reads @caller, reads balance, writes balance, writes total, emits event.
     // Tests: interleaved SLOAD, SSTORE, MSTORE for keccak, and LetBind variables.

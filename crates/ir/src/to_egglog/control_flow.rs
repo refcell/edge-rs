@@ -66,6 +66,7 @@ impl AstToEgglog {
                             let_bind_name: Some(var_name),
                             composite_type: None,
                             composite_base: None,
+                    composite_type_args: Vec::new(),
                         },
                     );
             }
@@ -176,6 +177,7 @@ impl AstToEgglog {
                             let_bind_name: Some(var_name.clone()),
                             composite_type: None,
                             composite_base: None,
+                    composite_type_args: Vec::new(),
                         };
                         self.scopes
                             .last_mut()

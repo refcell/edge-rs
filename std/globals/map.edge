@@ -1,0 +1,87 @@
+// map.edge — Generic storage mapping type
+//
+// Map<K, V> is a zero-storage type — at runtime it's just a u256 (the base slot).
+// K and V are phantom type parameters that guide dispatch via monomorphization.
+//
+// Key insight for nested maps (Map<K, Map<K2, V>>):
+//   Map implements Sload as identity (no actual SLOAD — returns the slot as-is).
+//   So `outer.get(k1)` derives a slot and "loads" the inner Map, which is just
+//   that derived slot. Then `.get(k2)` derives again and SLOADs the leaf value.
+//
+// Requirements:
+//   - Keys must implement Hash (derive_slot: key + base_slot → keccak256 → new slot)
+//   - Leaf values must implement Sload + Sstore (actual SLOAD/SSTORE opcodes)
+//   - Map values implement Sload as identity (no SLOAD, slot passthrough)
+//
+// Usage:
+//   use std::map::Map;
+//
+//   contract MyContract {
+//       let balances: &s Map<u256, u256>;
+//       let allowances: &s Map<address, Map<address, u256>>;
+//
+//       fn get_balance(key: u256) -> u256 {
+//           self.balances.get(key)
+//       }
+//
+//       fn get_allowance(owner: address, spender: address) -> u256 {
+//           self.allowances.get(owner).get(spender)
+//       }
+//
+//       fn set_balance(key: u256, val: u256) {
+//           self.balances.set(key, val);
+//       }
+//   }
+
+use std::ops::UniqueSlot;
+use std::ops::Sload;
+use std::ops::Sstore;
+
+// Map<K, V> is just a u256 at runtime — the base slot number.
+// Contract fields declared as `let m: &s Map<K, V>` evaluate to
+// the slot constant (no SLOAD). Map is a zero-storage type.
+type Map<K: UniqueSlot, V: Sload & Sstore> = ();
+
+impl Map<K, V> {
+    // Derive the storage slot for `key` and load the value.
+    // For leaf V (u256, etc): V::sload does an actual SLOAD.
+    // For nested V (Map<K2, V2>): V::sload returns the slot as-is (identity).
+    fn get(self, key: K) -> (V) {
+        let slot: u256 = key.derive_slot(self);
+        V::sload(slot)
+    }
+
+    // Derive the storage slot for `key` and store the value.
+    fn set(self, key: K, val: V) {
+        let slot: u256 = key.derive_slot(self);
+        val.sstore(slot);
+    }
+}
+
+// Map implements Sload as identity — "loading" a Map from a slot
+// just returns the slot itself. No actual SLOAD is emitted.
+// This is what makes nested maps (Map<K, Map<K2, V>>) work:
+// the outer get() derives a slot and passes it through as the
+// inner Map's base slot, without touching storage.
+impl Map<K, V>: Sload {
+    fn sload(slot: u256) -> Self {
+        slot
+    }
+}
+
+// Map implements Sstore as a no-op — storing a Map to a slot does nothing.
+// This exists to satisfy the V: Sstore bound on nested Map<K, Map<K2, V>>
+// declarations. In practice, individual leaf values are stored directly.
+impl Map<K, V>: Sstore {
+    fn sstore(self, slot: u256) {
+        // No-op: Map values don't get stored to individual slots.
+        // Nested maps derive slots and store leaf values directly.
+    }
+}
+
+// Allow for map[key]
+impl Map<K, V>: Index<K, V> {
+    fn index(self, index: K) -> (V) {
+        self.get(index)
+    }
+}

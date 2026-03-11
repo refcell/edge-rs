@@ -1,5 +1,8 @@
 //! Function call lowering: call resolution, inlining, builtin calls.
 
+use std::collections::HashMap;
+use std::rc::Rc;
+
 use super::{AstToEgglog, FreeFnInfo, Scope, VarBinding};
 use crate::{
     ast_helpers,
@@ -60,13 +63,18 @@ impl AstToEgglog {
         // Check for qualified trait/type call: Path(["Type", "method"])
         if let edge_ast::Expr::Path(components, _) = callee {
             if components.len() == 2 {
-                let type_or_trait = &components[0].name;
+                // Resolve type parameter substitutions (e.g., V → u256 inside Map<K, V> methods)
+                let resolved_type = self.type_param_subst
+                    .get(&components[0].name)
+                    .cloned()
+                    .unwrap_or_else(|| components[0].name.clone());
+                let type_or_trait = &resolved_type;
                 let method_name = &components[1].name;
 
                 let method_span = &components[1].span;
 
                 // Check inherent methods: Type::method(receiver, args...)
-                if self.inherent_methods.contains_key(type_or_trait) {
+                if self.find_inherent_method(type_or_trait, method_name).is_some() {
                     return self.lower_qualified_method_call(
                         type_or_trait,
                         method_name,
@@ -85,6 +93,39 @@ impl AstToEgglog {
                         args,
                         method_span,
                     );
+                }
+
+                // Check primitive type qualified calls: u256::sload(slot), etc.
+                // This handles resolved type parameters like V::sload() where V = u256.
+                if Self::is_primitive_type(type_or_trait) {
+                    return self.lower_qualified_trait_call(
+                        type_or_trait,
+                        method_name,
+                        args,
+                        method_span,
+                    );
+                }
+
+                // Check trait impls for non-primitive types: Map::sload(slot), etc.
+                // Directly look up and inline the method from the type's trait impls.
+                if let Some((fn_decl, body)) = self.find_trait_method_for_type(type_or_trait, method_name) {
+                    let params: Vec<(String, edge_ast::ty::TypeSig)> = fn_decl
+                        .params
+                        .iter()
+                        .map(|(id, ty)| (id.name.clone(), ty.clone()))
+                        .collect();
+                    return self.inline_function_call(&params, &body, args);
+                }
+                // Also check inherent methods on the type
+                if let Some(method) = self.find_inherent_method(type_or_trait, method_name) {
+                    let fn_decl = method.fn_decl.clone();
+                    let body = method.body;
+                    let params: Vec<(String, edge_ast::ty::TypeSig)> = fn_decl
+                        .params
+                        .iter()
+                        .map(|(id, ty)| (id.name.clone(), ty.clone()))
+                        .collect();
+                    return self.inline_function_call(&params, &body, args);
                 }
             }
         }
@@ -171,8 +212,17 @@ impl AstToEgglog {
     ) -> Result<RcExpr, IrError> {
         // Determine receiver type from scope bindings
         let receiver_type = self.infer_receiver_type(receiver);
+        let receiver_type_args = self.infer_receiver_type_args(receiver);
+        tracing::trace!(
+            "lower_method_call: .{}(), receiver_type={:?}",
+            method_name,
+            receiver_type
+        );
 
         if let Some(ref type_name) = receiver_type {
+            // Build type param substitution map for generic types
+            let type_param_subst = self.build_type_param_subst(type_name, &receiver_type_args);
+
             // Check inherent methods first
             if let Some(method) = self.find_inherent_method(type_name, method_name) {
                 let fn_decl = method.fn_decl.clone();
@@ -185,7 +235,11 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                return self.inline_function_call(&params, &body, &all_args);
+                // Set type param substitutions for generic method bodies
+                let old_subst = std::mem::replace(&mut self.type_param_subst, type_param_subst.clone());
+                let result = self.inline_function_call(&params, &body, &all_args);
+                self.type_param_subst = old_subst;
+                return result;
             }
 
             // Check trait impls
@@ -197,7 +251,10 @@ impl AstToEgglog {
                     .iter()
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
-                return self.inline_function_call(&params, &body, &all_args);
+                let old_subst = std::mem::replace(&mut self.type_param_subst, type_param_subst);
+                let result = self.inline_function_call(&params, &body, &all_args);
+                self.type_param_subst = old_subst;
+                return result;
             }
 
             // Check compiler-provided trait methods for primitive types
@@ -214,6 +271,41 @@ impl AstToEgglog {
                     let lhs = self.lower_expr(receiver)?;
                     let rhs = self.lower_expr(&args[0])?;
                     return Ok(ast_helpers::bop(op, lhs, rhs));
+                }
+
+                // Check compiler-provided stateful methods (derive_slot, sload, sstore)
+                {
+                    let recv_ir = self.lower_expr(receiver)?;
+                    let args_ir: Vec<RcExpr> = args
+                        .iter()
+                        .map(|a| self.lower_expr(a))
+                        .collect::<Result<_, _>>()?;
+                    if let Some(result) =
+                        self.compiler_provided_stateful_method(method_name, Some(recv_ir), &args_ir)
+                    {
+                        return Ok(result);
+                    }
+                }
+            }
+
+            // Default derive_slot for struct types without explicit UniqueSlot impl.
+            // Chains keccak256 over each field like Solidity nested mappings:
+            //   slot = keccak256(field_0 . base_slot)
+            //   slot = keccak256(field_1 . slot)
+            //   ...
+            if method_name == "derive_slot"
+                && self.std_ops_traits.contains("UniqueSlot")
+                && args.len() == 1
+            {
+                if let Some(struct_info) = self.struct_types.get(type_name).cloned() {
+                    let recv_ir = self.lower_expr(receiver)?;
+                    let base_slot = self.lower_expr(&args[0])?;
+                    let result = self.default_struct_derive_slot(
+                        &recv_ir,
+                        &base_slot,
+                        &struct_info.fields,
+                    );
+                    return Ok(result);
                 }
             }
         }
@@ -256,6 +348,20 @@ impl AstToEgglog {
                 let lhs = self.lower_expr(receiver)?;
                 let rhs = self.lower_expr(&args[0])?;
                 return Ok(ast_helpers::bop(op, lhs, rhs));
+            }
+
+            // Also check stateful methods for unknown receiver
+            {
+                let recv_ir = self.lower_expr(receiver)?;
+                let args_ir: Vec<RcExpr> = args
+                    .iter()
+                    .map(|a| self.lower_expr(a))
+                    .collect::<Result<_, _>>()?;
+                if let Some(result) =
+                    self.compiler_provided_stateful_method(method_name, Some(recv_ir), &args_ir)
+                {
+                    return Ok(result);
+                }
             }
         }
 
@@ -337,6 +443,33 @@ impl AstToEgglog {
                     let lhs = self.lower_expr(&args[0])?;
                     let rhs = self.lower_expr(&args[1])?;
                     return Ok(ast_helpers::bop(op, lhs, rhs));
+                }
+
+                // Compiler-provided stateful methods (sload, sstore, derive_slot)
+                // For qualified calls: Sload::sload(slot) has no receiver (first arg is slot)
+                // Sstore::sstore(value, slot) has receiver as first arg
+                {
+                    let args_ir: Vec<RcExpr> = args
+                        .iter()
+                        .map(|a| self.lower_expr(a))
+                        .collect::<Result<_, _>>()?;
+                    // For static methods like sload: no receiver, all args
+                    if let Some(result) =
+                        self.compiler_provided_stateful_method(method_name, None, &args_ir)
+                    {
+                        return Ok(result);
+                    }
+                    // For instance methods like sstore/derive_slot: first arg is receiver
+                    if args_ir.len() >= 2 {
+                        let recv = args_ir[0].clone();
+                        if let Some(result) = self.compiler_provided_stateful_method(
+                            method_name,
+                            Some(recv),
+                            &args_ir[1..],
+                        ) {
+                            return Ok(result);
+                        }
+                    }
                 }
             }
         }
@@ -496,7 +629,8 @@ impl AstToEgglog {
                             return Some(ct.clone());
                         }
                         // Fall back to primitive type name from EvmType
-                        return Self::evm_type_to_name(&binding._ty);
+                        let result = Self::evm_type_to_name(&binding._ty);
+                        return result;
                     }
                 }
                 None
@@ -510,7 +644,105 @@ impl AstToEgglog {
                 edge_ast::Lit::Int(_, None, _) => Some("u256".to_string()),
                 _ => None,
             },
+            // FieldAccess on self: `self.field` — look up the field binding
+            edge_ast::Expr::FieldAccess(obj, field, _) => {
+                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
+                    if ident.name == "self" {
+                        // Look up the field in scope
+                        for scope in self.scopes.iter().rev() {
+                            if let Some(binding) = scope.bindings.get(&field.name) {
+                                if let Some(ref ct) = binding.composite_type {
+                                    return Some(ct.clone());
+                                }
+                                return Self::evm_type_to_name(&binding._ty);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            // ArrayIndex: base[index] — if base is a Map, the result type is the value type (V)
+            edge_ast::Expr::ArrayIndex(base, _, _, _) => {
+                let base_type = self.infer_receiver_type(base);
+                let base_args = self.infer_receiver_type_args(base);
+                if let Some(ref bt) = base_type {
+                    if bt.starts_with("Map") && base_args.len() == 2 {
+                        // V is the second type arg — use mangled name
+                        return Some(Self::type_sig_mangle(&base_args[1]));
+                    }
+                }
+                None
+            }
             _ => None,
+        }
+    }
+
+    /// Get the concrete type arguments for a receiver's generic composite type.
+    pub(crate) fn infer_receiver_type_args(&self, expr: &edge_ast::Expr) -> Vec<edge_ast::ty::TypeSig> {
+        match expr {
+            edge_ast::Expr::Ident(ident) => {
+                for scope in self.scopes.iter().rev() {
+                    if let Some(binding) = scope.bindings.get(&ident.name) {
+                        return binding.composite_type_args.clone();
+                    }
+                }
+                Vec::new()
+            }
+            edge_ast::Expr::FieldAccess(obj, field, _) => {
+                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
+                    if ident.name == "self" {
+                        for scope in self.scopes.iter().rev() {
+                            if let Some(binding) = scope.bindings.get(&field.name) {
+                                return binding.composite_type_args.clone();
+                            }
+                        }
+                    }
+                }
+                Vec::new()
+            }
+            // ArrayIndex: base[index] — if base is a Map, the result's type args come from V
+            edge_ast::Expr::ArrayIndex(base, _, _, _) => {
+                let base_args = self.infer_receiver_type_args(base);
+                if base_args.len() == 2 {
+                    if let edge_ast::ty::TypeSig::Named(_, inner_args) = &base_args[1] {
+                        return inner_args.clone();
+                    }
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Build a type parameter substitution map from a generic type's type params and concrete args.
+    /// E.g., for Map<K, V> with args [addr, u256], returns {"K": "addr", "V": "u256"}.
+    /// For nested generics like Map<addr, Map<addr, u256>>, V maps to "Map" (base name only).
+    fn build_type_param_subst(
+        &self,
+        type_name: &str,
+        type_args: &[edge_ast::ty::TypeSig],
+    ) -> HashMap<String, String> {
+        if type_args.is_empty() {
+            return HashMap::new();
+        }
+        // Try exact match first, then strip mangled suffix to find base template.
+        // E.g., "Map__CustomHash_CustomSStore" → try "Map" if exact lookup fails.
+        let template = self.generic_type_templates.get(type_name).or_else(|| {
+            let base = type_name.split("__").next().unwrap_or(type_name);
+            self.generic_type_templates.get(base)
+        });
+        if let Some(template) = template {
+            template
+                .type_params
+                .iter()
+                .zip(type_args.iter())
+                .map(|(param, arg)| {
+                    let name = Self::type_sig_mangle(arg);
+                    (param.name.name.clone(), name)
+                })
+                .collect()
+        } else {
+            HashMap::new()
         }
     }
 
@@ -552,6 +784,7 @@ impl AstToEgglog {
             || type_name == "i256"
             || type_name == "bool"
             || type_name == "address"
+            || type_name == "b32"
             || type_name.starts_with("u")
                 && type_name[1..].parse::<u16>().is_ok()
             || type_name.starts_with("i")
@@ -569,6 +802,147 @@ impl AstToEgglog {
             "unsafe_mul" if self.std_ops_traits.contains("UnsafeMul") => Some(EvmBinaryOp::Mul),
             _ => None,
         }
+    }
+
+    /// Compiler-provided complex trait methods for primitive types.
+    /// Unlike `compiler_provided_method` (simple binary ops), these produce
+    /// full IR expression trees with state threading.
+    ///
+    /// Returns `Some(ir_expr)` if the method was handled, `None` otherwise.
+    fn compiler_provided_stateful_method(
+        &mut self,
+        method_name: &str,
+        receiver_ir: Option<RcExpr>,
+        args_ir: &[RcExpr],
+    ) -> Option<RcExpr> {
+        use std::rc::Rc;
+
+        match method_name {
+            // UniqueSlot::derive_slot(self, base_slot) → keccak256(key . base_slot)
+            "derive_slot" if self.std_ops_traits.contains("UniqueSlot") => {
+                let key = receiver_ir?;
+                let base_slot = args_ir.first()?;
+                let scratch = self.alloc_region(2);
+                // MSTORE(scratch, key)
+                let mstore_key = ast_helpers::mstore(
+                    Rc::clone(&scratch),
+                    key,
+                    Rc::clone(&self.current_state),
+                );
+                self.current_state = Rc::clone(&mstore_key);
+                // MSTORE(scratch+32, base_slot)
+                let slot_offset = ast_helpers::add(
+                    Rc::clone(&scratch),
+                    ast_helpers::const_int(32, self.current_ctx.clone()),
+                );
+                let mstore_slot = ast_helpers::mstore(
+                    slot_offset,
+                    Rc::clone(base_slot),
+                    Rc::clone(&self.current_state),
+                );
+                self.current_state = Rc::clone(&mstore_slot);
+                // KECCAK256(scratch, 64, state)
+                let computed_slot = ast_helpers::keccak256(
+                    scratch,
+                    ast_helpers::const_int(64, self.current_ctx.clone()),
+                    Rc::clone(&self.current_state),
+                );
+                let side_effects = ast_helpers::concat(mstore_key, mstore_slot);
+                Some(ast_helpers::concat(side_effects, computed_slot))
+            }
+
+            // Sload::sload(slot) → SLOAD(slot, state) — static method (no receiver)
+            "sload" if self.std_ops_traits.contains("Sload") => {
+                let slot = if let Some(recv) = receiver_ir {
+                    // Called as receiver.sload() — receiver is the slot
+                    recv
+                } else {
+                    // Called as Type::sload(slot) — first arg is the slot
+                    args_ir.first()?.clone()
+                };
+                Some(ast_helpers::sload(slot, Rc::clone(&self.current_state)))
+            }
+
+            // Sstore::sstore(self, slot) → SSTORE(slot, value, state)
+            "sstore" if self.std_ops_traits.contains("Sstore") => {
+                let value = receiver_ir?;
+                let slot = args_ir.first()?;
+                let store = ast_helpers::sstore(
+                    Rc::clone(slot),
+                    value,
+                    Rc::clone(&self.current_state),
+                );
+                self.current_state = Rc::clone(&store);
+                Some(store)
+            }
+
+            _ => None,
+        }
+    }
+
+    /// Default `derive_slot` for struct types without an explicit `UniqueSlot` impl.
+    ///
+    /// Follows Solidity's nested mapping convention — each field is chained
+    /// through keccak256 as if it were a separate mapping level:
+    ///
+    /// ```text
+    /// slot = keccak256(field_0 . base_slot)
+    /// slot = keccak256(field_1 . slot)
+    /// slot = keccak256(field_2 . slot)
+    /// ...
+    /// ```
+    fn default_struct_derive_slot(
+        &mut self,
+        receiver_ir: &RcExpr,
+        base_slot: &RcExpr,
+        fields: &[(String, EvmType)],
+    ) -> RcExpr {
+        let scratch = self.alloc_region(2);
+        let mut current_slot = Rc::clone(base_slot);
+        let mut side_effects = ast_helpers::empty(
+            EvmType::Base(EvmBaseType::UnitT),
+            self.current_ctx.clone(),
+        );
+
+        for (i, (_name, _ty)) in fields.iter().enumerate() {
+            // Load field value: MLOAD(receiver + i*32)
+            let field_offset = ast_helpers::add(
+                Rc::clone(receiver_ir),
+                ast_helpers::const_int((i * 32) as i64, self.current_ctx.clone()),
+            );
+            let field_val = ast_helpers::mload(field_offset, Rc::clone(&self.current_state));
+
+            // MSTORE(scratch, field_value)
+            let mstore_field = ast_helpers::mstore(
+                Rc::clone(&scratch),
+                field_val,
+                Rc::clone(&self.current_state),
+            );
+            self.current_state = Rc::clone(&mstore_field);
+            side_effects = ast_helpers::concat(side_effects, mstore_field);
+
+            // MSTORE(scratch+32, current_slot)
+            let slot_offset = ast_helpers::add(
+                Rc::clone(&scratch),
+                ast_helpers::const_int(32, self.current_ctx.clone()),
+            );
+            let mstore_slot = ast_helpers::mstore(
+                slot_offset,
+                current_slot,
+                Rc::clone(&self.current_state),
+            );
+            self.current_state = Rc::clone(&mstore_slot);
+            side_effects = ast_helpers::concat(side_effects, mstore_slot);
+
+            // slot = keccak256(scratch, 64)
+            current_slot = ast_helpers::keccak256(
+                Rc::clone(&scratch),
+                ast_helpers::const_int(64, self.current_ctx.clone()),
+                Rc::clone(&self.current_state),
+            );
+        }
+
+        ast_helpers::concat(side_effects, current_slot)
     }
 
     /// Infer the `EvmType` of an expression (best-effort, defaults to u256).
@@ -656,12 +1030,55 @@ impl AstToEgglog {
             .collect::<Result<_, _>>()?;
 
         // Before pushing a new scope, look up composite info for args that are identifiers
-        // (needed for method calls where `self` refers to a struct variable)
-        let mut arg_composite: Vec<Option<(String, Option<RcExpr>)>> = Vec::new();
+        // (needed for method calls where `self` refers to a struct variable or generic type)
+        tracing::trace!(
+            "inline_function_call: params={:?}, args={}",
+            params.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
+            args.len()
+        );
+        let mut arg_composite: Vec<Option<(String, Option<RcExpr>, Vec<edge_ast::ty::TypeSig>)>> = Vec::new();
         for arg in args {
             if let edge_ast::Expr::Ident(ident) = arg {
                 let info = self.lookup_composite_info(&ident.name);
-                arg_composite.push(info.map(|(ct, cb)| (ct, Some(cb))));
+                if let Some((ct, cb)) = info {
+                    arg_composite.push(Some((ct, Some(cb), Vec::new())));
+                } else {
+                    // Check for composite_type without composite_base (e.g., Map type aliases)
+                    let mut found = false;
+                    for scope in self.scopes.iter().rev() {
+                        if let Some(binding) = scope.bindings.get(&ident.name) {
+                            if let Some(ref ct) = binding.composite_type {
+                                arg_composite.push(Some((ct.clone(), None, binding.composite_type_args.clone())));
+                                found = true;
+                            }
+                            break;
+                        }
+                    }
+                    if !found {
+                        arg_composite.push(None);
+                    }
+                }
+            } else if let edge_ast::Expr::ArrayIndex(base, _, _, _) = arg {
+                // For ArrayIndex args (e.g., map[key] as self parameter),
+                // infer the value type from the base Map's type args.
+                let base_type = self.infer_receiver_type(base);
+                let base_args = self.infer_receiver_type_args(base);
+                if let Some(ref bt) = base_type {
+                    if bt.starts_with("Map") && base_args.len() == 2 {
+                        let value_mangled = Self::type_sig_mangle(&base_args[1]);
+                        // Extract inner type args if V is a generic type
+                        let inner_args = if let edge_ast::ty::TypeSig::Named(_, inner) = &base_args[1] {
+                            inner.clone()
+                        } else {
+                            Vec::new()
+                        };
+                        arg_composite.push(Some((value_mangled, None, inner_args)));
+                    } else {
+                        arg_composite.push(None);
+                    }
+                } else {
+                    arg_composite.push(None);
+                }
             } else {
                 arg_composite.push(None);
             }
@@ -674,24 +1091,69 @@ impl AstToEgglog {
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
-            let (mut composite_type, composite_base) = arg_composite
+            let (mut composite_type, mut composite_base, composite_type_args) = arg_composite
                 .get(i)
                 .and_then(|c| c.as_ref())
-                .map(|(ct, cb)| (Some(ct.clone()), cb.clone()))
-                .unwrap_or((None, None));
+                .map(|(ct, cb, ta)| (Some(ct.clone()), cb.clone(), ta.clone()))
+                .unwrap_or((None, None, Vec::new()));
+
+            // If the parameter has a primitive type annotation, don't inherit
+            // composite_type from the argument — prevents Map type leaking through
+            // when Map.get passes `self` (Map) to derive_slot(base_slot: u256).
+            if matches!(param_ty, edge_ast::ty::TypeSig::Primitive(_)) && composite_type.is_some() {
+                // Only clear if the composite type doesn't match a known struct/union
+                // (the argument may be a struct disguised as u256 in the EVM)
+                if let Some(ref ct) = composite_type {
+                    if !self.struct_types.contains_key(ct) && !self.union_types.contains_key(ct) {
+                        composite_type = None;
+                    }
+                }
+            }
 
             // If composite_type is still None, check if the param type sig names
             // a known struct/union type — this enables trait method dispatch on
             // generic parameters after monomorphization substitutes concrete types.
+            // Also resolve generic type parameters (K, V, etc.) through type_param_subst.
             if composite_type.is_none() {
-                if let edge_ast::ty::TypeSig::Named(ref name, _) = param_ty {
-                    if self.struct_types.contains_key(&name.name)
-                        || self.union_types.contains_key(&name.name)
+                if let edge_ast::ty::TypeSig::Named(ref name, ref type_args) = param_ty {
+                    let resolved_name = self
+                        .type_param_subst
+                        .get(&name.name)
+                        .cloned()
+                        .unwrap_or_else(|| name.name.clone());
+                    if self.struct_types.contains_key(&resolved_name)
+                        || self.union_types.contains_key(&resolved_name)
                     {
-                        composite_type = Some(name.name.clone());
+                        composite_type = Some(resolved_name);
+                    } else if type_args.is_empty() {
+                        // Check if resolved name is a generic type that was
+                        // monomorphized (e.g., Result__u256)
+                        let mangled = Self::type_sig_mangle(param_ty);
+                        if self.struct_types.contains_key(&mangled)
+                            || self.union_types.contains_key(&mangled)
+                        {
+                            composite_type = Some(mangled);
+                        }
                     }
                 }
             }
+
+            // If we inferred composite_type from the type sig but have no
+            // composite_base, set it to the param value — for struct types
+            // the value IS the memory base address.
+            if composite_type.is_some() && composite_base.is_none() {
+                if let Some(ref ct) = composite_type {
+                    if self.struct_types.contains_key(ct) {
+                        composite_base = Some(Rc::clone(&val));
+                    }
+                }
+            }
+            tracing::trace!(
+                "  param={}, composite_type={:?}, has_base={}",
+                param_name,
+                composite_type,
+                composite_base.is_some()
+            );
             let binding = VarBinding {
                 value: val,
                 location: DataLocation::Stack,
@@ -700,6 +1162,7 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type,
                 composite_base,
+                composite_type_args,
             };
             self.scopes
                 .last_mut()

@@ -19,8 +19,8 @@ fn main() -> Result<()> {
 
     if let Some(level) = level {
         use tracing_subscriber::EnvFilter;
-        // Egglog is extremely noisy, suppress it unless TRACE level
-        let egglog_level = if level >= Level::TRACE {
+        // Egglog is extremely noisy — only enable at verbosity 5+ (-vvvvv)
+        let egglog_level = if cli.verbose >= 5 {
             "trace"
         } else {
             "warn"

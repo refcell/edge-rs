@@ -56,3 +56,24 @@ trait UnsafeSub {
 trait UnsafeMul {
     fn unsafe_mul(self, rhs: Self) -> (Self);
 }
+
+// Index trait allows for operator overloading of indexing, i.e. my_map[a][b] or my_array[0]
+// using a custom index and output.
+trait Index<Idx, Output> {
+    fn index(self, index: Idx) -> (Output);
+}
+
+trait UniqueSlot {
+    // Derive a storage slot from this key and a base slot.
+    // EVM convention: keccak256(abi.encode(key, base_slot))
+    // Compiler provides implementations for primitive types.
+    fn derive_slot(self, base_slot: u256) -> u256;
+}
+
+trait Sstore {
+    fn sstore(self, base_slot: u256);
+}
+
+trait Sload {
+    fn sload(base_slot: u256) -> Self;
+}

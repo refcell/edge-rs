@@ -1,7 +1,7 @@
 // roles.edge — Multi-role authority with role-based access control
 //
 // What this demonstrates:
-//   - Nested maps: map<addr, map<b32, bool>>
+//   - Nested maps: Map<addr, Map<b32, bool>>
 //   - const role identifiers (b32 type)
 //   - hasRole/grantRole/revokeRole pattern
 //   - Events with indexed fields
@@ -43,10 +43,10 @@ abi IAccessControl {
 
 contract AccessControl {
     // Nested mapping: role -> account -> has role.
-    let roles: &s map<b32, map<addr, bool>>;
+    let roles: &s Map<b32, Map<addr, bool>>;
 
     // Mapping from role to its admin role.
-    let role_admin: &s map<b32, b32>;
+    let role_admin: &s Map<b32, b32>;
 
     // Check if an account has a specific role.
     pub fn hasRole(role: b32, account: addr) -> (bool) {

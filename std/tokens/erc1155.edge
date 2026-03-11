@@ -62,10 +62,10 @@ contract ERC1155 {
     // ── State ─────────────────────────────────────────────────────────────────
 
     // Balances: owner -> token ID -> amount.
-    let balances: &s map<addr, map<u256, u256>>;
+    let balances: &s Map<addr, Map<u256, u256>>;
 
     // Operator approvals: owner -> operator -> approved.
-    let approval_for_all: &s map<addr, map<addr, bool>>;
+    let approval_for_all: &s Map<addr, Map<addr, bool>>;
 
     // ── Public Read Functions ─────────────────────────────────────────────────
 

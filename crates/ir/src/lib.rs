@@ -551,7 +551,28 @@ mod tests {
     fn test_egglog_roundtrip_erc20() {
         let source = std::fs::read_to_string("../../examples/erc20.edge").unwrap();
         let mut parser = edge_parser::Parser::new(&source).unwrap();
-        let ast = parser.parse().unwrap();
+        let mut ast = parser.parse().unwrap();
+
+        // Import globals (ops, map, etc.) the same way the driver does
+        let global_files = [
+            "globals/ops",
+            "globals/option",
+            "globals/result",
+            "globals/map",
+        ];
+        for key in &global_files {
+            let path = format!("../../std/{}.edge", key);
+            if let Ok(src) = std::fs::read_to_string(&path) {
+                if let Ok(mut p) = edge_parser::Parser::new(&src) {
+                    if let Ok(globals_ast) = p.parse() {
+                        // Prepend globals statements
+                        let mut new_stmts = globals_ast.stmts;
+                        new_stmts.append(&mut ast.stmts);
+                        ast.stmts = new_stmts;
+                    }
+                }
+            }
+        }
 
         let mut lowering = to_egglog::AstToEgglog::new();
         let ir_program = lowering.lower_program(&ast).unwrap();

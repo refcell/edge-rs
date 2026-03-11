@@ -132,6 +132,7 @@ impl AstToEgglog {
                     let_bind_name: Some(var_name.clone()),
                     composite_type,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -194,6 +195,25 @@ impl AstToEgglog {
                     }
                 }
                 self.last_composite_alloc = None;
+
+                // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
+                if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs {
+                    if let Some(result) = self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)? {
+                        return Ok(result);
+                    }
+                    if let Some(result) = self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)? {
+                        return Ok(result);
+                    }
+                    if self.std_ops_traits.contains("Index") {
+                        return self.lower_method_call(
+                            arr_base,
+                            "set",
+                            &[arr_index.as_ref().clone(), rhs.clone()],
+                            arr_span,
+                        );
+                    }
+                }
+
                 self.lower_assignment_with_composite(lhs, rhs_ir, rhs_composite.as_ref())
             }
 
@@ -212,6 +232,7 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 self.scopes
                     .last_mut()
@@ -441,6 +462,25 @@ impl AstToEgglog {
                     }
                 }
                 self.last_composite_alloc = None;
+
+                // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
+                if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs.as_ref() {
+                    if let Some(result) = self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)? {
+                        return Ok(result);
+                    }
+                    if let Some(result) = self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)? {
+                        return Ok(result);
+                    }
+                    if self.std_ops_traits.contains("Index") {
+                        return self.lower_method_call(
+                            arr_base,
+                            "set",
+                            &[arr_index.as_ref().clone(), rhs.as_ref().clone()],
+                            arr_span,
+                        );
+                    }
+                }
+
                 self.lower_assignment_with_composite(lhs, rhs_ir, rhs_composite.as_ref())
             }
 
@@ -500,8 +540,23 @@ impl AstToEgglog {
                 }
 
                 // Check if base is a memory-backed array/struct variable
-                self.try_lower_array_element_read(base, index)?
-                    .map_or_else(|| self.lower_mapping_read(base, index), Ok)
+                if let Some(result) = self.try_lower_array_element_read(base, index)? {
+                    return Ok(result);
+                }
+
+                // Try Index trait dispatch: base[index] → base.index(index)
+                if self.std_ops_traits.contains("Index") {
+                    return self.lower_method_call(
+                        base,
+                        "index",
+                        &[index.as_ref().clone()],
+                        _span,
+                    );
+                }
+
+                Err(IrError::Unsupported(
+                    "array index on non-array type; use Map<K,V>.get(key) for mappings".to_owned(),
+                ))
             }
 
             edge_ast::Expr::Paren(inner, _span) => self.lower_expr(inner),
@@ -680,6 +735,19 @@ impl AstToEgglog {
         // Search scopes from innermost to outermost
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.bindings.get(name) {
+                // Unit-typed storage fields return the slot constant directly.
+                // They have no data to SLOAD — their value IS the slot number.
+                // This enables types like Map<K,V> = () to work as slot references.
+                // Note: () can lower as either Base(UnitT) or TupleT([]).
+                let is_unit = matches!(binding._ty, EvmType::Base(EvmBaseType::UnitT))
+                    || matches!(&binding._ty, EvmType::TupleT(v) if v.is_empty());
+                if binding.storage_slot.is_some() && is_unit
+                {
+                    return Ok(ast_helpers::const_int(
+                        binding.storage_slot.unwrap_or(0) as i64,
+                        self.current_ctx.clone(),
+                    ));
+                }
                 return match binding.location {
                     DataLocation::Storage => {
                         // Persistent storage variable: emit SLOAD
@@ -821,8 +889,13 @@ impl AstToEgglog {
                 if let Some(result) = self.try_lower_storage_array_write(base, index, &rhs_ir)? {
                     return Ok(result);
                 }
-                self.try_lower_array_element_write(base, index, &rhs_ir)?
-                    .map_or_else(|| self.lower_mapping_write(base, index, rhs_ir), Ok)
+                if let Some(result) = self.try_lower_array_element_write(base, index, &rhs_ir)? {
+                    return Ok(result);
+                }
+                // Index write dispatch is handled in the Assign branch above
+                Err(IrError::Unsupported(
+                    "array index write on non-array type; use Map<K,V>.set(key, val) for mappings".to_owned(),
+                ))
             }
             edge_ast::Expr::FieldAccess(obj, field, _span) => {
                 // Storage-backed packed struct sub-field write: self.color.r = 5
@@ -1632,6 +1705,7 @@ impl AstToEgglog {
                     let_bind_name: Some(var_name.clone()),
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
                 };
                 // Get the original name (without prefix) for scope lookup
                 let orig_name = outputs
