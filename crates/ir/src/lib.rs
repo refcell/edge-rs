@@ -561,7 +561,7 @@ mod tests {
             "globals/map",
         ];
         for key in &global_files {
-            let path = format!("../../std/{}.edge", key);
+            let path = format!("../../std/{key}.edge");
             if let Ok(src) = std::fs::read_to_string(&path) {
                 if let Ok(mut p) = edge_parser::Parser::new(&src) {
                     if let Ok(globals_ast) = p.parse() {

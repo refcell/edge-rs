@@ -1,7 +1,6 @@
 //! Function call lowering: call resolution, inlining, builtin calls.
 
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use super::{AstToEgglog, FreeFnInfo, Scope, VarBinding};
 use crate::{
@@ -26,20 +25,35 @@ impl AstToEgglog {
                 let type_name = &components[0].name;
                 let variant_name = &components[1].name;
                 if self.union_types.contains_key(type_name) {
-                    return self.lower_union_instantiation_expr(type_name, variant_name, args, Some(span));
+                    return self.lower_union_instantiation_expr(
+                        type_name,
+                        variant_name,
+                        args,
+                        Some(span),
+                    );
                 }
                 // Check for generic union types (e.g., Result::Ok(42) where Result<T> was monomorphized)
                 if self.generic_type_templates.contains_key(type_name) {
                     // First try to find an already-monomorphized version
                     if let Some(mangled) = self.resolve_generic_type_name(type_name) {
-                        return self.lower_union_instantiation_expr(&mangled, variant_name, args, Some(span));
+                        return self.lower_union_instantiation_expr(
+                            &mangled,
+                            variant_name,
+                            args,
+                            Some(span),
+                        );
                     }
                     // No monomorphized version yet — try to infer type params from
                     // the constructor argument and monomorphize on the fly.
                     if let Some(mangled) =
                         self.try_monomorphize_union_from_constructor(type_name, variant_name, args)?
                     {
-                        return self.lower_union_instantiation_expr(&mangled, variant_name, args, Some(span));
+                        return self.lower_union_instantiation_expr(
+                            &mangled,
+                            variant_name,
+                            args,
+                            Some(span),
+                        );
                     }
                     return Err(IrError::Diagnostic(
                         edge_diagnostics::Diagnostic::error(format!(
@@ -64,7 +78,8 @@ impl AstToEgglog {
         if let edge_ast::Expr::Path(components, _) = callee {
             if components.len() == 2 {
                 // Resolve type parameter substitutions (e.g., V → u256 inside Map<K, V> methods)
-                let resolved_type = self.type_param_subst
+                let resolved_type = self
+                    .type_param_subst
                     .get(&components[0].name)
                     .cloned()
                     .unwrap_or_else(|| components[0].name.clone());
@@ -74,7 +89,10 @@ impl AstToEgglog {
                 let method_span = &components[1].span;
 
                 // Check inherent methods: Type::method(receiver, args...)
-                if self.find_inherent_method(type_or_trait, method_name).is_some() {
+                if self
+                    .find_inherent_method(type_or_trait, method_name)
+                    .is_some()
+                {
                     return self.lower_qualified_method_call(
                         type_or_trait,
                         method_name,
@@ -108,7 +126,9 @@ impl AstToEgglog {
 
                 // Check trait impls for non-primitive types: Map::sload(slot), etc.
                 // Directly look up and inline the method from the type's trait impls.
-                if let Some((fn_decl, body)) = self.find_trait_method_for_type(type_or_trait, method_name) {
+                if let Some((fn_decl, body)) =
+                    self.find_trait_method_for_type(type_or_trait, method_name)
+                {
                     let params: Vec<(String, edge_ast::ty::TypeSig)> = fn_decl
                         .params
                         .iter()
@@ -236,7 +256,7 @@ impl AstToEgglog {
                     .map(|(id, ty)| (id.name.clone(), ty.clone()))
                     .collect();
                 // Set type param substitutions for generic method bodies
-                let old_subst = std::mem::replace(&mut self.type_param_subst, type_param_subst.clone());
+                let old_subst = std::mem::replace(&mut self.type_param_subst, type_param_subst);
                 let result = self.inline_function_call(&params, &body, &all_args);
                 self.type_param_subst = old_subst;
                 return result;
@@ -293,11 +313,8 @@ impl AstToEgglog {
                 if let Some(struct_info) = self.struct_types.get(type_name).cloned() {
                     let recv_ir = self.lower_expr(receiver)?;
                     let base_slot = self.lower_expr(&args[0])?;
-                    let result = self.default_struct_derive_slot(
-                        &recv_ir,
-                        &base_slot,
-                        &struct_info.fields,
-                    );
+                    let result =
+                        self.default_struct_derive_slot(&recv_ir, &base_slot, &struct_info.fields);
                     return Ok(result);
                 }
             }
@@ -415,7 +432,7 @@ impl AstToEgglog {
             let receiver_type = self.infer_receiver_type(&args[0]);
             let is_primitive = receiver_type
                 .as_ref()
-                .map_or(true, |t| Self::is_primitive_type(t));
+                .is_none_or(|t| Self::is_primitive_type(t));
             if is_primitive {
                 if let Some(op) = self.compiler_provided_method(method_name) {
                     if args.len() != 2 {
@@ -447,7 +464,7 @@ impl AstToEgglog {
                     }
                     // For instance methods like sstore/derive_slot: first arg is receiver
                     if args_ir.len() >= 2 {
-                        let recv = args_ir[0].clone();
+                        let recv = Rc::clone(&args_ir[0]);
                         if let Some(result) = self.compiler_provided_stateful_method(
                             method_name,
                             Some(recv),
@@ -607,7 +624,10 @@ impl AstToEgglog {
     /// Infer the type of a receiver expression (best-effort).
     /// Look up the scope binding for an expression (Ident or self.field).
     /// Returns the variable name and binding reference if found.
-    fn lookup_binding_for_expr<'a>(&'a self, expr: &edge_ast::Expr) -> Option<&'a super::VarBinding> {
+    fn lookup_binding_for_expr<'a>(
+        &'a self,
+        expr: &edge_ast::Expr,
+    ) -> Option<&'a super::VarBinding> {
         let var_name = match expr {
             edge_ast::Expr::Ident(ident) => &ident.name,
             edge_ast::Expr::FieldAccess(obj, field, _) => {
@@ -644,9 +664,7 @@ impl AstToEgglog {
             edge_ast::Expr::StructInstantiation(_, type_name, _, _) => Some(type_name.name.clone()),
             edge_ast::Expr::Literal(lit) => match lit.as_ref() {
                 edge_ast::Lit::Bool(_, _) => Some("bool".to_string()),
-                edge_ast::Lit::Int(_, Some(pt), _) => {
-                    Some(Self::primitive_type_to_name(pt))
-                }
+                edge_ast::Lit::Int(_, Some(pt), _) => Some(Self::primitive_type_to_name(pt)),
                 edge_ast::Lit::Int(_, None, _) => Some("u256".to_string()),
                 _ => None,
             },
@@ -667,7 +685,10 @@ impl AstToEgglog {
     /// Look up the Index trait impl's Output type for a given type name.
     /// Returns the mangled name of the Output type if the type implements Index.
     pub(crate) fn index_output_type(&self, type_name: &str) -> Option<String> {
-        if let Some(impl_info) = self.trait_impls.get(&(type_name.to_string(), "Index".to_string())) {
+        if let Some(impl_info) = self
+            .trait_impls
+            .get(&(type_name.to_string(), "Index".to_string()))
+        {
             // Index<Idx, Output> — Output is the second type arg
             if impl_info.trait_type_args.len() >= 2 {
                 return Some(Self::type_sig_mangle(&impl_info.trait_type_args[1]));
@@ -676,9 +697,12 @@ impl AstToEgglog {
         None
     }
 
-    /// Look up the Index trait impl's Output TypeSig for a given type name.
+    /// Look up the Index trait impl's Output `TypeSig` for a given type name.
     pub(crate) fn index_output_type_sig(&self, type_name: &str) -> Option<edge_ast::ty::TypeSig> {
-        if let Some(impl_info) = self.trait_impls.get(&(type_name.to_string(), "Index".to_string())) {
+        if let Some(impl_info) = self
+            .trait_impls
+            .get(&(type_name.to_string(), "Index".to_string()))
+        {
             if impl_info.trait_type_args.len() >= 2 {
                 return Some(impl_info.trait_type_args[1].clone());
             }
@@ -687,7 +711,10 @@ impl AstToEgglog {
     }
 
     /// Get the concrete type arguments for a receiver's generic composite type.
-    pub(crate) fn infer_receiver_type_args(&self, expr: &edge_ast::Expr) -> Vec<edge_ast::ty::TypeSig> {
+    pub(crate) fn infer_receiver_type_args(
+        &self,
+        expr: &edge_ast::Expr,
+    ) -> Vec<edge_ast::ty::TypeSig> {
         if let Some(binding) = self.lookup_binding_for_expr(expr) {
             return binding.composite_type_args.clone();
         }
@@ -697,10 +724,10 @@ impl AstToEgglog {
             edge_ast::Expr::ArrayIndex(base, _, _, _) => {
                 let base_type = self.infer_receiver_type(base);
                 if let Some(ref bt) = base_type {
-                    if let Some(output_sig) = self.index_output_type_sig(bt) {
-                        if let edge_ast::ty::TypeSig::Named(_, inner_args) = &output_sig {
-                            return inner_args.clone();
-                        }
+                    if let Some(edge_ast::ty::TypeSig::Named(_, inner_args)) =
+                        self.index_output_type_sig(bt).as_ref()
+                    {
+                        return inner_args.clone();
                     }
                 }
                 Vec::new()
@@ -726,7 +753,7 @@ impl AstToEgglog {
             let base = type_name.split("__").next().unwrap_or(type_name);
             self.generic_type_templates.get(base)
         });
-        if let Some(template) = template {
+        template.map_or_else(HashMap::new, |template| {
             template
                 .type_params
                 .iter()
@@ -736,12 +763,10 @@ impl AstToEgglog {
                     (param.name.name.clone(), name)
                 })
                 .collect()
-        } else {
-            HashMap::new()
-        }
+        })
     }
 
-    /// Convert an EvmType to a type name string (for primitives).
+    /// Convert an `EvmType` to a type name string (for primitives).
     fn evm_type_to_name(ty: &EvmType) -> Option<String> {
         match ty {
             EvmType::Base(base) => match base {
@@ -758,7 +783,7 @@ impl AstToEgglog {
         }
     }
 
-    /// Convert a PrimitiveType to a type name string.
+    /// Convert a `PrimitiveType` to a type name string.
     fn primitive_type_to_name(pt: &edge_ast::ty::PrimitiveType) -> String {
         use edge_ast::ty::PrimitiveType;
         match pt {
@@ -776,16 +801,22 @@ impl AstToEgglog {
     /// Check if a type name refers to a primitive type (not a user-defined composite).
     pub(crate) fn is_primitive_type(type_name: &str) -> bool {
         matches!(type_name, "bool" | "address" | "b32" | "bit")
-            || type_name.strip_prefix('u').and_then(|s| s.parse::<u16>().ok())
+            || type_name
+                .strip_prefix('u')
+                .and_then(|s| s.parse::<u16>().ok())
                 .is_some_and(|w| (8..=256).contains(&w) && w % 8 == 0)
-            || type_name.strip_prefix('i').and_then(|s| s.parse::<u16>().ok())
+            || type_name
+                .strip_prefix('i')
+                .and_then(|s| s.parse::<u16>().ok())
                 .is_some_and(|w| (8..=256).contains(&w) && w % 8 == 0)
-            || type_name.strip_prefix("bytes").and_then(|s| s.parse::<u8>().ok())
+            || type_name
+                .strip_prefix("bytes")
+                .and_then(|s| s.parse::<u8>().ok())
                 .is_some_and(|n| (1..=32).contains(&n))
     }
 
     /// Look up a compiler-provided trait method for a primitive type.
-    /// Returns the binary op if the method matches an imported std::ops trait.
+    /// Returns the binary op if the method matches an imported `std::ops` trait.
     fn compiler_provided_method(&self, method_name: &str) -> Option<EvmBinaryOp> {
         match method_name {
             "unsafe_add" if self.std_ops_traits.contains("UnsafeAdd") => Some(EvmBinaryOp::Add),
@@ -831,11 +862,8 @@ impl AstToEgglog {
                 let base_slot = args_ir.first()?;
                 let scratch = self.alloc_region(2);
                 // MSTORE(scratch, key)
-                let mstore_key = ast_helpers::mstore(
-                    Rc::clone(&scratch),
-                    key,
-                    Rc::clone(&self.current_state),
-                );
+                let mstore_key =
+                    ast_helpers::mstore(Rc::clone(&scratch), key, Rc::clone(&self.current_state));
                 self.current_state = Rc::clone(&mstore_key);
                 // MSTORE(scratch+32, base_slot)
                 let slot_offset = ast_helpers::add(
@@ -865,7 +893,7 @@ impl AstToEgglog {
                     recv
                 } else {
                     // Called as Type::sload(slot) — first arg is the slot
-                    args_ir.first()?.clone()
+                    Rc::clone(args_ir.first()?)
                 };
                 Some(ast_helpers::sload(slot, Rc::clone(&self.current_state)))
             }
@@ -874,11 +902,8 @@ impl AstToEgglog {
             "sstore" if self.std_ops_traits.contains("Sstore") => {
                 let value = receiver_ir?;
                 let slot = args_ir.first()?;
-                let store = ast_helpers::sstore(
-                    Rc::clone(slot),
-                    value,
-                    Rc::clone(&self.current_state),
-                );
+                let store =
+                    ast_helpers::sstore(Rc::clone(slot), value, Rc::clone(&self.current_state));
                 self.current_state = Rc::clone(&store);
                 Some(store)
             }
@@ -906,10 +931,8 @@ impl AstToEgglog {
     ) -> RcExpr {
         let scratch = self.alloc_region(2);
         let mut current_slot = Rc::clone(base_slot);
-        let mut side_effects = ast_helpers::empty(
-            EvmType::Base(EvmBaseType::UnitT),
-            self.current_ctx.clone(),
-        );
+        let mut side_effects =
+            ast_helpers::empty(EvmType::Base(EvmBaseType::UnitT), self.current_ctx.clone());
 
         for (i, (_name, _ty)) in fields.iter().enumerate() {
             // Load field value: MLOAD(receiver + i*32)
@@ -933,11 +956,8 @@ impl AstToEgglog {
                 Rc::clone(&scratch),
                 ast_helpers::const_int(32, self.current_ctx.clone()),
             );
-            let mstore_slot = ast_helpers::mstore(
-                slot_offset,
-                current_slot,
-                Rc::clone(&self.current_state),
-            );
+            let mstore_slot =
+                ast_helpers::mstore(slot_offset, current_slot, Rc::clone(&self.current_state));
             self.current_state = Rc::clone(&mstore_slot);
             side_effects = ast_helpers::concat(side_effects, mstore_slot);
 
@@ -1043,13 +1063,17 @@ impl AstToEgglog {
             params.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(),
             args.len()
         );
-        let mut arg_composite: Vec<Option<(String, Option<RcExpr>, Vec<edge_ast::ty::TypeSig>)>> = Vec::new();
+        #[allow(clippy::type_complexity)]
+        let mut arg_composite: Vec<
+            Option<(String, Option<RcExpr>, Vec<edge_ast::ty::TypeSig>)>,
+        > = Vec::new();
         for arg in args {
             if let edge_ast::Expr::Ident(ident) = arg {
                 let info = self.lookup_composite_info(&ident.name);
                 if let Some((ct, cb)) = info {
                     // Also grab composite_type_args from the binding
-                    let type_args = self.lookup_binding_for_expr(arg)
+                    let type_args = self
+                        .lookup_binding_for_expr(arg)
                         .map(|b| b.composite_type_args.clone())
                         .unwrap_or_default();
                     arg_composite.push(Some((ct, Some(cb), type_args)));
@@ -1059,7 +1083,11 @@ impl AstToEgglog {
                     for scope in self.scopes.iter().rev() {
                         if let Some(binding) = scope.bindings.get(&ident.name) {
                             if let Some(ref ct) = binding.composite_type {
-                                arg_composite.push(Some((ct.clone(), None, binding.composite_type_args.clone())));
+                                arg_composite.push(Some((
+                                    ct.clone(),
+                                    None,
+                                    binding.composite_type_args.clone(),
+                                )));
                                 found = true;
                             }
                             break;
@@ -1076,7 +1104,8 @@ impl AstToEgglog {
                 if let Some(ref bt) = base_type {
                     if let Some(output_sig) = self.index_output_type_sig(bt) {
                         let value_mangled = Self::type_sig_mangle(&output_sig);
-                        let inner_args = if let edge_ast::ty::TypeSig::Named(_, inner) = &output_sig {
+                        let inner_args = if let edge_ast::ty::TypeSig::Named(_, inner) = &output_sig
+                        {
                             inner.clone()
                         } else {
                             Vec::new()
@@ -1149,11 +1178,9 @@ impl AstToEgglog {
                         }
                     } else {
                         // Named type with type args — try monomorphizing
-                        if let Ok(Some(mangled)) = self.try_monomorphize_named_type(
-                            &resolved_name,
-                            type_args,
-                            None,
-                        ) {
+                        if let Ok(Some(mangled)) =
+                            self.try_monomorphize_named_type(&resolved_name, type_args, None)
+                        {
                             composite_type = Some(mangled);
                             if composite_type_args.is_empty() {
                                 composite_type_args = type_args.clone();

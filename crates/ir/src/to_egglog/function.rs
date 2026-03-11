@@ -171,8 +171,7 @@ impl AstToEgglog {
                 Rc::clone(&self.current_state),
             );
             self.current_state = Rc::clone(&mstore_expr);
-            let ret =
-                ast_helpers::return_op(ret_buf, size, Rc::clone(&self.current_state));
+            let ret = ast_helpers::return_op(ret_buf, size, Rc::clone(&self.current_state));
             Ok(ast_helpers::concat(mstore_expr, ret))
         } else {
             // No return type, or body already has explicit return.
@@ -570,7 +569,7 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type: None,
                 composite_base: None,
-                    composite_type_args: Vec::new(),
+                composite_type_args: Vec::new(),
             };
             self.scopes
                 .last_mut()

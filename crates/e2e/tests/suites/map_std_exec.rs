@@ -2,9 +2,9 @@
 
 //! Execution-level tests for the std Map<K, V> type.
 //!
-//! Tests compile test_map_std.edge, deploy on in-memory revm, and verify
+//! Tests compile `test_map_std.edge`, deploy on in-memory revm, and verify
 //! basic Map get/set, index operators, direct custom storage, and
-//! Map<u256, CustomSStore> with user-defined Sload/Sstore impls.
+//! `Map<u256, CustomSStore>` with user-defined Sload/Sstore impls.
 
 use crate::helpers::*;
 
@@ -66,10 +66,7 @@ fn test_custom_storage_set_then_get() {
 fn test_basic_map_get_initially_zero() {
     let bc = compile_contract(CONTRACT);
     let mut evm = EvmHandle::new(bc);
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(42)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(42)]));
     assert!(r.success, "get_basic(42) reverted");
     assert_eq!(decode_u256(&r.output), 0, "unset key should return 0");
 }
@@ -85,10 +82,7 @@ fn test_basic_map_set_then_get() {
     ));
     assert!(r.success, "set_basic(1, 999) reverted");
 
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(1)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(1)]));
     assert!(r.success, "get_basic(1) reverted");
     assert_eq!(decode_u256(&r.output), 999, "get_basic(1) should be 999");
 }
@@ -110,17 +104,11 @@ fn test_basic_map_different_keys_independent() {
     ));
     assert!(r.success, "set_basic(20, 200) reverted");
 
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(10)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(10)]));
     assert!(r.success);
     assert_eq!(decode_u256(&r.output), 100);
 
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(20)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(20)]));
     assert!(r.success);
     assert_eq!(decode_u256(&r.output), 200);
 }
@@ -142,12 +130,13 @@ fn test_basic_map_overwrite() {
     ));
     assert!(r.success);
 
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(5)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(5)]));
     assert!(r.success);
-    assert_eq!(decode_u256(&r.output), 222, "overwritten value should be 222");
+    assert_eq!(
+        decode_u256(&r.output),
+        222,
+        "overwritten value should be 222"
+    );
 }
 
 // =============================================================================
@@ -188,10 +177,7 @@ fn test_basic_map_index_set() {
     assert!(r.success, "set_basic_by_indexable reverted");
 
     // Read via .get()
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(3)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(3)]));
     assert!(r.success, "get_basic reverted");
     assert_eq!(decode_u256(&r.output), 333);
 }
@@ -216,12 +202,13 @@ fn test_basic_map_index_interop() {
     assert_eq!(decode_u256(&r.output), 9999);
 
     // Also readable via .get()
-    let r = evm.call(calldata(
-        selector("get_basic(uint256)"),
-        &[encode_u256(99)],
-    ));
+    let r = evm.call(calldata(selector("get_basic(uint256)"), &[encode_u256(99)]));
     assert!(r.success);
-    assert_eq!(decode_u256(&r.output), 9999, ".get and index should read same slot");
+    assert_eq!(
+        decode_u256(&r.output),
+        9999,
+        ".get and index should read same slot"
+    );
 }
 
 // =============================================================================
@@ -238,12 +225,13 @@ fn test_basic_map_index_interop() {
 fn test_custom_map_get_initially_zero() {
     let bc = compile_contract(CONTRACT);
     let mut evm = EvmHandle::new(bc);
-    let r = evm.call(calldata(
-        selector("get_custom(uint256)"),
-        &[encode_u256(1)],
-    ));
+    let r = evm.call(calldata(selector("get_custom(uint256)"), &[encode_u256(1)]));
     assert!(r.success, "get_custom(1) reverted");
-    assert_eq!(decode_u256(&r.output), 0, "unset custom map key should be 0");
+    assert_eq!(
+        decode_u256(&r.output),
+        0,
+        "unset custom map key should be 0"
+    );
 }
 
 #[test]
@@ -285,7 +273,11 @@ fn test_double_custom_get_initially_zero() {
         &[encode_u256(1), encode_u256(2)],
     ));
     assert!(r.success, "get_double_custom(1,2) reverted");
-    assert_eq!(decode_u256(&r.output), 0, "unset double custom key should return 0");
+    assert_eq!(
+        decode_u256(&r.output),
+        0,
+        "unset double custom key should return 0"
+    );
 }
 
 #[test]
@@ -296,7 +288,12 @@ fn test_double_custom_set_then_get() {
     // set_double_custom(a=1, b=2, val_a=100, val_b=200)
     let r = evm.call(calldata(
         selector("set_double_custom(uint128,uint128,uint128,uint128)"),
-        &[encode_u256(1), encode_u256(2), encode_u256(100), encode_u256(200)],
+        &[
+            encode_u256(1),
+            encode_u256(2),
+            encode_u256(100),
+            encode_u256(200),
+        ],
     ));
     assert!(r.success, "set_double_custom reverted");
 
@@ -310,7 +307,10 @@ fn test_double_custom_set_then_get() {
     // Packed as (val_a << 128) | val_b in a u256
     // val_a=100 in bytes 0..16, val_b=200 in bytes 16..32
     let packed = &r.output[0..32];
-    assert!(packed.iter().any(|&b| b != 0), "stored value should be non-zero");
+    assert!(
+        packed.iter().any(|&b| b != 0),
+        "stored value should be non-zero"
+    );
 }
 
 #[test]
@@ -321,14 +321,24 @@ fn test_double_custom_different_keys_independent() {
     // Set key (1, 2) → val (10, 20)
     let r = evm.call(calldata(
         selector("set_double_custom(uint128,uint128,uint128,uint128)"),
-        &[encode_u256(1), encode_u256(2), encode_u256(10), encode_u256(20)],
+        &[
+            encode_u256(1),
+            encode_u256(2),
+            encode_u256(10),
+            encode_u256(20),
+        ],
     ));
     assert!(r.success);
 
     // Set key (3, 4) → val (30, 40)
     let r = evm.call(calldata(
         selector("set_double_custom(uint128,uint128,uint128,uint128)"),
-        &[encode_u256(3), encode_u256(4), encode_u256(30), encode_u256(40)],
+        &[
+            encode_u256(3),
+            encode_u256(4),
+            encode_u256(30),
+            encode_u256(40),
+        ],
     ));
     assert!(r.success);
 
@@ -341,7 +351,11 @@ fn test_double_custom_different_keys_independent() {
     // Expected packed value: (10 << 128) | 20
     // In big-endian 32 bytes: bytes[0..16] = 10, bytes[16..32] = 20
     let expected_1_2 = pack_u128_pair(10, 20);
-    assert_eq!(&r.output[0..32], &expected_1_2[..], "key (1,2) should have val (10,20)");
+    assert_eq!(
+        &r.output[0..32],
+        &expected_1_2[..],
+        "key (1,2) should have val (10,20)"
+    );
 
     // Read key (3, 4) — should get val (30, 40) packed
     let r = evm.call(calldata(
@@ -350,7 +364,11 @@ fn test_double_custom_different_keys_independent() {
     ));
     assert!(r.success);
     let expected_3_4 = pack_u128_pair(30, 40);
-    assert_eq!(&r.output[0..32], &expected_3_4[..], "key (3,4) should have val (30,40)");
+    assert_eq!(
+        &r.output[0..32],
+        &expected_3_4[..],
+        "key (3,4) should have val (30,40)"
+    );
 }
 
 #[test]
@@ -361,14 +379,24 @@ fn test_double_custom_overwrite() {
     // Set key (5, 6) → val (50, 60)
     let r = evm.call(calldata(
         selector("set_double_custom(uint128,uint128,uint128,uint128)"),
-        &[encode_u256(5), encode_u256(6), encode_u256(50), encode_u256(60)],
+        &[
+            encode_u256(5),
+            encode_u256(6),
+            encode_u256(50),
+            encode_u256(60),
+        ],
     ));
     assert!(r.success);
 
     // Overwrite key (5, 6) → val (55, 66)
     let r = evm.call(calldata(
         selector("set_double_custom(uint128,uint128,uint128,uint128)"),
-        &[encode_u256(5), encode_u256(6), encode_u256(55), encode_u256(66)],
+        &[
+            encode_u256(5),
+            encode_u256(6),
+            encode_u256(55),
+            encode_u256(66),
+        ],
     ));
     assert!(r.success);
 
@@ -379,7 +407,11 @@ fn test_double_custom_overwrite() {
     ));
     assert!(r.success);
     let expected = pack_u128_pair(55, 66);
-    assert_eq!(&r.output[0..32], &expected[..], "overwritten value should be (55,66)");
+    assert_eq!(
+        &r.output[0..32],
+        &expected[..],
+        "overwritten value should be (55,66)"
+    );
 }
 
 // =============================================================================

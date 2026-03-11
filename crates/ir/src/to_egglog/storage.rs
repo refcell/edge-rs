@@ -2,13 +2,14 @@
 
 use std::rc::Rc;
 
+use edge_diagnostics;
+
 use super::AstToEgglog;
 use crate::{
     ast_helpers,
     schema::{DataLocation, EvmExpr, RcExpr},
     IrError,
 };
-use edge_diagnostics;
 
 impl AstToEgglog {
     /// Lower an emit statement.
@@ -117,6 +118,7 @@ impl AstToEgglog {
     }
 
     /// Find the storage slot index and data location for a named field.
+    #[allow(dead_code)]
     pub(crate) fn find_storage_slot(&self, name: &str) -> Result<(usize, DataLocation), IrError> {
         for scope in self.scopes.iter().rev() {
             if let Some(binding) = scope.bindings.get(name) {
@@ -125,10 +127,8 @@ impl AstToEgglog {
                 }
             }
         }
-        Err(IrError::Diagnostic(
-            edge_diagnostics::Diagnostic::error(format!(
-                "cannot find storage field `{name}` in the current contract",
-            )),
-        ))
+        Err(IrError::Diagnostic(edge_diagnostics::Diagnostic::error(
+            format!("cannot find storage field `{name}` in the current contract",),
+        )))
     }
 }

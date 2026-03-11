@@ -201,10 +201,14 @@ impl AstToEgglog {
 
                 // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
                 if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs {
-                    if let Some(result) = self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)? {
+                    if let Some(result) =
+                        self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)?
+                    {
                         return Ok(result);
                     }
-                    if let Some(result) = self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)? {
+                    if let Some(result) =
+                        self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)?
+                    {
                         return Ok(result);
                     }
                     if self.std_ops_traits.contains("Index") {
@@ -468,10 +472,14 @@ impl AstToEgglog {
 
                 // Intercept ArrayIndex write for Index/Map dispatch: base[index] = val → base.set(index, val)
                 if let edge_ast::Expr::ArrayIndex(arr_base, arr_index, _, arr_span) = lhs.as_ref() {
-                    if let Some(result) = self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)? {
+                    if let Some(result) =
+                        self.try_lower_storage_array_write(arr_base, arr_index, &rhs_ir)?
+                    {
                         return Ok(result);
                     }
-                    if let Some(result) = self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)? {
+                    if let Some(result) =
+                        self.try_lower_array_element_write(arr_base, arr_index, &rhs_ir)?
+                    {
                         return Ok(result);
                     }
                     if self.std_ops_traits.contains("Index") {
@@ -549,12 +557,7 @@ impl AstToEgglog {
 
                 // Try Index trait dispatch: base[index] → base.index(index)
                 if self.std_ops_traits.contains("Index") {
-                    return self.lower_method_call(
-                        base,
-                        "index",
-                        &[index.as_ref().clone()],
-                        _span,
-                    );
+                    return self.lower_method_call(base, "index", &[index.as_ref().clone()], _span);
                 }
 
                 Err(IrError::Unsupported(
@@ -574,7 +577,12 @@ impl AstToEgglog {
                     let type_name = &components[0].name;
                     let variant_name = &components[1].name;
                     if self.union_types.contains_key(type_name) {
-                        return self.lower_union_instantiation_expr(type_name, variant_name, &[], Some(span));
+                        return self.lower_union_instantiation_expr(
+                            type_name,
+                            variant_name,
+                            &[],
+                            Some(span),
+                        );
                     }
                     // Check for generic union types (e.g., Option::None where Option<T> was monomorphized)
                     if self.generic_type_templates.contains_key(type_name) {
@@ -646,9 +654,13 @@ impl AstToEgglog {
                 self.lower_array_instantiation(elements)
             }
 
-            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, span) => {
-                self.lower_union_instantiation_expr(&type_name.name, &variant_name.name, args, Some(span))
-            }
+            edge_ast::Expr::UnionInstantiation(type_name, variant_name, args, span) => self
+                .lower_union_instantiation_expr(
+                    &type_name.name,
+                    &variant_name.name,
+                    args,
+                    Some(span),
+                ),
 
             edge_ast::Expr::PatternMatch(expr, pattern, _span) => {
                 self.lower_pattern_match(expr, pattern)
@@ -744,8 +756,7 @@ impl AstToEgglog {
                 // Note: () can lower as either Base(UnitT) or TupleT([]).
                 let is_unit = matches!(binding._ty, EvmType::Base(EvmBaseType::UnitT))
                     || matches!(&binding._ty, EvmType::TupleT(v) if v.is_empty());
-                if binding.storage_slot.is_some() && is_unit
-                {
+                if binding.storage_slot.is_some() && is_unit {
                     return Ok(ast_helpers::const_int(
                         binding.storage_slot.unwrap_or(0) as i64,
                         self.current_ctx.clone(),
@@ -897,7 +908,8 @@ impl AstToEgglog {
                 }
                 // Index write dispatch is handled in the Assign branch above
                 Err(IrError::Unsupported(
-                    "array index write on non-array type; use Map<K,V>.set(key, val) for mappings".to_owned(),
+                    "array index write on non-array type; use Map<K,V>.set(key, val) for mappings"
+                        .to_owned(),
                 ))
             }
             edge_ast::Expr::FieldAccess(obj, field, _span) => {

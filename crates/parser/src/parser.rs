@@ -257,7 +257,8 @@ impl Parser {
 
     /// Check if the token after the current one is `::` (without advancing).
     fn lookahead_double_colon(&self) -> bool {
-        self.cursor + 1 < self.tokens.len() && self.tokens[self.cursor + 1].kind == TokenKind::DoubleColon
+        self.cursor + 1 < self.tokens.len()
+            && self.tokens[self.cursor + 1].kind == TokenKind::DoubleColon
     }
 
     /// Get a zero-width span at the end of the previous token.

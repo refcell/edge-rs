@@ -365,16 +365,14 @@ impl Compiler {
     /// Run the parser and produce an AST
     fn parse(&mut self) -> Result<Program, CompileError> {
         let mut parser = Parser::new(&self.session.source).map_err(|e| {
-            self.session
-                .emit_error(Self::parse_error_to_diagnostic(&e));
+            self.session.emit_error(Self::parse_error_to_diagnostic(&e));
             CompileError::ParseErrors
         })?;
 
         match parser.parse() {
             Ok(program) => Ok(program),
             Err(e) => {
-                self.session
-                    .emit_error(Self::parse_error_to_diagnostic(&e));
+                self.session.emit_error(Self::parse_error_to_diagnostic(&e));
                 self.session.report_diagnostics();
                 Err(CompileError::ParseErrors)
             }
@@ -565,7 +563,12 @@ impl Compiler {
     /// traits, impls, functions) to the AST.
     fn auto_import_globals(&mut self, ast: &mut Program) -> Result<(), CompileError> {
         // Order matters: ops first (trait defs), then map (uses ops traits).
-        let global_keys = ["globals/ops", "globals/option", "globals/result", "globals/map"];
+        let global_keys = [
+            "globals/ops",
+            "globals/option",
+            "globals/result",
+            "globals/map",
+        ];
         let mut new_stmts: Vec<edge_ast::Stmt> = Vec::new();
 
         // Canonicalize the explicit override path once (if provided).
@@ -581,12 +584,13 @@ impl Compiler {
 
         for key in &global_keys {
             let segments: Vec<String> = key.split('/').map(String::from).collect();
-            let source = if let Some(ref std_path) = explicit_std_path {
-                Self::try_read_from_fs(std_path, &segments)
-                    .or_else(|| Self::try_read_from_embedded(&segments).map(String::from))
-            } else {
-                Self::try_read_from_embedded(&segments).map(String::from)
-            };
+            let source = explicit_std_path.as_ref().map_or_else(
+                || Self::try_read_from_embedded(&segments).map(String::from),
+                |std_path| {
+                    Self::try_read_from_fs(std_path, &segments)
+                        .or_else(|| Self::try_read_from_embedded(&segments).map(String::from))
+                },
+            );
 
             let Some(source) = source else {
                 // Globals not available (e.g., downstream consumer without std/).
@@ -645,11 +649,7 @@ impl Compiler {
                     }
                     _ => None,
                 };
-                if let Some(n) = name {
-                    !user_defined.contains(n)
-                } else {
-                    true
-                }
+                name.is_none_or(|n| !user_defined.contains(n))
             });
 
             new_stmts.append(&mut ast.stmts);
