@@ -568,6 +568,7 @@ impl Compiler {
             "globals/option",
             "globals/result",
             "globals/map",
+            "globals/vec",
         ];
         let mut new_stmts: Vec<edge_ast::Stmt> = Vec::new();
 

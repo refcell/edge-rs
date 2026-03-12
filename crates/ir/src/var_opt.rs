@@ -91,7 +91,7 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
             collect_allocations(a, result);
             collect_allocations(b, result);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
             collect_allocations(a, result);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
@@ -158,6 +158,7 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
 pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_level: u8) {
     for contract in &mut program.contracts {
         contract.runtime = optimize_expr(&contract.runtime);
+        tracing::debug!("      var_opt after optimize_expr: {} DAG nodes", crate::dag_node_count(&contract.runtime));
         if optimization_level >= 1 {
             // Inline: substitute args, rename locals, splice body at call site.
             // Include both internal and free functions.
@@ -170,9 +171,11 @@ pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_le
                 .cloned()
                 .collect();
             inline_calls(&mut contract.runtime, &all_functions);
+            tracing::debug!("      var_opt after inline_calls: {} DAG nodes", crate::dag_node_count(&contract.runtime));
         }
         // Insert early Drops in halting branches for better dead-var-elim
         contract.runtime = insert_early_drops(&contract.runtime);
+        tracing::debug!("      var_opt after insert_early_drops: {} DAG nodes", crate::dag_node_count(&contract.runtime));
         contract.constructor = insert_early_drops(&contract.constructor);
         // NOTE: tighten_drops runs LATER in the pipeline (after store forwarding
         // at O0, or after egglog at O1+) because store forwarding can expose new
@@ -184,60 +187,80 @@ pub fn optimize_program(program: &mut crate::schema::EvmProgram, optimization_le
     }
 }
 
-/// Optimize an expression tree, applying all variable optimizations bottom-up.
+/// Optimize an expression DAG, applying all variable optimizations bottom-up.
+/// Uses memoization to avoid re-processing shared subtrees.
 fn optimize_expr(expr: &RcExpr) -> RcExpr {
-    // Bottom-up: optimize children first, then apply transforms at this node.
-    let rebuilt = rebuild_children(expr);
-    apply_transforms(&rebuilt)
+    let mut cache: HashMap<usize, RcExpr> = HashMap::new();
+    let result = optimize_expr_memo(expr, &mut cache);
+    tracing::debug!("        optimize_expr: cache_size={}, output_dag={}", cache.len(), crate::dag_node_count(&result));
+    result
+}
+
+fn optimize_expr_memo(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
+    let id = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&id) {
+        return Rc::clone(cached);
+    }
+    let rebuilt = rebuild_children_memo(expr, cache);
+    let result = apply_transforms(&rebuilt);
+    cache.insert(id, Rc::clone(&result));
+    result
 }
 
 /// Recursively rebuild an expression with optimized children.
-fn rebuild_children(expr: &RcExpr) -> RcExpr {
+fn rebuild_children_memo(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::Bop(op, lhs, rhs) => {
-            let l = optimize_expr(lhs);
-            let r = optimize_expr(rhs);
+            let l = optimize_expr_memo(lhs, cache);
+            let r = optimize_expr_memo(rhs, cache);
             if Rc::ptr_eq(&l, lhs) && Rc::ptr_eq(&r, rhs) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Bop(*op, l, r))
         }
         EvmExpr::Uop(op, inner) => {
-            let i = optimize_expr(inner);
+            let i = optimize_expr_memo(inner, cache);
             if Rc::ptr_eq(&i, inner) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Uop(*op, i))
         }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = optimize_expr_memo(size, cache);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
+        }
         EvmExpr::Top(op, a, b, c) => {
-            let a2 = optimize_expr(a);
-            let b2 = optimize_expr(b);
-            let c2 = optimize_expr(c);
+            let a2 = optimize_expr_memo(a, cache);
+            let b2 = optimize_expr_memo(b, cache);
+            let c2 = optimize_expr_memo(c, cache);
             if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Top(*op, a2, b2, c2))
         }
         EvmExpr::Get(inner, idx) => {
-            let i = optimize_expr(inner);
+            let i = optimize_expr_memo(inner, cache);
             if Rc::ptr_eq(&i, inner) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Get(i, *idx))
         }
         EvmExpr::Concat(a, b) => {
-            let a2 = optimize_expr(a);
-            let b2 = optimize_expr(b);
+            let a2 = optimize_expr_memo(a, cache);
+            let b2 = optimize_expr_memo(b, cache);
             if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Concat(a2, b2))
         }
         EvmExpr::If(cond, inputs, then_body, else_body) => {
-            let c = optimize_expr(cond);
-            let i = optimize_expr(inputs);
-            let t = optimize_expr(then_body);
-            let e = optimize_expr(else_body);
+            let c = optimize_expr_memo(cond, cache);
+            let i = optimize_expr_memo(inputs, cache);
+            let t = optimize_expr_memo(then_body, cache);
+            let e = optimize_expr_memo(else_body, cache);
             if Rc::ptr_eq(&c, cond)
                 && Rc::ptr_eq(&i, inputs)
                 && Rc::ptr_eq(&t, then_body)
@@ -248,65 +271,78 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::If(c, i, t, e))
         }
         EvmExpr::DoWhile(inputs, body) => {
-            let i = optimize_expr(inputs);
-            let b = optimize_expr(body);
+            let i = optimize_expr_memo(inputs, cache);
+            let b = optimize_expr_memo(body, cache);
             if Rc::ptr_eq(&i, inputs) && Rc::ptr_eq(&b, body) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DoWhile(i, b))
         }
         EvmExpr::EnvRead(op, state) => {
-            let s = optimize_expr(state);
+            let s = optimize_expr_memo(state, cache);
             if Rc::ptr_eq(&s, state) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::EnvRead(*op, s))
         }
         EvmExpr::EnvRead1(op, arg, state) => {
-            let a = optimize_expr(arg);
-            let s = optimize_expr(state);
+            let a = optimize_expr_memo(arg, cache);
+            let s = optimize_expr_memo(state, cache);
             if Rc::ptr_eq(&a, arg) && Rc::ptr_eq(&s, state) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::EnvRead1(*op, a, s))
         }
         EvmExpr::Log(count, topics, data_offset, data_size, state) => {
-            let ts: Vec<_> = topics.iter().map(optimize_expr).collect();
-            let doff = optimize_expr(data_offset);
-            let dsz = optimize_expr(data_size);
-            let s = optimize_expr(state);
+            let ts: Vec<_> = topics.iter().map(|t| optimize_expr_memo(t, cache)).collect();
+            let doff = optimize_expr_memo(data_offset, cache);
+            let dsz = optimize_expr_memo(data_size, cache);
+            let s = optimize_expr_memo(state, cache);
+            if ts.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&doff, data_offset)
+                && Rc::ptr_eq(&dsz, data_size)
+                && Rc::ptr_eq(&s, state)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Log(*count, ts, doff, dsz, s))
         }
         EvmExpr::Revert(off, sz, state) => {
-            let o = optimize_expr(off);
-            let s = optimize_expr(sz);
-            let st = optimize_expr(state);
+            let o = optimize_expr_memo(off, cache);
+            let s = optimize_expr_memo(sz, cache);
+            let st = optimize_expr_memo(state, cache);
             if Rc::ptr_eq(&o, off) && Rc::ptr_eq(&s, sz) && Rc::ptr_eq(&st, state) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Revert(o, s, st))
         }
         EvmExpr::ReturnOp(off, sz, state) => {
-            let o = optimize_expr(off);
-            let s = optimize_expr(sz);
-            let st = optimize_expr(state);
+            let o = optimize_expr_memo(off, cache);
+            let s = optimize_expr_memo(sz, cache);
+            let st = optimize_expr_memo(state, cache);
             if Rc::ptr_eq(&o, off) && Rc::ptr_eq(&s, sz) && Rc::ptr_eq(&st, state) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::ReturnOp(o, s, st))
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            let a2 = optimize_expr(a);
-            let b2 = optimize_expr(b);
-            let c2 = optimize_expr(c);
-            let d2 = optimize_expr(d);
-            let e2 = optimize_expr(e);
-            let f2 = optimize_expr(f);
-            let g2 = optimize_expr(g);
+            let a2 = optimize_expr_memo(a, cache);
+            let b2 = optimize_expr_memo(b, cache);
+            let c2 = optimize_expr_memo(c, cache);
+            let d2 = optimize_expr_memo(d, cache);
+            let e2 = optimize_expr_memo(e, cache);
+            let f2 = optimize_expr_memo(f, cache);
+            let g2 = optimize_expr_memo(g, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c)
+                && Rc::ptr_eq(&d2, d) && Rc::ptr_eq(&e2, e) && Rc::ptr_eq(&f2, f)
+                && Rc::ptr_eq(&g2, g)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::Call(name, args) => {
-            let new_args: Vec<_> = args.iter().map(optimize_expr).collect();
+            let new_args: Vec<_> = args.iter().map(|a| optimize_expr_memo(a, cache)).collect();
             if new_args
                 .iter()
                 .zip(args.iter())
@@ -317,20 +353,20 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::LetBind(name, value, body) => {
-            let v = optimize_expr(value);
-            let b = optimize_expr(body);
+            let v = optimize_expr_memo(value, cache);
+            let b = optimize_expr_memo(body, cache);
             // Don't short-circuit here — apply_transforms handles LetBind optimizations
             Rc::new(EvmExpr::LetBind(name.clone(), v, b))
         }
         EvmExpr::VarStore(name, value) => {
-            let v = optimize_expr(value);
+            let v = optimize_expr_memo(value, cache);
             if Rc::ptr_eq(&v, value) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::VarStore(name.clone(), v))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
-            let b = optimize_expr(body);
+            let b = optimize_expr_memo(body, cache);
             if Rc::ptr_eq(&b, body) {
                 return Rc::clone(expr);
             }
@@ -351,7 +387,7 @@ fn rebuild_children(expr: &RcExpr) -> RcExpr {
         | EvmExpr::StorageField(..)
         | EvmExpr::MemRegion(..) => Rc::clone(expr),
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
-            let new_inputs: Vec<_> = inputs.iter().map(optimize_expr).collect();
+            let new_inputs: Vec<_> = inputs.iter().map(|i| optimize_expr_memo(i, cache)).collect();
             if new_inputs
                 .iter()
                 .zip(inputs.iter())
@@ -385,34 +421,45 @@ fn apply_letbind_opts(
     // 1. Dead variable elimination: never read → remove LetBind
     if info.read_count == 0 && info.write_count == 0 {
         if is_pure(init) {
-            return Rc::clone(body);
+            let r = Rc::clone(body);
+            tracing::debug!("        letbind_opt: dead-var-elim (pure) '{name}' body_dag={}", crate::dag_node_count(&r));
+            return r;
         }
         // Keep side effects
-        return Rc::new(EvmExpr::Concat(Rc::clone(init), Rc::clone(body)));
+        let r = Rc::new(EvmExpr::Concat(Rc::clone(init), Rc::clone(body)));
+        tracing::debug!("        letbind_opt: dead-var-elim (side-effect) '{name}' result_dag={}", crate::dag_node_count(&r));
+        return r;
     }
 
     // 2. Single-use inlining: read once, never written, not in loop, pure init
     if info.read_count == 1 && info.write_count == 0 && !info.in_loop && is_pure(init) {
-        return substitute_var(name, init, body);
+        let body_dag = crate::dag_node_count(body);
+        let r = substitute_var(name, init, body);
+        tracing::debug!("        letbind_opt: single-use-inline '{name}' init_dag={} body_dag={} result_dag={}", crate::dag_node_count(init), body_dag, crate::dag_node_count(&r));
+        return r;
     }
 
     // 2b. Last-store forwarding: exactly one VarStore, one Var read, not in loop.
-    // Pattern: Concat(VarStore(x, val), ...Var(x)...) → substitute val for Var(x)
-    // and remove the VarStore. The LetBind becomes dead (no reads or writes).
-    // This handles "c = expr; return c;" → "return expr;".
     if info.write_count == 1 && info.read_count == 1 && !info.in_loop {
         if let Some(new_body) = forward_last_store(name, body) {
+            let body_dag = crate::dag_node_count(body);
             // LetBind is now dead — eliminate it
             if is_pure(init) {
+                tracing::debug!("        letbind_opt: last-store-fwd (pure) '{name}' body_dag={} result_dag={}", body_dag, crate::dag_node_count(&new_body));
                 return new_body;
             }
-            return Rc::new(EvmExpr::Concat(Rc::clone(init), new_body));
+            let r = Rc::new(EvmExpr::Concat(Rc::clone(init), new_body));
+            tracing::debug!("        letbind_opt: last-store-fwd (side-effect) '{name}' body_dag={} result_dag={}", body_dag, crate::dag_node_count(&r));
+            return r;
         }
     }
 
     // 3. Multi-use constant propagation: constant init, never written
     if info.write_count == 0 && !info.in_loop && is_const(init) {
-        return substitute_var(name, init, body);
+        let body_dag = crate::dag_node_count(body);
+        let r = substitute_var(name, init, body);
+        tracing::debug!("        letbind_opt: const-prop '{name}' reads={} body_dag={} result_dag={}", info.read_count, body_dag, crate::dag_node_count(&r));
+        return r;
     }
 
     Rc::clone(expr)
@@ -479,11 +526,24 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
             analyze_var_inner(name, inputs, in_loop, info);
             analyze_var_inner(name, body, true, info);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
             analyze_var_inner(name, a, in_loop, info);
         }
-        // Top/ReturnOp/Revert: last arg (c) is the state parameter — skip it.
-        EvmExpr::Top(_, a, b, _c) | EvmExpr::Revert(a, b, _c) | EvmExpr::ReturnOp(a, b, _c) => {
+        // Top: last arg may be state OR operand depending on the op.
+        EvmExpr::Top(op, a, b, c) => {
+            analyze_var_inner(name, a, in_loop, info);
+            analyze_var_inner(name, b, in_loop, info);
+            // Select, CalldataCopy, Mcopy use all 3 positions as operands (no state param).
+            // Others (SStore, TStore, MStore, MStore8, Keccak256) have state as 3rd arg.
+            match op {
+                EvmTernaryOp::Select | EvmTernaryOp::CalldataCopy | EvmTernaryOp::Mcopy => {
+                    analyze_var_inner(name, c, in_loop, info);
+                }
+                _ => {}
+            }
+        }
+        // ReturnOp/Revert: last arg (c) is the state parameter — skip it.
+        EvmExpr::Revert(a, b, _c) | EvmExpr::ReturnOp(a, b, _c) => {
             analyze_var_inner(name, a, in_loop, info);
             analyze_var_inner(name, b, in_loop, info);
         }
@@ -613,7 +673,8 @@ fn is_pure(expr: &RcExpr) -> bool {
         | EvmExpr::ReturnOp(..)
         | EvmExpr::ExtCall(..)
         | EvmExpr::DoWhile(..)
-        | EvmExpr::Call(..) => false,
+        | EvmExpr::Call(..)
+        | EvmExpr::DynAlloc(..) => false,
     }
 }
 
@@ -660,7 +721,7 @@ fn collect_immutable_vars_rec(
             collect_immutable_vars_rec(t, immutable, mutable);
             collect_immutable_vars_rec(e, immutable, mutable);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
             collect_immutable_vars_rec(a, immutable, mutable);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
@@ -783,6 +844,13 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
                 new_body,
             ))
         }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = insert_drops_rec(size, vars_in_scope);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
+        }
         // Leaf and other nodes: no structural changes needed
         _ => Rc::clone(expr),
     }
@@ -847,7 +915,9 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
             };
             a_ref || b_ref
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_var_inner(a, name, follow_state),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+            references_var_inner(a, name, follow_state)
+        }
         EvmExpr::Top(op, a, b, c) => {
             use crate::schema::EvmTernaryOp::*;
             let c_is_state = matches!(
@@ -1013,6 +1083,13 @@ fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
                 out_ty.clone(),
                 new_body,
             ))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = tighten_drops_rec(size);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
         }
         // Leaf and other nodes: no structural changes needed
         _ => Rc::clone(expr),
@@ -1275,6 +1352,31 @@ fn stmt_references_var_deep_in_body(body: &RcExpr, name: &str) -> bool {
 
 /// Substitute all occurrences of `Var(name)` with `replacement` in `expr`.
 fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
+    let mut cache: HashMap<usize, RcExpr> = HashMap::new();
+    substitute_var_memo(name, replacement, expr, &mut cache)
+}
+
+fn substitute_var_memo(
+    name: &str,
+    replacement: &RcExpr,
+    expr: &RcExpr,
+    cache: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
+    let id = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&id) {
+        return Rc::clone(cached);
+    }
+    let result = substitute_var_inner(name, replacement, expr, cache);
+    cache.insert(id, Rc::clone(&result));
+    result
+}
+
+fn substitute_var_inner(
+    name: &str,
+    replacement: &RcExpr,
+    expr: &RcExpr,
+    cache: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::Var(n) if n == name => Rc::clone(replacement),
         // Leaf nodes
@@ -1289,113 +1391,184 @@ fn substitute_var(name: &str, replacement: &RcExpr, expr: &RcExpr) -> RcExpr {
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs
                 .iter()
-                .map(|i| substitute_var(name, replacement, i))
+                .map(|i| substitute_var_memo(name, replacement, i, cache))
                 .collect();
+            if new_inputs.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = substitute_var_memo(name, replacement, size, cache);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
         }
 
         // Stop at shadowing LetBind
         EvmExpr::LetBind(n, init, body) => {
-            let new_init = substitute_var(name, replacement, init);
+            let new_init = substitute_var_memo(name, replacement, init, cache);
             if n == name {
+                if Rc::ptr_eq(&new_init, init) {
+                    return Rc::clone(expr);
+                }
                 Rc::new(EvmExpr::LetBind(n.clone(), new_init, Rc::clone(body)))
             } else {
-                let new_body = substitute_var(name, replacement, body);
+                let new_body = substitute_var_memo(name, replacement, body, cache);
+                if Rc::ptr_eq(&new_init, init) && Rc::ptr_eq(&new_body, body) {
+                    return Rc::clone(expr);
+                }
                 Rc::new(EvmExpr::LetBind(n.clone(), new_init, new_body))
             }
         }
 
         EvmExpr::VarStore(n, val) => {
-            let new_val = substitute_var(name, replacement, val);
+            let new_val = substitute_var_memo(name, replacement, val, cache);
+            if Rc::ptr_eq(&new_val, val) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::VarStore(n.clone(), new_val))
         }
 
         EvmExpr::Bop(op, a, b) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Bop(*op, a2, b2))
         }
         EvmExpr::Uop(op, a) => {
-            let a2 = substitute_var(name, replacement, a);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Uop(*op, a2))
         }
         EvmExpr::Top(op, a, b, c) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
-            let c2 = substitute_var(name, replacement, c);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            let c2 = substitute_var_memo(name, replacement, c, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Top(*op, a2, b2, c2))
         }
         EvmExpr::Get(a, idx) => {
-            let a2 = substitute_var(name, replacement, a);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Get(a2, *idx))
         }
         EvmExpr::Concat(a, b) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Concat(a2, b2))
         }
         EvmExpr::If(c, i, t, e) => {
-            let c2 = substitute_var(name, replacement, c);
-            let i2 = substitute_var(name, replacement, i);
-            let t2 = substitute_var(name, replacement, t);
-            let e2 = substitute_var(name, replacement, e);
+            let c2 = substitute_var_memo(name, replacement, c, cache);
+            let i2 = substitute_var_memo(name, replacement, i, cache);
+            let t2 = substitute_var_memo(name, replacement, t, cache);
+            let e2 = substitute_var_memo(name, replacement, e, cache);
+            if Rc::ptr_eq(&c2, c) && Rc::ptr_eq(&i2, i) && Rc::ptr_eq(&t2, t) && Rc::ptr_eq(&e2, e) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::If(c2, i2, t2, e2))
         }
         EvmExpr::DoWhile(inputs, body) => {
-            let i2 = substitute_var(name, replacement, inputs);
-            let b2 = substitute_var(name, replacement, body);
+            let i2 = substitute_var_memo(name, replacement, inputs, cache);
+            let b2 = substitute_var_memo(name, replacement, body, cache);
+            if Rc::ptr_eq(&i2, inputs) && Rc::ptr_eq(&b2, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::DoWhile(i2, b2))
         }
         EvmExpr::EnvRead(op, state) => {
-            let s2 = substitute_var(name, replacement, state);
+            let s2 = substitute_var_memo(name, replacement, state, cache);
+            if Rc::ptr_eq(&s2, state) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::EnvRead(*op, s2))
         }
         EvmExpr::EnvRead1(op, arg, state) => {
-            let a2 = substitute_var(name, replacement, arg);
-            let s2 = substitute_var(name, replacement, state);
+            let a2 = substitute_var_memo(name, replacement, arg, cache);
+            let s2 = substitute_var_memo(name, replacement, state, cache);
+            if Rc::ptr_eq(&a2, arg) && Rc::ptr_eq(&s2, state) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::EnvRead1(*op, a2, s2))
         }
         EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics
                 .iter()
-                .map(|t| substitute_var(name, replacement, t))
+                .map(|t| substitute_var_memo(name, replacement, t, cache))
                 .collect();
-            let doff = substitute_var(name, replacement, data_offset);
-            let dsz = substitute_var(name, replacement, data_size);
-            let s2 = substitute_var(name, replacement, state);
+            let doff = substitute_var_memo(name, replacement, data_offset, cache);
+            let dsz = substitute_var_memo(name, replacement, data_size, cache);
+            let s2 = substitute_var_memo(name, replacement, state, cache);
+            if ts.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&doff, data_offset)
+                && Rc::ptr_eq(&dsz, data_size)
+                && Rc::ptr_eq(&s2, state)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Log(*count, ts, doff, dsz, s2))
         }
         EvmExpr::Revert(a, b, c) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
-            let c2 = substitute_var(name, replacement, c);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            let c2 = substitute_var_memo(name, replacement, c, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Revert(a2, b2, c2))
         }
         EvmExpr::ReturnOp(a, b, c) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
-            let c2 = substitute_var(name, replacement, c);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            let c2 = substitute_var_memo(name, replacement, c, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            let a2 = substitute_var(name, replacement, a);
-            let b2 = substitute_var(name, replacement, b);
-            let c2 = substitute_var(name, replacement, c);
-            let d2 = substitute_var(name, replacement, d);
-            let e2 = substitute_var(name, replacement, e);
-            let f2 = substitute_var(name, replacement, f);
-            let g2 = substitute_var(name, replacement, g);
+            let a2 = substitute_var_memo(name, replacement, a, cache);
+            let b2 = substitute_var_memo(name, replacement, b, cache);
+            let c2 = substitute_var_memo(name, replacement, c, cache);
+            let d2 = substitute_var_memo(name, replacement, d, cache);
+            let e2 = substitute_var_memo(name, replacement, e, cache);
+            let f2 = substitute_var_memo(name, replacement, f, cache);
+            let g2 = substitute_var_memo(name, replacement, g, cache);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c)
+                && Rc::ptr_eq(&d2, d) && Rc::ptr_eq(&e2, e) && Rc::ptr_eq(&f2, f)
+                && Rc::ptr_eq(&g2, g)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::Call(n, args) => {
             let new_args: Vec<_> = args
                 .iter()
-                .map(|a| substitute_var(name, replacement, a))
+                .map(|a| substitute_var_memo(name, replacement, a, cache))
                 .collect();
+            if new_args.iter().zip(args.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Call(n.clone(), new_args))
         }
         EvmExpr::Function(n, in_ty, out_ty, body) => {
-            let b2 = substitute_var(name, replacement, body);
+            let b2 = substitute_var_memo(name, replacement, body, cache);
+            if Rc::ptr_eq(&b2, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Function(
                 n.clone(),
                 in_ty.clone(),
@@ -1573,6 +1746,13 @@ fn monomorphize_rec(
                 .collect();
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
         }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = monomorphize_rec(size, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
+        }
         // Leaves (EnvRead, EnvRead1, Function, Const, Var, Arg, etc.)
         _ => Rc::clone(expr),
     }
@@ -1604,15 +1784,24 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
         EvmExpr::Concat(a, b) => {
             let a2 = substitute_args(a, in_ty, args);
             let b2 = substitute_args(b, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Concat(a2, b2))
         }
         EvmExpr::Bop(op, a, b) => {
             let a2 = substitute_args(a, in_ty, args);
             let b2 = substitute_args(b, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Bop(*op, a2, b2))
         }
         EvmExpr::Uop(op, a) => {
             let a2 = substitute_args(a, in_ty, args);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Uop(*op, a2))
         }
         EvmExpr::If(c, i, t, e) => {
@@ -1620,38 +1809,59 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
             let i2 = substitute_args(i, in_ty, args);
             let t2 = substitute_args(t, in_ty, args);
             let e2 = substitute_args(e, in_ty, args);
+            if Rc::ptr_eq(&c2, c) && Rc::ptr_eq(&i2, i) && Rc::ptr_eq(&t2, t) && Rc::ptr_eq(&e2, e) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::If(c2, i2, t2, e2))
         }
         EvmExpr::LetBind(name, init, body_inner) => {
             let i2 = substitute_args(init, in_ty, args);
             let b2 = substitute_args(body_inner, in_ty, args);
+            if Rc::ptr_eq(&i2, init) && Rc::ptr_eq(&b2, body_inner) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::LetBind(name.clone(), i2, b2))
         }
         EvmExpr::VarStore(name, val) => {
             let v2 = substitute_args(val, in_ty, args);
+            if Rc::ptr_eq(&v2, val) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::VarStore(name.clone(), v2))
         }
         EvmExpr::Top(op, a, b, c) => {
             let a2 = substitute_args(a, in_ty, args);
             let b2 = substitute_args(b, in_ty, args);
             let c2 = substitute_args(c, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Top(*op, a2, b2, c2))
         }
         EvmExpr::DoWhile(inputs, body_inner) => {
             let i2 = substitute_args(inputs, in_ty, args);
             let b2 = substitute_args(body_inner, in_ty, args);
+            if Rc::ptr_eq(&i2, inputs) && Rc::ptr_eq(&b2, body_inner) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::DoWhile(i2, b2))
         }
         EvmExpr::Revert(a, b, c) => {
             let a2 = substitute_args(a, in_ty, args);
             let b2 = substitute_args(b, in_ty, args);
             let c2 = substitute_args(c, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Revert(a2, b2, c2))
         }
         EvmExpr::ReturnOp(a, b, c) => {
             let a2 = substitute_args(a, in_ty, args);
             let b2 = substitute_args(b, in_ty, args);
             let c2 = substitute_args(c, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
         }
         EvmExpr::Call(name, call_args) => {
@@ -1659,6 +1869,9 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
                 .iter()
                 .map(|a| substitute_args(a, in_ty, args))
                 .collect();
+            if new_args.iter().zip(call_args.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::Log(count, topics, data_off, data_sz, state) => {
@@ -1669,6 +1882,13 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
             let d2 = substitute_args(data_off, in_ty, args);
             let s2 = substitute_args(data_sz, in_ty, args);
             let st2 = substitute_args(state, in_ty, args);
+            if topics2.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&d2, data_off)
+                && Rc::ptr_eq(&s2, data_sz)
+                && Rc::ptr_eq(&st2, state)
+            {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::Log(*count, topics2, d2, s2, st2))
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
@@ -1679,6 +1899,12 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
             let e2 = substitute_args(e, in_ty, args);
             let f2 = substitute_args(f, in_ty, args);
             let g2 = substitute_args(g, in_ty, args);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c)
+                && Rc::ptr_eq(&d2, d) && Rc::ptr_eq(&e2, e) && Rc::ptr_eq(&f2, f)
+                && Rc::ptr_eq(&g2, g)
+            {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
@@ -1686,7 +1912,17 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
                 .iter()
                 .map(|i| substitute_args(i, in_ty, args))
                 .collect();
+            if new_inputs.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(body);
+            }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = substitute_args(size, in_ty, args);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(body);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
         }
         // Leaves
         _ => Rc::clone(body),
@@ -1718,7 +1954,10 @@ fn collect_letbind_names(expr: &RcExpr, names: &mut std::collections::HashSet<St
             collect_letbind_names(a, names);
             collect_letbind_names(b, names);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::VarStore(_, a) | EvmExpr::Get(a, _) => {
+        EvmExpr::Uop(_, a)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::DynAlloc(a) => {
             collect_letbind_names(a, names);
         }
         EvmExpr::If(c, i, t, e) => {
@@ -1770,13 +2009,17 @@ fn rename_locals_rec(
 ) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
-            let new_name = if defined.contains(name) {
+            let needs_rename = defined.contains(name);
+            let i2 = rename_locals_rec(init, suffix, defined);
+            let b2 = rename_locals_rec(body, suffix, defined);
+            if !needs_rename && Rc::ptr_eq(&i2, init) && Rc::ptr_eq(&b2, body) {
+                return Rc::clone(expr);
+            }
+            let new_name = if needs_rename {
                 format!("{name}{suffix}")
             } else {
                 name.clone()
             };
-            let i2 = rename_locals_rec(init, suffix, defined);
-            let b2 = rename_locals_rec(body, suffix, defined);
             Rc::new(EvmExpr::LetBind(new_name, i2, b2))
         }
         EvmExpr::Var(name) => {
@@ -1790,6 +2033,8 @@ fn rename_locals_rec(
             let v2 = rename_locals_rec(val, suffix, defined);
             if defined.contains(name) {
                 Rc::new(EvmExpr::VarStore(format!("{name}{suffix}"), v2))
+            } else if Rc::ptr_eq(&v2, val) {
+                return Rc::clone(expr);
             } else {
                 Rc::new(EvmExpr::VarStore(name.clone(), v2))
             }
@@ -1804,15 +2049,24 @@ fn rename_locals_rec(
         EvmExpr::Concat(a, b) => {
             let a2 = rename_locals_rec(a, suffix, defined);
             let b2 = rename_locals_rec(b, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Concat(a2, b2))
         }
         EvmExpr::Bop(op, a, b) => {
             let a2 = rename_locals_rec(a, suffix, defined);
             let b2 = rename_locals_rec(b, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Bop(*op, a2, b2))
         }
         EvmExpr::Uop(op, a) => {
             let a2 = rename_locals_rec(a, suffix, defined);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Uop(*op, a2))
         }
         EvmExpr::If(c, i, t, e) => {
@@ -1820,33 +2074,51 @@ fn rename_locals_rec(
             let i2 = rename_locals_rec(i, suffix, defined);
             let t2 = rename_locals_rec(t, suffix, defined);
             let e2 = rename_locals_rec(e, suffix, defined);
+            if Rc::ptr_eq(&c2, c) && Rc::ptr_eq(&i2, i) && Rc::ptr_eq(&t2, t) && Rc::ptr_eq(&e2, e) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::If(c2, i2, t2, e2))
         }
         EvmExpr::Top(op, a, b, c) => {
             let a2 = rename_locals_rec(a, suffix, defined);
             let b2 = rename_locals_rec(b, suffix, defined);
             let c2 = rename_locals_rec(c, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Top(*op, a2, b2, c2))
         }
         EvmExpr::DoWhile(inputs, body) => {
             let i2 = rename_locals_rec(inputs, suffix, defined);
             let b2 = rename_locals_rec(body, suffix, defined);
+            if Rc::ptr_eq(&i2, inputs) && Rc::ptr_eq(&b2, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::DoWhile(i2, b2))
         }
         EvmExpr::Revert(a, b, c) => {
             let a2 = rename_locals_rec(a, suffix, defined);
             let b2 = rename_locals_rec(b, suffix, defined);
             let c2 = rename_locals_rec(c, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Revert(a2, b2, c2))
         }
         EvmExpr::ReturnOp(a, b, c) => {
             let a2 = rename_locals_rec(a, suffix, defined);
             let b2 = rename_locals_rec(b, suffix, defined);
             let c2 = rename_locals_rec(c, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ReturnOp(a2, b2, c2))
         }
         EvmExpr::Get(a, idx) => {
             let a2 = rename_locals_rec(a, suffix, defined);
+            if Rc::ptr_eq(&a2, a) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Get(a2, *idx))
         }
         EvmExpr::Call(name, call_args) => {
@@ -1854,6 +2126,9 @@ fn rename_locals_rec(
                 .iter()
                 .map(|a| rename_locals_rec(a, suffix, defined))
                 .collect();
+            if new_args.iter().zip(call_args.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::Log(count, topics, data_off, data_sz, state) => {
@@ -1864,6 +2139,13 @@ fn rename_locals_rec(
             let d2 = rename_locals_rec(data_off, suffix, defined);
             let s2 = rename_locals_rec(data_sz, suffix, defined);
             let st2 = rename_locals_rec(state, suffix, defined);
+            if topics2.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&d2, data_off)
+                && Rc::ptr_eq(&s2, data_sz)
+                && Rc::ptr_eq(&st2, state)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Log(*count, topics2, d2, s2, st2))
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
@@ -1874,6 +2156,12 @@ fn rename_locals_rec(
             let e2 = rename_locals_rec(e, suffix, defined);
             let f2 = rename_locals_rec(f, suffix, defined);
             let g2 = rename_locals_rec(g, suffix, defined);
+            if Rc::ptr_eq(&a2, a) && Rc::ptr_eq(&b2, b) && Rc::ptr_eq(&c2, c)
+                && Rc::ptr_eq(&d2, d) && Rc::ptr_eq(&e2, e) && Rc::ptr_eq(&f2, f)
+                && Rc::ptr_eq(&g2, g)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ExtCall(a2, b2, c2, d2, e2, f2, g2))
         }
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
@@ -1881,7 +2169,17 @@ fn rename_locals_rec(
                 .iter()
                 .map(|i| rename_locals_rec(i, suffix, defined))
                 .collect();
+            if new_inputs.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = rename_locals_rec(size, suffix, defined);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
         }
         _ => Rc::clone(expr),
     }
@@ -1940,7 +2238,7 @@ fn reads_var(expr: &RcExpr, name: &str) -> bool {
             let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
             reads_var(a, name) || (!b_is_state && reads_var(b, name))
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => reads_var(a, name),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => reads_var(a, name),
         EvmExpr::Top(op, a, b, c) => {
             use crate::schema::EvmTernaryOp::*;
             let c_is_state = matches!(
@@ -2097,7 +2395,9 @@ fn references_any_in_set(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         | EvmExpr::DoWhile(a, b) => {
             references_any_in_set(a, names) || references_any_in_set(b, names)
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_in_set(a, names),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+            references_any_in_set(a, names)
+        }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             references_any_in_set(a, names)
                 || references_any_in_set(b, names)
@@ -2358,7 +2658,10 @@ fn count_calldataloads(expr: &RcExpr, counts: &mut HashMap<i64, usize>) {
             count_calldataloads(a, counts);
             count_calldataloads(b, counts);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::Function(_, _, _, a) => {
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::Function(_, _, _, a)
+        | EvmExpr::DynAlloc(a) => {
             count_calldataloads(a, counts);
         }
         EvmExpr::Top(_, a, b, c) => {
@@ -2562,6 +2865,13 @@ fn replace_calldataloads(expr: &RcExpr, hoisted: &HashMap<i64, String>) -> RcExp
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Log(*count, new_topics, nd, nz, Rc::clone(state)))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let new_size = replace_calldataloads(size, hoisted);
+            if Rc::ptr_eq(&new_size, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(new_size))
         }
         _ => Rc::clone(expr),
     }

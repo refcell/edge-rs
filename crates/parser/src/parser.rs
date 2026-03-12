@@ -1592,6 +1592,33 @@ impl Parser {
                 };
 
                 left = Expr::Assign(Box::new(left), Box::new(right), span);
+            } else if matches!(
+                self.peek().kind,
+                TokenKind::Operator(edge_types::tokens::Operator::CompoundAssignment(_))
+            ) {
+                let compound_op = if let TokenKind::Operator(
+                    edge_types::tokens::Operator::CompoundAssignment(op),
+                ) = self.peek().kind
+                {
+                    op
+                } else {
+                    unreachable!()
+                };
+                self.advance();
+                let right = self.parse_binary_expr(prec + 1)?;
+                let bin_op = compound_to_bin_op(compound_op);
+                let span = Span {
+                    start: left.span().start,
+                    end: right.span().end,
+                    file: left.span().file.clone(),
+                };
+                let binary = Expr::Binary(
+                    Box::new(left.clone()),
+                    bin_op,
+                    Box::new(right),
+                    span.clone(),
+                );
+                left = Expr::Assign(Box::new(left), Box::new(binary), span);
             } else {
                 let op = self.parse_bin_op()?;
                 let next_min_prec = if is_right_assoc { prec } else { prec + 1 };
@@ -1957,6 +1984,25 @@ impl Parser {
                         span: name_token.span,
                     };
 
+                    // Check for turbofish type arguments: @builtin::<T>()
+                    let type_args = if self.check(&TokenKind::DoubleColon) {
+                        if self.cursor + 1 < self.tokens.len()
+                            && matches!(
+                                self.tokens[self.cursor + 1].kind,
+                                TokenKind::Operator(Operator::Comparison(
+                                    ComparisonOperator::LessThan
+                                ))
+                            )
+                        {
+                            self.advance(); // consume ::
+                            self.parse_turbofish_type_args()?
+                        } else {
+                            Vec::new()
+                        }
+                    } else {
+                        Vec::new()
+                    };
+
                     // Parse arguments if there are parentheses
                     let args = if self.check(&TokenKind::OpenParen) {
                         self.advance();
@@ -1979,7 +2025,7 @@ impl Parser {
                         file: start.file,
                     };
 
-                    Ok(Expr::At(builtin_ident, args, span))
+                    Ok(Expr::At(builtin_ident, type_args, args, span))
                 } else {
                     Err(ParseError::InvalidExpr {
                         message: "Expected identifier after @".to_string(),
@@ -2637,6 +2683,7 @@ impl Parser {
             edge_types::tokens::Location::Returndata => edge_ast::ty::Location::Returndata,
             edge_types::tokens::Location::InternalCode => edge_ast::ty::Location::ImmutableCode,
             edge_types::tokens::Location::ExternalCode => edge_ast::ty::Location::ExternalCode,
+            edge_types::tokens::Location::DynamicMemory => edge_ast::ty::Location::DynamicMemory,
         }
     }
 
@@ -2726,7 +2773,9 @@ impl Parser {
         };
 
         match &self.peek().kind {
-            TokenKind::Operator(Operator::Assignment) => Some((0, true)), // Lowest precedence, right-associative
+            // Lowest precedence, right-associative
+            TokenKind::Operator(Operator::Assignment)
+            | TokenKind::Operator(Operator::CompoundAssignment(_)) => Some((0, true)),
             TokenKind::Operator(Operator::Logical(op)) => Some(match op {
                 LogicalOperator::Or => (1, false),
                 LogicalOperator::And => (2, false),
@@ -3140,4 +3189,21 @@ fn is_evm_opcode(name: &str) -> bool {
             | "BLOBHASH"
             | "BLOBBASEFEE"
     )
+}
+
+const fn compound_to_bin_op(op: edge_types::tokens::CompoundAssignmentOperator) -> BinOp {
+    use edge_types::tokens::CompoundAssignmentOperator;
+    match op {
+        CompoundAssignmentOperator::AddAssign => BinOp::Add,
+        CompoundAssignmentOperator::SubAssign => BinOp::Sub,
+        CompoundAssignmentOperator::MulAssign => BinOp::Mul,
+        CompoundAssignmentOperator::DivAssign => BinOp::Div,
+        CompoundAssignmentOperator::ModAssign => BinOp::Mod,
+        CompoundAssignmentOperator::ExpAssign => BinOp::Exp,
+        CompoundAssignmentOperator::AndAssign => BinOp::BitwiseAnd,
+        CompoundAssignmentOperator::OrAssign => BinOp::BitwiseOr,
+        CompoundAssignmentOperator::XorAssign => BinOp::BitwiseXor,
+        CompoundAssignmentOperator::ShrAssign => BinOp::Shr,
+        CompoundAssignmentOperator::ShlAssign => BinOp::Shl,
+    }
 }

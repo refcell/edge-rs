@@ -81,8 +81,8 @@ pub enum Expr {
     /// Path expression: `a::b::c`
     Path(Vec<Ident>, Span),
 
-    /// Builtin call: @builtin(args...)
-    At(Ident, Vec<Self>, Span),
+    /// Builtin call: `@builtin(args...)` or `@builtin::<T>(args...)`
+    At(Ident, Vec<crate::ty::TypeSig>, Vec<Self>, Span),
 
     /// Assignment: lhs = rhs
     Assign(Box<Self>, Box<Self>, Span),
@@ -118,7 +118,7 @@ impl Expr {
             Self::Paren(_, span) => span.clone(),
             Self::Comptime(_, span) => span.clone(),
             Self::Path(_, span) => span.clone(),
-            Self::At(_, _, span) => span.clone(),
+            Self::At(_, _, _, span) => span.clone(),
             Self::Assign(_, _, span) => span.clone(),
             Self::InlineAsm(_, _, _, span) => span.clone(),
             Self::Cast(_, _, span) => span.clone(),

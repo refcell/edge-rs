@@ -250,6 +250,10 @@
 ;; Different region IDs are guaranteed non-overlapping.
 (constructor MemRegion (i64 i64) EvmExpr)
 
+;; Dynamic memory allocation: (DynAlloc size_bytes) -> base address
+;; Uses MSIZE at runtime. NOT pure — memory expansion is observable.
+(constructor DynAlloc (EvmExpr) EvmExpr)
+
 ;; ============================================================
 ;; Rulesets
 ;; ============================================================

@@ -119,9 +119,9 @@ test_trait_bounds::test_multiple_bounds_other(), 228, 221, 221, 221
 test_trait_bounds::test_multiple_bounds(), 123, 116, 116, 116
 test_trait_bounds::test_scale_other(), 361, 349, 193, 193
 test_trait_bounds::test_scale_wrapper(), 260, 248, 169, 169
-test_trait_bounds::test_type_bound_other(), 233, 211, 218, 218
-test_trait_bounds::test_type_bound(), 206, 184, 191, 191
-test_traits::test_add_overload(), 218, 180, 207, 207
+test_trait_bounds::test_type_bound_other(), 233, 211, 211, 211
+test_trait_bounds::test_type_bound(), 206, 184, 184, 184
+test_traits::test_add_overload(), 218, 180, 177, 177
 test_traits::test_double_method(), 207, 195, 116, 116
 test_traits::test_double_then_triple(), 339, 327, 168, 168
 test_traits::test_double(), 259, 247, 168, 168
@@ -141,3 +141,8 @@ test_unsafe_arith::test_sub_underflow(), 108, 108, 108, 108
 test_unsafe_arith::test_unsafe_add(), 135, 129, 129, 129
 test_unsafe_arith::test_unsafe_mul(), 112, 104, 104, 104
 test_unsafe_arith::test_unsafe_sub(), 161, 155, 155, 155
+test_vec::test_get(), 1329, 1072, 1072, 1072
+test_vec::test_grow(), 3115, 2491, 2491, 2491
+test_vec::test_index(), 1034, 798, 798, 798
+test_vec::test_new_and_push(), 1082, 903, 903, 903
+test_vec::test_set(), 1514, 1174, 1106, 1106

@@ -1,0 +1,71 @@
+
+
+// Vec<T> — a dynamically-allocated, growable array.
+//
+// Memory layout (inline, no indirection):
+//   [len, capacity, elem0, elem1, ...]
+//    ^--- pointer on stack
+//
+// Element i at: ptr + 64 + i * @size_of::<T>()
+//
+// Uses &dm (dynamic memory) pointer annotation for pass-by-reference
+// semantics on methods, enabling transparent pointer updates on growth.
+
+type Vec<T> = {
+    len: u256,
+    capacity: u256,
+};
+
+
+impl Vec<T> {
+    fn new(cap: u256) -> u256 {
+        let total = 64 + cap * @size_of::<T>();
+        let ptr = @alloc(total);
+        // len = 0
+        0.mstore(ptr);
+        // capacity = cap
+        cap.mstore(ptr + 32);
+        ptr
+    }
+
+    fn push(self: &dm Self, val: T) {
+        if (self.len >= self.capacity) {
+            self.grow(self.capacity + 3);
+        }
+        let offset = self + 64 + self.len * @size_of::<T>();
+        val.mstore(offset);
+        self.len = self.len + 1;
+    }
+
+    fn get(self: &dm Self, index: u256) -> T {
+        if (index >= self.len) {
+            revert();
+        }
+        (self + 64 + index * @size_of::<T>()).mload()
+    }
+
+    fn set(self: &dm Self, index: u256, val: T) {
+        if (index >= self.len) {
+            revert();
+        }
+        val.mstore(self + 64 + index * @size_of::<T>());
+    }
+
+    fn grow(self: &dm Self, new_cap: u256) {
+        let old_size = 64 + self.capacity * @size_of::<T>();
+        let new_size = 64 + new_cap * @size_of::<T>();
+        let new_ptr = @alloc(new_size);
+        // copy old header + data to new location
+        self.mcopy(new_ptr, old_size);
+        // update capacity at new location
+        new_cap.mstore(new_ptr + 32);
+        // transparent update via &dm aliasing
+        self = new_ptr;
+    }
+}
+
+impl Vec<T>: Index<u256, T> {
+    fn index(self: &dm Self, idx: u256) -> T {
+        self.get(idx)
+    }
+}

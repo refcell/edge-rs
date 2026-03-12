@@ -20,6 +20,7 @@ impl AstToEgglog {
         variant_name: &str,
         span: Option<&edge_types::span::Span>,
     ) -> Result<usize, IrError> {
+        tracing::trace!("variant_index: type_name={type_name}, variant_name={variant_name}");
         // Try direct lookup first
         let variants = if let Some(v) = self.union_types.get(type_name) {
             v
@@ -591,6 +592,14 @@ impl AstToEgglog {
                         let load = ast_helpers::mload(offset, Rc::clone(&self.current_state));
                         return Ok(Some(ast_helpers::concat(bounds_ir, load)));
                     }
+                }
+                // If the type has an Index trait impl, defer to trait dispatch
+                // instead of raw MLOAD (e.g., Vec<T> should use Index::index, not raw field access).
+                if self
+                    .trait_impls
+                    .contains_key(&(type_name, "Index".to_string()))
+                {
+                    return Ok(None);
                 }
                 let word_size = ast_helpers::const_int(32, self.current_ctx.clone());
                 let offset = ast_helpers::add(base_expr, ast_helpers::mul(idx_ir, word_size));

@@ -34,37 +34,34 @@ impl AstToEgglog {
                 }
                 // Check for generic union types (e.g., Result::Ok(42) where Result<T> was monomorphized)
                 if self.generic_type_templates.contains_key(type_name) {
-                    // First try to find an already-monomorphized version
                     if let Some(mangled) = self.resolve_generic_type_name(type_name) {
-                        return self.lower_union_instantiation_expr(
-                            &mangled,
+                        // Only treat as union constructor if the monomorphized type is actually a union
+                        if self.union_types.contains_key(&mangled) {
+                            return self.lower_union_instantiation_expr(
+                                &mangled,
+                                variant_name,
+                                args,
+                                Some(span),
+                            );
+                        }
+                        // Not a union (e.g., generic struct) — fall through to qualified method call
+                    } else {
+                        // No monomorphized version yet — try to infer type params from
+                        // the constructor argument and monomorphize on the fly.
+                        if let Some(mangled) = self.try_monomorphize_union_from_constructor(
+                            type_name,
                             variant_name,
                             args,
-                            Some(span),
-                        );
+                        )? {
+                            return self.lower_union_instantiation_expr(
+                                &mangled,
+                                variant_name,
+                                args,
+                                Some(span),
+                            );
+                        }
+                        // Could not infer — fall through to qualified method call
                     }
-                    // No monomorphized version yet — try to infer type params from
-                    // the constructor argument and monomorphize on the fly.
-                    if let Some(mangled) =
-                        self.try_monomorphize_union_from_constructor(type_name, variant_name, args)?
-                    {
-                        return self.lower_union_instantiation_expr(
-                            &mangled,
-                            variant_name,
-                            args,
-                            Some(span),
-                        );
-                    }
-                    return Err(IrError::Diagnostic(
-                        edge_diagnostics::Diagnostic::error(format!(
-                            "cannot infer type parameters for generic type `{type_name}`",
-                        ))
-                        .with_label(
-                            span.clone(),
-                            format!("cannot infer type arguments from `{type_name}::{variant_name}(...)`"),
-                        )
-                        .with_note("provide explicit type arguments, e.g. `{type_name}<u256>::{variant_name}(...)`".to_string()),
-                    ));
                 }
             }
         }
@@ -146,6 +143,30 @@ impl AstToEgglog {
                         .map(|(id, ty)| (id.name.clone(), ty.clone()))
                         .collect();
                     return self.inline_function_call(&params, &body, args);
+                }
+
+                // Try resolving generic type to monomorphized name (e.g., Vec → Vec__u256)
+                if let Some(mangled) = self.resolve_generic_type_name(type_or_trait) {
+                    if let Some(method) = self.find_inherent_method(&mangled, method_name) {
+                        let fn_decl = method.fn_decl.clone();
+                        let body = method.body;
+                        let params: Vec<(String, edge_ast::ty::TypeSig)> = fn_decl
+                            .params
+                            .iter()
+                            .map(|(id, ty)| (id.name.clone(), ty.clone()))
+                            .collect();
+                        return self.inline_function_call(&params, &body, args);
+                    }
+                    if let Some((fn_decl, body)) =
+                        self.find_trait_method_for_type(&mangled, method_name)
+                    {
+                        let params: Vec<(String, edge_ast::ty::TypeSig)> = fn_decl
+                            .params
+                            .iter()
+                            .map(|(id, ty)| (id.name.clone(), ty.clone()))
+                            .collect();
+                        return self.inline_function_call(&params, &body, args);
+                    }
                 }
             }
         }
@@ -292,20 +313,12 @@ impl AstToEgglog {
                     let rhs = self.lower_expr(&args[0])?;
                     return Ok(ast_helpers::bop(op, lhs, rhs));
                 }
-
-                // Check compiler-provided stateful methods (derive_slot, sload, sstore)
-                if let Some(result) =
-                    self.try_compiler_stateful_dispatch(receiver, method_name, args)?
-                {
-                    return Ok(result);
-                }
             }
 
             // Default derive_slot for struct types without explicit UniqueSlot impl.
-            // Chains keccak256 over each field like Solidity nested mappings:
-            //   slot = keccak256(field_0 . base_slot)
-            //   slot = keccak256(field_1 . slot)
-            //   ...
+            // Must come BEFORE try_compiler_stateful_dispatch because the generic
+            // derive_slot there treats the receiver as a single 32-byte key, whereas
+            // struct keys need per-field keccak chaining.
             if method_name == "derive_slot"
                 && self.std_ops_traits.contains("UniqueSlot")
                 && args.len() == 1
@@ -317,6 +330,13 @@ impl AstToEgglog {
                         self.default_struct_derive_slot(&recv_ir, &base_slot, &struct_info.fields);
                     return Ok(result);
                 }
+            }
+
+            // Check compiler-provided stateful methods (derive_slot, sload, sstore, mstore, mload, mcopy)
+            if let Some(result) =
+                self.try_compiler_stateful_dispatch(receiver, method_name, args)?
+            {
+                return Ok(result);
             }
         }
 
@@ -908,6 +928,34 @@ impl AstToEgglog {
                 Some(store)
             }
 
+            // Mstore::mstore(self, offset) → MSTORE(offset, value, state)
+            "mstore" if self.std_ops_traits.contains("Mstore") => {
+                let value = receiver_ir?;
+                let offset = args_ir.first()?;
+                let store =
+                    ast_helpers::mstore(Rc::clone(offset), value, Rc::clone(&self.current_state));
+                self.current_state = Rc::clone(&store);
+                Some(store)
+            }
+
+            // Mload::mload(offset) → MLOAD(offset, state)
+            "mload" if self.std_ops_traits.contains("Mload") => {
+                let offset = if let Some(recv) = receiver_ir {
+                    recv
+                } else {
+                    Rc::clone(args_ir.first()?)
+                };
+                Some(ast_helpers::mload(offset, Rc::clone(&self.current_state)))
+            }
+
+            // Mcopy::mcopy(self, dest, size) → Top(Mcopy, dest, src, size)
+            "mcopy" if self.std_ops_traits.contains("Mcopy") => {
+                let src = receiver_ir?;
+                let dest = args_ir.first()?;
+                let size = args_ir.get(1)?;
+                Some(ast_helpers::mcopy(Rc::clone(dest), src, Rc::clone(size)))
+            }
+
             _ => None,
         }
     }
@@ -990,7 +1038,7 @@ impl AstToEgglog {
             }
             edge_ast::Expr::Cast(_, target_type, _) => self.lower_type_sig(target_type),
             edge_ast::Expr::Paren(inner, _) => self.infer_expr_type(inner),
-            edge_ast::Expr::At(name, _, _) => match name.name.as_str() {
+            edge_ast::Expr::At(name, _, _, _) => match name.name.as_str() {
                 "caller" | "origin" | "coinbase" | "address" => EvmType::Base(EvmBaseType::AddrT),
                 _ => EvmType::Base(EvmBaseType::UIntT(256)),
             },
@@ -1122,6 +1170,39 @@ impl AstToEgglog {
             }
         }
 
+        // Detect &dm self aliasing — if param[0] is "self" and the receiver arg
+        // is a &dm variable, alias self to the caller's LetBind instead of copying.
+        // This allows mutations inside the method (e.g., self = new_ptr during Vec
+        // growth) to transparently update the caller's variable.
+        let self_alias_info: Option<(String, VarBinding)> =
+            if !params.is_empty() && params[0].0 == "self" && !args.is_empty() {
+                if let edge_ast::Expr::Ident(ident) = &args[0] {
+                    // Look up receiver in current scope (before pushing new scope)
+                    let binding = self
+                        .scopes
+                        .iter()
+                        .rev()
+                        .find_map(|s| s.bindings.get(&ident.name).cloned());
+                    if let Some(b) = binding {
+                        if b.is_dynamic_memory {
+                            if let Some(ref let_bind_name) = b.let_bind_name {
+                                Some((let_bind_name.clone(), b))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         self.scopes.push(Scope::new());
         for (i, (param_name, param_ty)) in params.iter().enumerate() {
             let ty = self.lower_type_sig(param_ty);
@@ -1206,6 +1287,39 @@ impl AstToEgglog {
                 composite_type,
                 composite_base.is_some()
             );
+
+            // If this is the `self` parameter and we detected &dm aliasing,
+            // create an aliased binding that references the caller's LetBind variable
+            // instead of copying the value. This way mutations to `self` inside the
+            // method (e.g., `self = new_ptr`) update the caller's variable.
+            if i == 0 && param_name == "self" {
+                if let Some((ref alias_name, ref alias_binding)) = self_alias_info {
+                    let aliased = VarBinding {
+                        value: ast_helpers::var(alias_name.clone()),
+                        location: DataLocation::Memory,
+                        storage_slot: None,
+                        _ty: ty,
+                        let_bind_name: Some(alias_name.clone()),
+                        composite_type: alias_binding.composite_type.clone(),
+                        composite_base: alias_binding.composite_base.clone(),
+                        composite_type_args: alias_binding.composite_type_args.clone(),
+                        is_dynamic_memory: true,
+                    };
+                    self.scopes
+                        .last_mut()
+                        .expect("scope stack empty")
+                        .bindings
+                        .insert("self".to_string(), aliased);
+                    continue;
+                }
+            }
+
+            // Check if the parameter type has &dm annotation
+            let is_dm_param = matches!(
+                param_ty,
+                edge_ast::ty::TypeSig::Pointer(edge_ast::ty::Location::DynamicMemory, _)
+            );
+
             let binding = VarBinding {
                 value: val,
                 location: DataLocation::Stack,
@@ -1215,6 +1329,7 @@ impl AstToEgglog {
                 composite_type,
                 composite_base,
                 composite_type_args,
+                is_dynamic_memory: is_dm_param,
             };
             self.scopes
                 .last_mut()

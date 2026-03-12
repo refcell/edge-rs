@@ -350,6 +350,11 @@ pub enum EvmExpr {
     /// Different region IDs are guaranteed to be non-overlapping.
     /// Resolved to a concrete offset by `assign_memory_offsets` after egglog extraction.
     MemRegion(i64, i64),
+
+    /// Dynamic memory allocation: size in bytes → base address.
+    /// Uses MSIZE to find the current memory high-water mark and expands memory.
+    /// NOT pure — memory expansion is an observable side effect.
+    DynAlloc(RcExpr),
 }
 
 // ============================================================

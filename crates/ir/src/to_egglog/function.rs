@@ -68,6 +68,7 @@ impl AstToEgglog {
                     composite_type: Some(format!("__array__{n}")),
                     composite_base: Some(base_ir),
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 self.scopes
                     .last_mut()
@@ -95,6 +96,7 @@ impl AstToEgglog {
                     composite_type: Some(struct_name),
                     composite_base: Some(base_ir),
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 self.scopes
                     .last_mut()
@@ -134,6 +136,7 @@ impl AstToEgglog {
                     composite_type: None,
                     composite_base: None,
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 self.scopes
                     .last_mut()
@@ -237,6 +240,7 @@ impl AstToEgglog {
                 },
                 composite_base: None, // dynamic base — resolved at element access
                 composite_type_args: Vec::new(),
+                is_dynamic_memory: false,
             };
             self.scopes
                 .last_mut()
@@ -362,6 +366,11 @@ impl AstToEgglog {
 
         // First pass: scan for VarDecl names to identify memory-backed locals.
         // We need this list BEFORE lowering to know which variables to wrap in LetBinds.
+        tracing::trace!(
+            "lower_code_block: inline_depth={}, n_items={}",
+            self.inline_depth,
+            block.stmts.len()
+        );
         let var_decl_names: Vec<String> = block
             .stmts
             .iter()
@@ -422,6 +431,10 @@ impl AstToEgglog {
             let idx = stmts
                 .iter()
                 .position(|s| matches!(s.as_ref(), EvmExpr::VarStore(n, _) if n == &var_name));
+            tracing::trace!(
+                "store-fwd: var={var_name}, found_idx={idx:?}, n_stmts={}",
+                stmts.len()
+            );
             let Some(idx) = idx else { continue };
 
             // All preceding statements must be Empty (uninit VarDecl) or VarStore
@@ -451,6 +464,7 @@ impl AstToEgglog {
                 continue;
             }
 
+            tracing::trace!("store-fwd: inserting init for {var_name}");
             var_inits.insert(var_name, init_val);
             stmts.remove(idx);
         }
@@ -475,6 +489,11 @@ impl AstToEgglog {
         // we insert Drops between the side-effect prefix and the return value.
         for name in var_decl_names.iter().rev() {
             let var_name = format!("{prefix}__local_{name}");
+            tracing::trace!(
+                "letbind: wrapping {var_name}, has_init={}, inline_depth={}",
+                var_inits.contains_key(&var_name),
+                self.inline_depth
+            );
             if self.inline_depth == 0 {
                 // Normal (non-inline): append Drop after the body.
                 result = ast_helpers::concat(result, ast_helpers::drop_var(var_name.clone()));
@@ -570,6 +589,7 @@ impl AstToEgglog {
                 composite_type: None,
                 composite_base: None,
                 composite_type_args: Vec::new(),
+                is_dynamic_memory: false,
             };
             self.scopes
                 .last_mut()

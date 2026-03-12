@@ -157,6 +157,14 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
             *num_outputs,
         )),
 
+        EvmExpr::DynAlloc(size) => {
+            let ns = cleanup_expr(size);
+            if Rc::ptr_eq(&ns, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
+
         // Leaf nodes — no children to clean
         EvmExpr::Arg(..)
         | EvmExpr::Const(..)

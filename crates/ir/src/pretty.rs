@@ -279,7 +279,8 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
         | EvmExpr::ReturnOp(..)
         | EvmExpr::Call(..)
         | EvmExpr::VarStore(..)
-        | EvmExpr::InlineAsm(..) => None,
+        | EvmExpr::InlineAsm(..)
+        | EvmExpr::DynAlloc(_) => None, // never inline — has sub-expression
         EvmExpr::MemRegion(id, sz) => Some(format!("region({id}, {sz})").len()),
     }
 }
@@ -642,6 +643,17 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             indent(depth, buf);
             buf.push_str(&format!("region({id}, {sz})"));
         }
+        EvmExpr::DynAlloc(size) => {
+            indent(depth, buf);
+            if fits_inline(size, budget(depth).saturating_sub(8)) {
+                buf.push_str("@alloc(");
+                pp_inline(size, buf);
+            } else {
+                buf.push_str("@alloc(\n");
+                pp(size, depth + 1, buf);
+            }
+            buf.push(')');
+        }
     }
 }
 
@@ -766,10 +778,16 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
             buf.push_str(&format!("asm({num_outputs}){{ {disasm} }}"));
         }
         EvmExpr::MemRegion(id, sz) => buf.push_str(&format!("region({id}, {sz})")),
+        EvmExpr::DynAlloc(size) => {
+            buf.push_str("@alloc(");
+            pp_oneline(size, buf);
+            buf.push(')');
+        }
     }
 }
 
-/// Produce a compact one-line IR summary for **statement-level** nodes.
+/// Produce a compact one-line IR summary
+/// (`DynAlloc` is a statement-level node) for **statement-level** nodes.
 ///
 /// Returns `None` for leaf/value expressions (Const, Var, Bop, Uop, etc.)
 /// that don't merit their own comment in assembly output.

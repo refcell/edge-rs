@@ -7,6 +7,55 @@ use edge_ir::{schema::EvmContract, var_opt};
 
 use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 
+/// Recursively check if an IR tree contains any `DynAlloc` nodes.
+fn contains_dyn_alloc(expr: &edge_ir::schema::RcExpr) -> bool {
+    use edge_ir::schema::EvmExpr;
+    match expr.as_ref() {
+        EvmExpr::DynAlloc(_) => true,
+        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
+            contains_dyn_alloc(a) || contains_dyn_alloc(b)
+        }
+        EvmExpr::Uop(_, a) => contains_dyn_alloc(a),
+        EvmExpr::Top(_, a, b, c)
+        | EvmExpr::If(_, a, b, c)
+        | EvmExpr::Revert(a, b, c)
+        | EvmExpr::ReturnOp(a, b, c) => {
+            contains_dyn_alloc(a) || contains_dyn_alloc(b) || contains_dyn_alloc(c)
+        }
+        EvmExpr::LetBind(_, init, body) => contains_dyn_alloc(init) || contains_dyn_alloc(body),
+        EvmExpr::VarStore(_, val) => contains_dyn_alloc(val),
+        EvmExpr::EnvRead(_, state) => contains_dyn_alloc(state),
+        EvmExpr::EnvRead1(_, arg, state) => contains_dyn_alloc(arg) || contains_dyn_alloc(state),
+        EvmExpr::Log(_, topics, offset, size, state) => {
+            topics.iter().any(contains_dyn_alloc)
+                || contains_dyn_alloc(offset)
+                || contains_dyn_alloc(size)
+                || contains_dyn_alloc(state)
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            contains_dyn_alloc(a)
+                || contains_dyn_alloc(b)
+                || contains_dyn_alloc(c)
+                || contains_dyn_alloc(d)
+                || contains_dyn_alloc(e)
+                || contains_dyn_alloc(f)
+                || contains_dyn_alloc(g)
+        }
+        EvmExpr::Function(_, _, _, body) => contains_dyn_alloc(body),
+        EvmExpr::Call(_, args) => args.iter().any(contains_dyn_alloc),
+        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(contains_dyn_alloc),
+        EvmExpr::Get(inner, _) => contains_dyn_alloc(inner),
+        EvmExpr::Const(..)
+        | EvmExpr::Var(_)
+        | EvmExpr::Drop(_)
+        | EvmExpr::Arg(_, _)
+        | EvmExpr::Empty(_, _)
+        | EvmExpr::StorageField(_, _, _)
+        | EvmExpr::MemRegion(_, _)
+        | EvmExpr::Selector(_) => false,
+    }
+}
+
 /// Generate the function dispatcher for a contract.
 ///
 /// The dispatcher compiles the runtime IR which contains the full
@@ -32,9 +81,32 @@ pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
                 .or_insert(alloc);
         }
     }
+    // Compute the DynAlloc floor: the minimum address DynAlloc may return.
+    // Without this, DynAlloc (which uses MSIZE) could return pointers that
+    // overlap with LetBind slots whose MSTORE hasn't happened yet.
+    //
+    // We simulate the codegen's LetBind allocation to find the peak offset.
+    // This mirrors compile_if (doesn't restore next_let_offset across branches)
+    // and Function (does restore), giving the exact peak rather than a loose bound.
+    let has_dyn_alloc = contains_dyn_alloc(&contract.runtime)
+        || contract.internal_functions.iter().any(contains_dyn_alloc);
+    let dyn_alloc_floor = if has_dyn_alloc {
+        let mut all_exprs: Vec<&edge_ir::schema::RcExpr> = vec![&contract.runtime];
+        for func in &contract.internal_functions {
+            all_exprs.push(func);
+        }
+        ExprCompiler::compute_peak_let_offset(&allocations, contract.memory_high_water, &all_exprs)
+    } else {
+        0
+    };
+
     // Start LetBind slots after IR-allocated memory regions (arrays, structs)
-    let mut compiler =
-        ExprCompiler::with_allocations_and_base(asm, allocations, contract.memory_high_water);
+    let mut compiler = ExprCompiler::with_allocations_base_and_floor(
+        asm,
+        allocations,
+        contract.memory_high_water,
+        dyn_alloc_floor,
+    );
     // Collect fn_info from both runtime and internal functions
     compiler.collect_fn_info(&contract.runtime);
     for func in &contract.internal_functions {

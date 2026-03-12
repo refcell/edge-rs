@@ -3,7 +3,7 @@
 //! Converts between `EvmExpr` and egglog-compatible s-expression strings.
 //! Used to insert IR into an egglog `EGraph` and extract optimized results.
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     schema::{
@@ -155,6 +155,7 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
         }
         EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
+        EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", expr_to_sexp(size)),
     }
 }
 
@@ -294,6 +295,330 @@ const fn envop_sexp(op: &EvmEnvOp) -> &'static str {
 fn list_to_sexp(exprs: &[RcExpr]) -> String {
     exprs.iter().rev().fold("(Nil)".to_owned(), |acc, e| {
         format!("(Cons {} {})", expr_to_sexp(e), acc)
+    })
+}
+
+// ============================================================
+// DAG-aware S-expression conversion
+// ============================================================
+//
+// The IR is a DAG (via Rc sharing), but expr_to_sexp expands it into a tree.
+// For Vec<T> with 5 push calls, this blows up from ~1,500 DAG nodes to
+// ~867,000 expanded nodes (33 MB of s-expression text).
+//
+// This module detects shared Rc nodes and emits egglog `(let __sN ...)` bindings
+// for them. Subsequent references use the binding name instead of re-expanding.
+// This keeps the s-expression size proportional to the DAG, not the expanded tree.
+
+use std::collections::HashSet;
+
+/// Convert an `RcExpr` DAG to egglog s-expressions with `let`-bindings for shared nodes.
+///
+/// Returns `(let_bindings, main_expr)` where `let_bindings` contains
+/// `(let __sN <expr>)` declarations in dependency order.
+///
+/// `id_offset` ensures unique names across multiple calls within the same
+/// egglog program (e.g., runtime + internal functions). Returns the next
+/// available ID after this call.
+pub fn expr_to_sexp_dag(expr: &RcExpr, id_offset: usize) -> (String, String, usize) {
+    // Pass 1: count how many parent edges each Rc node has (DAG-aware traversal)
+    let mut ref_counts: HashMap<usize, usize> = HashMap::new();
+    let mut visited: HashSet<usize> = HashSet::new();
+    count_refs_dag(expr, &mut ref_counts, &mut visited);
+
+    // Check if any node is referenced more than once
+    let has_sharing = ref_counts.values().any(|&c| c > 1);
+    if !has_sharing {
+        return (String::new(), expr_to_sexp(expr), id_offset);
+    }
+
+    // Pass 2: serialize with let-bindings for shared nodes
+    let mut ctx = DagSexpCtx {
+        ref_counts,
+        named: HashMap::new(),
+        let_bindings: Vec::new(),
+        next_id: id_offset,
+    };
+    let main = dag_sexp_rec(expr, &mut ctx);
+    (ctx.let_bindings.join("\n"), main, ctx.next_id)
+}
+
+struct DagSexpCtx {
+    ref_counts: HashMap<usize, usize>,
+    named: HashMap<usize, String>,
+    let_bindings: Vec<String>,
+    next_id: usize,
+}
+
+fn ptr_id(expr: &RcExpr) -> usize {
+    Rc::as_ptr(expr) as usize
+}
+
+/// Count references to each Rc node. Recurses into children only once per node.
+fn count_refs_dag(expr: &RcExpr, counts: &mut HashMap<usize, usize>, visited: &mut HashSet<usize>) {
+    let id = ptr_id(expr);
+    *counts.entry(id).or_default() += 1;
+    if !visited.insert(id) {
+        return;
+    }
+    macro_rules! visit {
+        ($e:expr) => {
+            count_refs_dag($e, counts, visited);
+        };
+    }
+    match expr.as_ref() {
+        EvmExpr::Arg(..)
+        | EvmExpr::Const(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Var(..)
+        | EvmExpr::Drop(..)
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..)
+        | EvmExpr::Selector(..) => {}
+        EvmExpr::Uop(_, a)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::EnvRead(_, a)
+        | EvmExpr::DynAlloc(a) => {
+            visit!(a);
+        }
+        EvmExpr::Bop(_, a, b)
+        | EvmExpr::Concat(a, b)
+        | EvmExpr::DoWhile(a, b)
+        | EvmExpr::EnvRead1(_, a, b) => {
+            visit!(a);
+            visit!(b);
+        }
+        EvmExpr::LetBind(_, a, b) => {
+            visit!(a);
+            visit!(b);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+        }
+        EvmExpr::If(a, b, c, d) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+            visit!(d);
+        }
+        EvmExpr::Function(_, _, _, a) => {
+            visit!(a);
+        }
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                visit!(a);
+            }
+        }
+        EvmExpr::Log(_, topics, a, b, c) => {
+            for t in topics {
+                visit!(t);
+            }
+            visit!(a);
+            visit!(b);
+            visit!(c);
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+            visit!(d);
+            visit!(e);
+            visit!(f);
+            visit!(g);
+        }
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            for a in inputs {
+                visit!(a);
+            }
+        }
+    }
+}
+
+/// Serialize a node, emitting let-bindings for shared sub-expressions.
+fn dag_sexp_rec(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
+    let id = ptr_id(expr);
+
+    // If this shared node was already serialized, return its name
+    if let Some(name) = ctx.named.get(&id) {
+        return name.clone();
+    }
+
+    // Serialize the node itself (recurse into children via dag_sexp_rec)
+    let sexp = dag_sexp_node(expr, ctx);
+
+    // If multiply-referenced, emit a let-binding and return the name
+    let is_shared = ctx.ref_counts.get(&id).copied().unwrap_or(0) > 1;
+    if is_shared {
+        // Don't share trivial leaf nodes (saves let-binding overhead)
+        let is_leaf = matches!(
+            expr.as_ref(),
+            EvmExpr::Arg(..)
+                | EvmExpr::Const(..)
+                | EvmExpr::Empty(..)
+                | EvmExpr::Var(..)
+                | EvmExpr::Drop(..)
+                | EvmExpr::Selector(..)
+                | EvmExpr::MemRegion(..)
+                | EvmExpr::StorageField(..)
+        );
+        if !is_leaf {
+            let name = format!("__s{}", ctx.next_id);
+            ctx.next_id += 1;
+            ctx.named.insert(id, name.clone());
+            ctx.let_bindings.push(format!("(let {name} {sexp})"));
+            return name;
+        }
+    }
+
+    sexp
+}
+
+/// Serialize a single node's s-expression, using dag_sexp_rec for children.
+fn dag_sexp_node(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
+    match expr.as_ref() {
+        EvmExpr::Arg(ty, c) => format!("(Arg {} {})", type_sexp(ty), ctx_sexp(c)),
+        EvmExpr::Const(c, ty, cx) => {
+            format!(
+                "(Const {} {} {})",
+                const_sexp(c),
+                type_sexp(ty),
+                ctx_sexp(cx)
+            )
+        }
+        EvmExpr::Empty(ty, c) => format!("(Empty {} {})", type_sexp(ty), ctx_sexp(c)),
+        EvmExpr::Bop(op, l, r) => {
+            format!(
+                "(Bop {} {} {})",
+                binop_sexp(op),
+                dag_sexp_rec(l, ctx),
+                dag_sexp_rec(r, ctx)
+            )
+        }
+        EvmExpr::Uop(op, e) => format!("(Uop {} {})", unop_sexp(op), dag_sexp_rec(e, ctx)),
+        EvmExpr::Top(op, a, b, c) => {
+            format!(
+                "(Top {} {} {} {})",
+                ternop_sexp(op),
+                dag_sexp_rec(a, ctx),
+                dag_sexp_rec(b, ctx),
+                dag_sexp_rec(c, ctx)
+            )
+        }
+        EvmExpr::Get(e, idx) => format!("(Get {} {})", dag_sexp_rec(e, ctx), idx),
+        EvmExpr::Concat(a, b) => {
+            format!("(Concat {} {})", dag_sexp_rec(a, ctx), dag_sexp_rec(b, ctx))
+        }
+        EvmExpr::If(cond, inputs, t, e) => {
+            format!(
+                "(If {} {} {} {})",
+                dag_sexp_rec(cond, ctx),
+                dag_sexp_rec(inputs, ctx),
+                dag_sexp_rec(t, ctx),
+                dag_sexp_rec(e, ctx)
+            )
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            format!(
+                "(DoWhile {} {})",
+                dag_sexp_rec(inputs, ctx),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::EnvRead(op, st) => {
+            format!("(EnvRead {} {})", envop_sexp(op), dag_sexp_rec(st, ctx))
+        }
+        EvmExpr::EnvRead1(op, arg, st) => {
+            format!(
+                "(EnvRead1 {} {} {})",
+                envop_sexp(op),
+                dag_sexp_rec(arg, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Log(n, topics, data_offset, data_size, st) => {
+            let topics_s = dag_list_to_sexp(topics, ctx);
+            format!(
+                "(Log {} {} {} {} {})",
+                n,
+                topics_s,
+                dag_sexp_rec(data_offset, ctx),
+                dag_sexp_rec(data_size, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Revert(off, sz, st) => {
+            format!(
+                "(Revert {} {} {})",
+                dag_sexp_rec(off, ctx),
+                dag_sexp_rec(sz, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::ReturnOp(off, sz, st) => {
+            format!(
+                "(ReturnOp {} {} {})",
+                dag_sexp_rec(off, ctx),
+                dag_sexp_rec(sz, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::ExtCall(tgt, val, ao, al, ro, rl, st) => {
+            format!(
+                "(ExtCall {} {} {} {} {} {} {})",
+                dag_sexp_rec(tgt, ctx),
+                dag_sexp_rec(val, ctx),
+                dag_sexp_rec(ao, ctx),
+                dag_sexp_rec(al, ctx),
+                dag_sexp_rec(ro, ctx),
+                dag_sexp_rec(rl, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Call(name, args) => {
+            let list = dag_list_to_sexp(args, ctx);
+            format!("(Call \"{name}\" {list})")
+        }
+        EvmExpr::Selector(sig) => format!("(Selector \"{sig}\")"),
+        EvmExpr::LetBind(name, value, body) => {
+            format!(
+                "(LetBind \"{}\" {} {})",
+                name,
+                dag_sexp_rec(value, ctx),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::Var(name) => format!("(Var \"{name}\")"),
+        EvmExpr::VarStore(name, value) => {
+            format!("(VarStore \"{}\" {})", name, dag_sexp_rec(value, ctx))
+        }
+        EvmExpr::Drop(name) => format!("(Drop \"{name}\")"),
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            format!(
+                "(Function \"{}\" {} {} {})",
+                name,
+                type_sexp(in_ty),
+                type_sexp(out_ty),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::StorageField(name, slot, ty) => {
+            format!("(StorageField \"{}\" {} {})", name, slot, type_sexp(ty))
+        }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let list = dag_list_to_sexp(inputs, ctx);
+            format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
+        }
+        EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
+        EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", dag_sexp_rec(size, ctx)),
+    }
+}
+
+fn dag_list_to_sexp(exprs: &[RcExpr], ctx: &mut DagSexpCtx) -> String {
+    exprs.iter().rev().fold("(Nil)".to_owned(), |acc, e| {
+        format!("(Cons {} {})", dag_sexp_rec(e, ctx), acc)
     })
 }
 
@@ -550,6 +875,10 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let id = atom_i64(&items[1])?;
                     let size = atom_i64(&items[2])?;
                     Ok(Rc::new(EvmExpr::MemRegion(id, size)))
+                }
+                "DynAlloc" => {
+                    let size = sexp_to_evm_expr(&items[1])?;
+                    Ok(Rc::new(EvmExpr::DynAlloc(size)))
                 }
                 other => Err(IrError::Extraction(format!(
                     "unknown expression constructor: {other}"
@@ -1003,7 +1332,7 @@ fn is_leaf_form(tree: &STree) -> bool {
                     // Context
                     | "InFunction"
                     // Leaves
-                    | "Selector" | "Var" | "VarStore" | "StorageField" | "MemRegion"
+                    | "Selector" | "Var" | "VarStore" | "StorageField" | "MemRegion" | "DynAlloc"
                     // Empty/Arg (no sub-expressions)
                     | "Arg" | "Empty" | "Const"
                 )

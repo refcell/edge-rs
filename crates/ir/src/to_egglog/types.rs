@@ -347,7 +347,7 @@ impl AstToEgglog {
             stmts: block
                 .stmts
                 .iter()
-                .map(|item| Self::substitute_block_item(item, &name_subst))
+                .map(|item| Self::substitute_block_item(item, &name_subst, subst))
                 .collect(),
             span: block.span.clone(),
         }
@@ -356,40 +356,84 @@ impl AstToEgglog {
     fn substitute_block_item(
         item: &edge_ast::stmt::BlockItem,
         subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
     ) -> edge_ast::stmt::BlockItem {
         match item {
-            edge_ast::stmt::BlockItem::Stmt(stmt) => {
-                edge_ast::stmt::BlockItem::Stmt(Box::new(Self::substitute_stmt(stmt, subst)))
-            }
+            edge_ast::stmt::BlockItem::Stmt(stmt) => edge_ast::stmt::BlockItem::Stmt(Box::new(
+                Self::substitute_stmt(stmt, subst, type_subst),
+            )),
             edge_ast::stmt::BlockItem::Expr(expr) => {
-                edge_ast::stmt::BlockItem::Expr(Self::substitute_expr(expr, subst))
+                edge_ast::stmt::BlockItem::Expr(Self::substitute_expr(expr, subst, type_subst))
             }
         }
     }
 
-    fn substitute_stmt(stmt: &edge_ast::Stmt, subst: &HashMap<&str, String>) -> edge_ast::Stmt {
+    fn substitute_stmt(
+        stmt: &edge_ast::Stmt,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::Stmt {
         match stmt {
             edge_ast::Stmt::VarDecl(ident, ty, init, span) => edge_ast::Stmt::VarDecl(
                 ident.clone(),
                 ty.clone(),
                 init.as_ref()
-                    .map(|e| Box::new(Self::substitute_expr(e, subst))),
+                    .map(|e| Box::new(Self::substitute_expr(e, subst, type_subst))),
                 span.clone(),
             ),
             edge_ast::Stmt::VarAssign(lhs, rhs, span) => edge_ast::Stmt::VarAssign(
-                Self::substitute_expr(lhs, subst),
-                Self::substitute_expr(rhs, subst),
+                Self::substitute_expr(lhs, subst, type_subst),
+                Self::substitute_expr(rhs, subst, type_subst),
                 span.clone(),
             ),
-            edge_ast::Stmt::Return(Some(expr), span) => {
-                edge_ast::Stmt::Return(Some(Self::substitute_expr(expr, subst)), span.clone())
+            edge_ast::Stmt::Return(Some(expr), span) => edge_ast::Stmt::Return(
+                Some(Self::substitute_expr(expr, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Stmt::Expr(expr) => {
+                edge_ast::Stmt::Expr(Self::substitute_expr(expr, subst, type_subst))
             }
-            edge_ast::Stmt::Expr(expr) => edge_ast::Stmt::Expr(Self::substitute_expr(expr, subst)),
+            edge_ast::Stmt::IfElse(branches, else_block) => {
+                let new_branches: Vec<(edge_ast::Expr, edge_ast::CodeBlock)> = branches
+                    .iter()
+                    .map(|(cond, block)| {
+                        (
+                            Self::substitute_expr(cond, subst, type_subst),
+                            Self::substitute_code_block_with(block, subst, type_subst),
+                        )
+                    })
+                    .collect();
+                edge_ast::Stmt::IfElse(
+                    new_branches,
+                    else_block
+                        .as_ref()
+                        .map(|eb| Self::substitute_code_block_with(eb, subst, type_subst)),
+                )
+            }
             other => other.clone(),
         }
     }
 
-    fn substitute_expr(expr: &edge_ast::Expr, subst: &HashMap<&str, String>) -> edge_ast::Expr {
+    fn substitute_code_block_with(
+        block: &edge_ast::CodeBlock,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::CodeBlock {
+        edge_ast::CodeBlock {
+            stmts: block
+                .stmts
+                .iter()
+                .map(|item| Self::substitute_block_item(item, subst, type_subst))
+                .collect(),
+            span: block.span.clone(),
+        }
+    }
+
+    fn substitute_expr(
+        expr: &edge_ast::Expr,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::Expr {
         match expr {
             edge_ast::Expr::Path(components, span) => {
                 let new_components: Vec<edge_ast::Ident> = components
@@ -407,29 +451,67 @@ impl AstToEgglog {
                 edge_ast::Expr::Path(new_components, span.clone())
             }
             edge_ast::Expr::FunctionCall(callee, args, turbofish, span) => {
+                let new_turbofish: Vec<edge_ast::ty::TypeSig> = turbofish
+                    .iter()
+                    .map(|ts| Self::substitute_type_params(ts, type_subst))
+                    .collect();
                 edge_ast::Expr::FunctionCall(
-                    Box::new(Self::substitute_expr(callee, subst)),
+                    Box::new(Self::substitute_expr(callee, subst, type_subst)),
                     args.iter()
-                        .map(|a| Self::substitute_expr(a, subst))
+                        .map(|a| Self::substitute_expr(a, subst, type_subst))
                         .collect(),
-                    turbofish.clone(),
+                    new_turbofish,
+                    span.clone(),
+                )
+            }
+            edge_ast::Expr::At(name, type_args, args, span) => {
+                tracing::trace!(
+                    "substitute_expr At: name={}, type_args={type_args:?}",
+                    name.name
+                );
+                let new_type_args: Vec<edge_ast::ty::TypeSig> = type_args
+                    .iter()
+                    .map(|ts| Self::substitute_type_params(ts, type_subst))
+                    .collect();
+                tracing::trace!("substitute_expr At: new_type_args={new_type_args:?}");
+                edge_ast::Expr::At(
+                    name.clone(),
+                    new_type_args,
+                    args.iter()
+                        .map(|a| Self::substitute_expr(a, subst, type_subst))
+                        .collect(),
                     span.clone(),
                 )
             }
             edge_ast::Expr::FieldAccess(obj, field, span) => edge_ast::Expr::FieldAccess(
-                Box::new(Self::substitute_expr(obj, subst)),
+                Box::new(Self::substitute_expr(obj, subst, type_subst)),
                 field.clone(),
                 span.clone(),
             ),
             edge_ast::Expr::Binary(lhs, op, rhs, span) => edge_ast::Expr::Binary(
-                Box::new(Self::substitute_expr(lhs, subst)),
+                Box::new(Self::substitute_expr(lhs, subst, type_subst)),
                 *op,
-                Box::new(Self::substitute_expr(rhs, subst)),
+                Box::new(Self::substitute_expr(rhs, subst, type_subst)),
                 span.clone(),
             ),
-            edge_ast::Expr::Paren(inner, span) => {
-                edge_ast::Expr::Paren(Box::new(Self::substitute_expr(inner, subst)), span.clone())
-            }
+            edge_ast::Expr::Assign(lhs, rhs, span) => edge_ast::Expr::Assign(
+                Box::new(Self::substitute_expr(lhs, subst, type_subst)),
+                Box::new(Self::substitute_expr(rhs, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Expr::Paren(inner, span) => edge_ast::Expr::Paren(
+                Box::new(Self::substitute_expr(inner, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Expr::Ident(ident) => subst.get(ident.name.as_str()).map_or_else(
+                || expr.clone(),
+                |replacement| {
+                    edge_ast::Expr::Ident(edge_ast::Ident {
+                        name: replacement.clone(),
+                        span: ident.span.clone(),
+                    })
+                },
+            ),
             _ => expr.clone(),
         }
     }
@@ -580,7 +662,11 @@ impl AstToEgglog {
                     let satisfied = self.trait_impls.contains_key(&key)
                         || mangled_key
                             .as_ref()
-                            .is_some_and(|k| self.trait_impls.contains_key(k));
+                            .is_some_and(|k| self.trait_impls.contains_key(k))
+                        // Compiler provides default derive_slot for struct types,
+                        // so consider UniqueSlot satisfied for any known struct.
+                        || (constraint.name == "UniqueSlot"
+                            && self.struct_types.contains_key(&concrete_name));
                     if !satisfied {
                         let mut diag = edge_diagnostics::Diagnostic::error(format!(
                             "the trait bound `{}: {}` is not satisfied",

@@ -67,6 +67,7 @@ impl AstToEgglog {
                             composite_type: None,
                             composite_base: None,
                             composite_type_args: Vec::new(),
+                            is_dynamic_memory: false,
                         },
                     );
             }
@@ -178,6 +179,7 @@ impl AstToEgglog {
                             composite_type: None,
                             composite_base: None,
                             composite_type_args: Vec::new(),
+                            is_dynamic_memory: false,
                         };
                         self.scopes
                             .last_mut()

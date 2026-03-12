@@ -133,9 +133,10 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
         }
 
         // Unary children
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::VarStore(_, a) => {
-            collect_region_scopes(a)
-        }
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::DynAlloc(a) => collect_region_scopes(a),
 
         // Multi-child nodes
         EvmExpr::Log(_, topics, d, s, st) => {
@@ -374,6 +375,13 @@ fn replace_regions(expr: &RcExpr, assignments: &BTreeMap<i64, usize>) -> RcExpr 
                 .map(|i| replace_regions(i, assignments))
                 .collect();
             Rc::new(EvmExpr::InlineAsm(ni, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let ns = replace_regions(size, assignments);
+            if Rc::ptr_eq(&ns, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(ns))
         }
         // Leaf nodes — no MemRegion possible
         EvmExpr::Const(..)

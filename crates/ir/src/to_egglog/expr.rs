@@ -107,8 +107,26 @@ impl AstToEgglog {
 
                 // If the type annotation is a generic type (e.g., Result<u256>),
                 // trigger monomorphization so the concrete type is registered.
+                // Also handle &dm Pointer wrapper around a generic type.
                 let mut composite_type = None;
-                if let Some(edge_ast::ty::TypeSig::Named(name_ident, type_args)) = type_sig {
+                let is_dynamic_memory;
+
+                // Unwrap &dm pointer to get inner type sig for monomorphization
+                let inner_type_sig = match type_sig {
+                    Some(edge_ast::ty::TypeSig::Pointer(
+                        edge_ast::ty::Location::DynamicMemory,
+                        inner,
+                    )) => {
+                        is_dynamic_memory = true;
+                        Some(inner.as_ref())
+                    }
+                    _ => {
+                        is_dynamic_memory = false;
+                        type_sig.as_ref()
+                    }
+                };
+
+                if let Some(edge_ast::ty::TypeSig::Named(name_ident, type_args)) = inner_type_sig {
                     if !type_args.is_empty()
                         && self.generic_type_templates.contains_key(&name_ident.name)
                     {
@@ -119,11 +137,22 @@ impl AstToEgglog {
                         )? {
                             composite_type = Some(mangled);
                         }
+                    } else if self.struct_types.contains_key(&name_ident.name) {
+                        // Non-generic struct type (e.g., &dm MyStruct)
+                        composite_type = Some(name_ident.name.clone());
                     }
                 }
 
                 let zero = ast_helpers::const_int(0, self.current_ctx.clone());
                 let var_name = format!("{}__local_{}", self.inline_prefix, ident.name);
+
+                // For &dm bindings, composite_base is Var(let_bind_name) — the pointer itself
+                let composite_base = if is_dynamic_memory && composite_type.is_some() {
+                    Some(ast_helpers::var(var_name.clone()))
+                } else {
+                    None
+                };
+
                 let binding = VarBinding {
                     value: zero,
                     location: DataLocation::Memory,
@@ -131,8 +160,9 @@ impl AstToEgglog {
                     _ty: ty,
                     let_bind_name: Some(var_name.clone()),
                     composite_type,
-                    composite_base: None,
+                    composite_base,
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory,
                 };
                 self.scopes
                     .last_mut()
@@ -147,14 +177,19 @@ impl AstToEgglog {
                     self.type_sig_hint = type_sig.as_ref().cloned();
                     let rhs_ir = self.lower_expr(init)?;
                     self.type_sig_hint = None;
-                    // Track composite type from RHS if applicable
-                    if let Some((comp_type, comp_base)) = self.last_composite_alloc.take() {
-                        if let Some(scope) = self.scopes.last_mut() {
-                            if let Some(binding) = scope.bindings.get_mut(&ident.name) {
-                                binding.composite_type = Some(comp_type);
-                                binding.composite_base = Some(comp_base);
+                    // Track composite type from RHS if applicable.
+                    // For &dm bindings, don't override — composite_base is Var(let_bind_name).
+                    if !is_dynamic_memory {
+                        if let Some((comp_type, comp_base)) = self.last_composite_alloc.take() {
+                            if let Some(scope) = self.scopes.last_mut() {
+                                if let Some(binding) = scope.bindings.get_mut(&ident.name) {
+                                    binding.composite_type = Some(comp_type);
+                                    binding.composite_base = Some(comp_base);
+                                }
                             }
                         }
+                    } else {
+                        self.last_composite_alloc.take();
                     }
                     Ok(ast_helpers::var_store(var_name, rhs_ir))
                 } else {
@@ -240,6 +275,7 @@ impl AstToEgglog {
                     composite_type: None,
                     composite_base: None,
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 self.scopes
                     .last_mut()
@@ -444,8 +480,8 @@ impl AstToEgglog {
                 self.lower_function_call(callee, args, type_args, span)
             }
 
-            edge_ast::Expr::At(builtin_name, args, _span) => {
-                self.lower_builtin(&builtin_name.name, args)
+            edge_ast::Expr::At(builtin_name, type_args, args, _span) => {
+                self.lower_builtin(&builtin_name.name, type_args, args)
             }
 
             edge_ast::Expr::Assign(lhs, rhs, _span) => {
@@ -913,14 +949,45 @@ impl AstToEgglog {
                 ))
             }
             edge_ast::Expr::FieldAccess(obj, field, _span) => {
-                // Storage-backed packed struct sub-field write: self.color.r = 5
+                // 1. Storage-backed packed struct sub-field write: self.color.r = 5
                 if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
-                    if let Some(result) =
-                        self.try_lower_storage_packed_field_write(&ident.name, &field.name, rhs_ir)?
-                    {
+                    if let Some(result) = self.try_lower_storage_packed_field_write(
+                        &ident.name,
+                        &field.name,
+                        Rc::clone(&rhs_ir),
+                    )? {
                         return Ok(result);
                     }
                 }
+
+                // 2. Memory-backed struct field write: p.x = 10
+                if let edge_ast::Expr::Ident(ident) = obj.as_ref() {
+                    if let Some((type_name, base_expr)) = self.lookup_composite_info(&ident.name) {
+                        if let Some(struct_info) = self.struct_types.get(&type_name).cloned() {
+                            if let Some(field_idx) = struct_info
+                                .fields
+                                .iter()
+                                .position(|(n, _)| n == &field.name)
+                            {
+                                let offset = ast_helpers::add(
+                                    base_expr,
+                                    ast_helpers::const_int(
+                                        (field_idx * 32) as i64,
+                                        self.current_ctx.clone(),
+                                    ),
+                                );
+                                let store = ast_helpers::mstore(
+                                    offset,
+                                    rhs_ir,
+                                    Rc::clone(&self.current_state),
+                                );
+                                self.current_state = Rc::clone(&store);
+                                return Ok(store);
+                            }
+                        }
+                    }
+                }
+
                 Err(IrError::Unsupported(
                     "field access assignment target not yet supported".to_owned(),
                 ))
@@ -1273,6 +1340,17 @@ impl AstToEgglog {
             if Self::is_primitive_type(type_name) {
                 return Ok(None);
             }
+            // &dm types are u256 pointers — use primitive ops for arithmetic
+            if let edge_ast::Expr::Ident(ident) = lhs {
+                for scope in self.scopes.iter().rev() {
+                    if let Some(binding) = scope.bindings.get(&ident.name) {
+                        if binding.is_dynamic_memory {
+                            return Ok(None);
+                        }
+                        break;
+                    }
+                }
+            }
             // Only dispatch to operator traits from std::ops.
             // User-defined traits named "Add" etc. do NOT get operator overloading.
             if !self.std_ops_traits.contains(trait_name) {
@@ -1405,12 +1483,54 @@ impl AstToEgglog {
         ))
     }
 
-    /// Lower a builtin call (@caller, @callvalue, etc.).
+    /// Lower a builtin call (`@caller`, `@callvalue`, `@size_of`, `@alloc`, etc.).
     pub(crate) fn lower_builtin(
-        &self,
+        &mut self,
         name: &str,
-        _args: &[edge_ast::Expr],
+        type_args: &[edge_ast::ty::TypeSig],
+        args: &[edge_ast::Expr],
     ) -> Result<RcExpr, IrError> {
+        // Handle builtins that take type arguments or value arguments
+        match name {
+            "size_of" => {
+                if type_args.len() != 1 {
+                    return Err(IrError::Unsupported(
+                        "@size_of requires exactly 1 type argument".to_owned(),
+                    ));
+                }
+                if !args.is_empty() {
+                    return Err(IrError::Unsupported(
+                        "@size_of takes no value arguments".to_owned(),
+                    ));
+                }
+                tracing::trace!(
+                    "lower_builtin size_of: type_arg={:?}, subst={:?}",
+                    type_args[0],
+                    self.type_param_subst
+                );
+                let size = self.compute_type_size(&type_args[0])?;
+                return Ok(ast_helpers::const_int(
+                    size as i64,
+                    self.current_ctx.clone(),
+                ));
+            }
+            "alloc" => {
+                if !type_args.is_empty() {
+                    return Err(IrError::Unsupported(
+                        "@alloc takes no type arguments".to_owned(),
+                    ));
+                }
+                if args.len() != 1 {
+                    return Err(IrError::Unsupported(
+                        "@alloc requires exactly 1 argument (size in bytes)".to_owned(),
+                    ));
+                }
+                let size_ir = self.lower_expr(&args[0])?;
+                return Ok(ast_helpers::dyn_alloc(size_ir));
+            }
+            _ => {}
+        }
+
         let env_op = match name {
             "caller" => EvmEnvOp::Caller,
             "callvalue" | "value" => EvmEnvOp::CallValue,
@@ -1436,6 +1556,84 @@ impl AstToEgglog {
             env_op,
             Rc::clone(&self.current_state),
         )))
+    }
+
+    /// Compute the byte size of a type for `@size_of`.
+    fn compute_type_size(&self, ty: &edge_ast::ty::TypeSig) -> Result<usize, IrError> {
+        match ty {
+            edge_ast::ty::TypeSig::Named(name, type_params) => {
+                // Resolve through type_param_subst (handles generic contexts)
+                let resolved = self
+                    .type_param_subst
+                    .get(&name.name)
+                    .cloned()
+                    .unwrap_or_else(|| name.name.clone());
+
+                // Check if it's a primitive type name
+                match resolved.as_str() {
+                    "u256" | "u128" | "u64" | "u32" | "u16" | "u8" | "i256" | "i128" | "i64"
+                    | "i32" | "i16" | "i8" | "bool" | "addr" | "address" => return Ok(32),
+                    _ => {}
+                }
+
+                // Try monomorphized name first
+                let mangled = if !type_params.is_empty() {
+                    Self::type_sig_mangle(&edge_ast::ty::TypeSig::Named(
+                        name.clone(),
+                        type_params.clone(),
+                    ))
+                } else {
+                    resolved.clone()
+                };
+
+                // Look up in struct_types
+                self.struct_types
+                    .get(&mangled)
+                    .or_else(|| self.struct_types.get(&resolved))
+                    .map_or_else(
+                        || {
+                            if self.union_types.contains_key(&mangled)
+                                || self.union_types.contains_key(&resolved)
+                            {
+                                Ok(64) // unions: 2 words (discriminant + data)
+                            } else {
+                                // Might be a type param - check type_param_subst
+                                self.type_param_subst.get(&name.name).map_or_else(
+                                    || {
+                                        Err(IrError::Unsupported(format!(
+                                            "cannot compute size of unknown type: {}",
+                                            name.name
+                                        )))
+                                    },
+                                    |concrete| {
+                                        // Recursively resolve
+                                        let concrete_sig = edge_ast::ty::TypeSig::Named(
+                                            edge_ast::Ident {
+                                                name: concrete.clone(),
+                                                span: name.span.clone(),
+                                            },
+                                            vec![],
+                                        );
+                                        self.compute_type_size(&concrete_sig)
+                                    },
+                                )
+                            }
+                        },
+                        |info| {
+                            if info.is_packed {
+                                info.packed_layout
+                                    .as_ref()
+                                    .map_or(Ok(32), |layout| Ok(layout.word_count * 32))
+                            } else {
+                                Ok(info.fields.len() * 32)
+                            }
+                        },
+                    )
+            }
+            edge_ast::ty::TypeSig::Tuple(fields) => Ok(fields.len() * 32),
+            edge_ast::ty::TypeSig::Pointer(_, inner) => self.compute_type_size(inner),
+            _ => Ok(32), // default to 32 for other types
+        }
     }
 
     /// Lower `return (a, b, c)` — MSTORE each element at sequential 32-byte
@@ -1721,6 +1919,7 @@ impl AstToEgglog {
                     composite_type: None,
                     composite_base: None,
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 // Get the original name (without prefix) for scope lookup
                 let orig_name = outputs

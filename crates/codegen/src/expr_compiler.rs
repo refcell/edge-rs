@@ -54,6 +54,10 @@ pub struct ExprCompiler<'a> {
     /// Inner function metadata: name -> (`param_count`, `return_count`)
     /// Populated by a pre-pass over the IR tree before compilation.
     fn_info: HashMap<String, (usize, usize)>,
+    /// Minimum address that `DynAlloc` may return.
+    /// Ensures `DynAlloc` pointers don't overlap with `LetBind` memory slots.
+    /// Set to `memory_high_water + num_memory_vars * 32` when `DynAlloc` is used.
+    dyn_alloc_floor: usize,
 }
 
 impl<'a> ExprCompiler<'a> {
@@ -80,6 +84,17 @@ impl<'a> ExprCompiler<'a> {
         allocation_modes: HashMap<String, VarAllocation>,
         memory_base: usize,
     ) -> Self {
+        Self::with_allocations_base_and_floor(asm, allocation_modes, memory_base, 0)
+    }
+
+    /// Create an expression compiler with allocation modes, a custom base offset,
+    /// and a `DynAlloc` floor (minimum address for dynamic memory allocation).
+    pub fn with_allocations_base_and_floor(
+        asm: &'a mut Assembler,
+        allocation_modes: HashMap<String, VarAllocation>,
+        memory_base: usize,
+        dyn_alloc_floor: usize,
+    ) -> Self {
         Self {
             asm,
             let_bindings: HashMap::new(),
@@ -94,6 +109,7 @@ impl<'a> ExprCompiler<'a> {
             overflow_revert_label: None,
             revert_trampoline_label: None,
             fn_info: HashMap::new(),
+            dyn_alloc_floor,
         }
     }
 
@@ -168,6 +184,104 @@ impl<'a> ExprCompiler<'a> {
                     "MemRegion({id}) reached codegen without being resolved to a concrete offset. \
                      Run assign_memory_offsets() after egglog extraction."
                 );
+            }
+
+            EvmExpr::DynAlloc(size) => {
+                // Dynamic memory allocation using max(MSIZE, floor).
+                //
+                // The floor ensures DynAlloc pointers don't overlap with
+                // LetBind memory slots whose MSTORE hasn't happened yet.
+                // If MSIZE is already past the floor (common case), MSIZE wins.
+                //
+                // When floor > 0, we emit:
+                //   MSIZE                    → [ms]
+                //   DUP1                     → [ms, ms]
+                //   PUSH floor               → [ms, ms, floor]
+                //   GT                       → [ms, ms>floor]
+                //   PUSH skip                → [ms, ms>floor, skip]
+                //   JUMPI                    → [ms]  -- if ms>floor, keep ms
+                //   POP                      → []
+                //   PUSH floor               → [floor]
+                //   skip: JUMPDEST           → [base]  = max(ms, floor)
+                //
+                // Then allocate:
+                //   DUP1                     → [base, base]
+                //   compile(size)            → [base, base, size]
+                //   ADD                      → [base, base+size]
+                //   PUSH0                    → [base, base+size, 0]
+                //   SWAP1                    → [base, 0, base+size]
+                //   MSTORE                   → [base]  (expands memory)
+                //
+                // Net stack effect: +1 (the base pointer)
+                if self.dyn_alloc_floor > 0 {
+                    // Emit max(MSIZE, floor)
+                    //
+                    // Stack sequence:
+                    //   MSIZE            → [ms]
+                    //   DUP1             → [ms, ms]
+                    //   PUSH floor       → [floor, ms, ms]
+                    //   GT  (EVM: a > b where a=TOS=floor, b=ms)
+                    //                    → [floor>ms, ms]
+                    //   ...
+                    //
+                    // We want: if ms >= floor, keep ms (skip).
+                    //          if ms < floor, replace ms with floor.
+                    //
+                    // EVM GT(floor, ms) = floor > ms.
+                    // When floor > ms (need floor): GT=1, JUMPI takes jump.
+                    //   But we want to REPLACE ms, not skip!
+                    // So we must NOT jump when floor > ms.
+                    //
+                    // Fix: use ISZERO to invert, or just use LT instead.
+                    // With GT: floor > ms means we need floor. So jump should
+                    // go to the replacement path, not the skip path.
+                    //
+                    // Simplest fix: use GT but jump means "ms is big enough, skip".
+                    // GT(floor, ms) = floor > ms → ms is NOT big enough.
+                    // So: ISZERO + JUMPI to skip when ms IS big enough.
+                    let skip_label = self.asm.fresh_label("dyn_alloc_skip");
+                    self.asm.emit_op(Opcode::MSize);
+                    self.stack_depth += 1;
+                    self.asm.emit_op(Opcode::Dup1);
+                    self.stack_depth += 1;
+                    self.asm.emit_push_usize(self.dyn_alloc_floor);
+                    self.stack_depth += 1;
+                    // GT: floor > ms?
+                    self.asm.emit_op(Opcode::Gt);
+                    self.stack_depth -= 1;
+                    // ISZERO: !(floor > ms) = ms >= floor
+                    self.asm.emit_op(Opcode::IsZero);
+                    // stack: [ms, ms >= floor]
+                    self.asm.emit(AsmInstruction::JumpITo(skip_label.clone()));
+                    self.stack_depth -= 1; // JumpITo: PUSH(+1) JUMPI(-2) = net -1
+                                           // Fall-through: floor > ms, use floor instead
+                    self.asm.emit_op(Opcode::Pop);
+                    self.stack_depth -= 1;
+                    self.asm.emit_push_usize(self.dyn_alloc_floor);
+                    self.stack_depth += 1;
+                    self.asm.emit(AsmInstruction::Label(skip_label));
+                    // stack: [base] where base = max(MSIZE, floor)
+                } else {
+                    // No floor needed — MSIZE is sufficient
+                    self.asm.emit_op(Opcode::MSize);
+                    self.stack_depth += 1;
+                }
+
+                // Expand memory: MSTORE(base + size, 0)
+                self.asm.emit_op(Opcode::Dup1);
+                self.stack_depth += 1;
+                self.compile_expr(size);
+                // stack: [base, base, size]
+                self.asm.emit_op(Opcode::Add);
+                self.stack_depth -= 1;
+                // stack: [base, base+size]
+                self.asm.emit_op(Opcode::Push0);
+                self.stack_depth += 1;
+                self.asm.emit_op(Opcode::Swap1);
+                // stack: [base, 0, base+size]
+                self.asm.emit_op(Opcode::MStore);
+                self.stack_depth -= 2;
+                // stack: [base] — the returned pointer
             }
 
             EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
@@ -471,6 +585,36 @@ impl<'a> ExprCompiler<'a> {
                 self.asm.emit(AsmInstruction::Label(skip_label));
             }
         }
+    }
+
+    /// Compute the peak `next_let_offset` by simulating `LetBind` allocation.
+    ///
+    /// Walks the IR tree in the same order as `compile_expr`, tracking
+    /// memory-mode `LetBind` slot allocation/deallocation. Returns the
+    /// highest `next_let_offset` reached during the traversal.
+    ///
+    /// This mirrors the actual codegen behavior:
+    /// - `If` saves/restores `let_bindings` and `free_slots` but NOT
+    ///   `next_let_offset` (branches get non-overlapping slots)
+    /// - `Function` saves/restores everything including `next_let_offset`
+    /// - `Drop` reclaims slots to the free list for reuse
+    pub fn compute_peak_let_offset(
+        allocation_modes: &HashMap<String, VarAllocation>,
+        memory_base: usize,
+        exprs: &[&RcExpr],
+    ) -> usize {
+        let mut state = LetOffsetSim {
+            let_bindings: HashMap::new(),
+            free_slots: Vec::new(),
+            next_let_offset: memory_base,
+            peak: memory_base,
+            allocation_modes,
+            stack_var_count: 0,
+        };
+        for expr in exprs {
+            state.walk(expr);
+        }
+        state.peak
     }
 
     /// Compile a `LetBind`: allocate variable, compile body, clean up.
@@ -1318,10 +1462,7 @@ impl<'a> ExprCompiler<'a> {
             EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => Self::count_var_reads(name, a),
             EvmExpr::Top(op, a, b, c) => {
                 use EvmTernaryOp::*;
-                let c_is_state = matches!(
-                    op,
-                    SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy
-                );
+                let c_is_state = matches!(op, SStore | TStore | MStore | MStore8 | Keccak256);
                 Self::count_var_reads(name, a)
                     + Self::count_var_reads(name, b)
                     + if c_is_state {
@@ -1495,6 +1636,163 @@ impl<'a> ExprCompiler<'a> {
             EvmExpr::InlineAsm(inputs, _, num_outputs) => *num_outputs - inputs.len() as i32,
             // Everything else pushes 1 value (Var, Bop, Uop, Const, etc.)
             _ => 1,
+        }
+    }
+}
+
+/// Simulates `LetBind` memory slot allocation to compute peak `next_let_offset`.
+///
+/// Mirrors the allocation behavior in `ExprCompiler::compile_let_bind` and
+/// the save/restore behavior in `compile_if` (does NOT restore `next_let_offset`
+/// across if branches) and `compile_expr` for `Function` (DOES restore).
+struct LetOffsetSim<'a> {
+    let_bindings: HashMap<String, usize>,
+    free_slots: Vec<usize>,
+    next_let_offset: usize,
+    peak: usize,
+    allocation_modes: &'a HashMap<String, VarAllocation>,
+    stack_var_count: usize,
+}
+
+impl<'a> LetOffsetSim<'a> {
+    fn alloc_mode(&self, name: &str) -> AllocationMode {
+        self.allocation_modes
+            .get(name)
+            .map(|a| a.mode)
+            .unwrap_or(AllocationMode::Memory)
+    }
+
+    fn is_memory_mode(&self, name: &str) -> bool {
+        self.alloc_mode(name) == AllocationMode::Memory || self.stack_var_count >= 14
+    }
+
+    fn walk(&mut self, expr: &RcExpr) {
+        match expr.as_ref() {
+            EvmExpr::LetBind(name, init, body) => {
+                self.walk(init);
+                if self.is_memory_mode(name) {
+                    // Allocate a memory slot
+                    let offset = if let Some(reused) = self.free_slots.pop() {
+                        tracing::trace!(
+                            "LetOffsetSim: {name} → reused slot {reused}, next={}, peak={}",
+                            self.next_let_offset,
+                            self.peak
+                        );
+                        reused
+                    } else {
+                        let off = self.next_let_offset;
+                        self.next_let_offset += 32;
+                        if self.next_let_offset > self.peak {
+                            self.peak = self.next_let_offset;
+                        }
+                        tracing::trace!(
+                            "LetOffsetSim: {name} → new slot {off}, next={}, peak={}",
+                            self.next_let_offset,
+                            self.peak
+                        );
+                        off
+                    };
+                    self.let_bindings.insert(name.clone(), offset);
+                    self.walk(body);
+                    // Free slot if not already freed by Drop
+                    if self.let_bindings.get(name) == Some(&offset) {
+                        self.free_slots.push(offset);
+                    }
+                    self.let_bindings.remove(name);
+                } else {
+                    self.stack_var_count += 1;
+                    self.walk(body);
+                    self.stack_var_count = self.stack_var_count.saturating_sub(1);
+                }
+            }
+            EvmExpr::Drop(name) => {
+                if let Some(offset) = self.let_bindings.remove(name) {
+                    self.free_slots.push(offset);
+                } else {
+                    // Stack mode drop — decrement count
+                    self.stack_var_count = self.stack_var_count.saturating_sub(1);
+                }
+            }
+            EvmExpr::If(_, cond, then_body, else_body) => {
+                self.walk(cond);
+                // Save state for branches (matching compile_if behavior)
+                let saved_bindings = self.let_bindings.clone();
+                let saved_free = self.free_slots.clone();
+                let saved_stack_count = self.stack_var_count;
+                self.walk(then_body);
+                // Restore for else branch (but NOT next_let_offset!)
+                self.let_bindings = saved_bindings;
+                self.free_slots = saved_free;
+                self.stack_var_count = saved_stack_count;
+                self.walk(else_body);
+            }
+            EvmExpr::Function(_, _, _, body) => {
+                // Functions save/restore everything including next_let_offset
+                let saved_bindings = self.let_bindings.clone();
+                let saved_free = self.free_slots.clone();
+                let saved_offset = self.next_let_offset;
+                let saved_stack_count = self.stack_var_count;
+                self.let_bindings.clear();
+                self.stack_var_count = 0;
+                self.walk(body);
+                self.let_bindings = saved_bindings;
+                self.free_slots = saved_free;
+                self.next_let_offset = saved_offset;
+                self.stack_var_count = saved_stack_count;
+            }
+            // Recurse into children for everything else
+            EvmExpr::Concat(a, b)
+            | EvmExpr::Bop(_, a, b)
+            | EvmExpr::DoWhile(a, b)
+            | EvmExpr::EnvRead1(_, a, b) => {
+                self.walk(a);
+                self.walk(b);
+            }
+            EvmExpr::VarStore(_, val) => self.walk(val),
+            EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+                self.walk(a);
+                self.walk(b);
+                self.walk(c);
+            }
+            EvmExpr::Uop(_, a)
+            | EvmExpr::DynAlloc(a)
+            | EvmExpr::Get(a, _)
+            | EvmExpr::EnvRead(_, a) => self.walk(a),
+            EvmExpr::Log(_, topics, offset, size, state) => {
+                for t in topics {
+                    self.walk(t);
+                }
+                self.walk(offset);
+                self.walk(size);
+                self.walk(state);
+            }
+            EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+                self.walk(a);
+                self.walk(b);
+                self.walk(c);
+                self.walk(d);
+                self.walk(e);
+                self.walk(f);
+                self.walk(g);
+            }
+            EvmExpr::Call(_, args) => {
+                for a in args {
+                    self.walk(a);
+                }
+            }
+            EvmExpr::InlineAsm(inputs, _, _) => {
+                for i in inputs {
+                    self.walk(i);
+                }
+            }
+            // Leaf nodes — nothing to recurse into
+            EvmExpr::Const(..)
+            | EvmExpr::Var(_)
+            | EvmExpr::Arg(_, _)
+            | EvmExpr::Empty(_, _)
+            | EvmExpr::StorageField(_, _, _)
+            | EvmExpr::MemRegion(_, _)
+            | EvmExpr::Selector(_) => {}
         }
     }
 }

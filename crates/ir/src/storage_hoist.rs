@@ -312,6 +312,10 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
                 .collect();
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
         }
+        EvmExpr::DynAlloc(size) => {
+            let ns = replace_sloads_inline(size, known);
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
     }
 }
 
@@ -1056,6 +1060,10 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
                 out_ty.clone(),
                 nb,
             ))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let ns = replace_storage(size, key, var_name, replace_stores);
+            Rc::new(EvmExpr::DynAlloc(ns))
         }
         // Leaf nodes — no children
         EvmExpr::Const(..)

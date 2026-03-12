@@ -47,7 +47,9 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
             references_any_var(a, names) || references_any_var(b, names)
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_var(a, names),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+            references_any_var(a, names)
+        }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             references_any_var(a, names)
                 || references_any_var(b, names)
@@ -98,6 +100,8 @@ pub(crate) struct VarBinding {
     pub composite_base: Option<RcExpr>,
     /// For generic composite types: the concrete type arguments (e.g., [addr, u256] for Map<addr, u256>)
     pub composite_type_args: Vec<edge_ast::ty::TypeSig>,
+    /// Whether this variable is a dynamically-allocated memory pointer (&dm type)
+    pub is_dynamic_memory: bool,
 }
 
 /// Scope for variable resolution during lowering.
@@ -463,10 +467,21 @@ impl AstToEgglog {
             "Sload",
             "Sstore",
             "Index",
+            "Mstore",
+            "Mload",
+            "Mcopy",
         ];
         // Storage/hashing traits are fundamental (auto-imported from globals).
         // Always enable them so compiler-provided impls work without explicit `use`.
-        for name in ["UniqueSlot", "Sload", "Sstore", "Index"] {
+        for name in [
+            "UniqueSlot",
+            "Sload",
+            "Sstore",
+            "Index",
+            "Mstore",
+            "Mload",
+            "Mcopy",
+        ] {
             self.std_ops_traits.insert(name.to_string());
         }
         for stmt in &program.stmts {
@@ -606,6 +621,7 @@ impl AstToEgglog {
                     composite_type: None,
                     composite_base: None,
                     composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
                 };
                 self.scopes
                     .last_mut()
@@ -696,10 +712,12 @@ impl AstToEgglog {
                 edge_ast::Stmt::ImplBlock(impl_block) => {
                     let type_name = impl_block.ty_name.name.clone();
 
-                    // Store generic impl blocks for monomorphization
-                    if !impl_block.type_params.is_empty()
-                        || self.generic_type_templates.contains_key(&type_name)
-                    {
+                    // Store generic impl blocks for monomorphization.
+                    // Skip normal registration for generic types — their methods
+                    // are registered during monomorphization under the mangled name.
+                    let is_generic = !impl_block.type_params.is_empty()
+                        || self.generic_type_templates.contains_key(&type_name);
+                    if is_generic {
                         let trait_name =
                             impl_block.trait_impl.as_ref().map(|(n, _)| n.name.clone());
                         let trait_type_params = impl_block
@@ -718,7 +736,11 @@ impl AstToEgglog {
                             });
                     }
 
-                    if let Some((ref trait_name, _)) = impl_block.trait_impl {
+                    // For generic impl blocks, don't register unsubstituted methods.
+                    // They'll be registered under the mangled name during monomorphization.
+                    if is_generic {
+                        // Skip normal processing
+                    } else if let Some((ref trait_name, _)) = impl_block.trait_impl {
                         // Trait impl — collect methods and validate against trait definition
                         let mut methods = IndexMap::new();
                         for item in &impl_block.items {
@@ -1003,6 +1025,7 @@ impl AstToEgglog {
                 composite_type,
                 composite_base: None,
                 composite_type_args,
+                is_dynamic_memory: false,
             };
             self.scopes
                 .last_mut()
@@ -1028,6 +1051,7 @@ impl AstToEgglog {
                 composite_type: None,
                 composite_base: None,
                 composite_type_args: Vec::new(),
+                is_dynamic_memory: false,
             };
             self.scopes
                 .last_mut()

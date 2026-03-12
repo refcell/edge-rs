@@ -77,3 +77,15 @@ trait Sstore {
 trait Sload {
     fn sload(base_slot: u256) -> Self;
 }
+
+trait Mstore {
+    fn mstore(self, offset: u256);
+}
+
+trait Mload {
+    fn mload(offset: u256) -> Self;
+}
+
+trait Mcopy {
+    fn mcopy(self, dest: u256, size: u256);
+}

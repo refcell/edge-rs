@@ -283,6 +283,12 @@ pub fn mem_region(region_id: i64, size_words: i64) -> RcExpr {
     Rc::new(EvmExpr::MemRegion(region_id, size_words))
 }
 
+/// Dynamic memory allocation: allocate `size` bytes at runtime using MSIZE.
+/// Returns the base address of the allocated region.
+pub fn dyn_alloc(size: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::DynAlloc(size))
+}
+
 // ---- Integer width helpers ----
 
 /// Create a mask constant for the given bit width: `(1 << bit_width) - 1`.

@@ -1,0 +1,66 @@
+// test_vec.edge — Vec<T> dynamic memory allocation tests
+
+abi ITestVec {
+    fn test_new_and_push() -> (u256);
+    fn test_get() -> (u256);
+    fn test_set() -> (u256);
+    fn test_grow() -> (u256);
+    fn test_index() -> (u256);
+}
+
+contract TestVec {
+    // Create a vec, push elements, verify len
+    pub fn test_new_and_push() -> (u256) {
+        let v: &dm Vec<u256> = Vec::new(4);
+        v.push(10);
+        v.push(20);
+        v.push(30);
+        // Return len (should be 3)
+        return v.len;
+    }
+
+    // Push and get elements back
+    pub fn test_get() -> (u256) {
+        let v: &dm Vec<u256> = Vec::new(4);
+        v.push(100);
+        v.push(200);
+        v.push(300);
+        // Return second element (should be 200)
+        return v.get(1);
+    }
+
+    // Set an element and verify the change
+    pub fn test_set() -> (u256) {
+        let v: &dm Vec<u256> = Vec::new(4);
+        v.push(10);
+        v.push(20);
+        v.push(30);
+        v.set(1, 999);
+        // Return modified element (should be 999)
+        return v.get(1);
+    }
+
+    // Push beyond initial capacity to trigger growth
+    pub fn test_grow() -> (u256) {
+        let v: &dm Vec<u256> = Vec::new(2);
+        v.push(1);
+        v.push(2);
+        // This push exceeds capacity=2, triggers grow
+        v.push(3);
+        v.push(4);
+        v.push(5);
+        // Verify all elements survived the growth
+        // Return: get(0) + get(1) + get(2) + get(3) + get(4)
+        // = 1 + 2 + 3 + 4 + 5 = 15
+        return v.get(0) + v.get(1) + v.get(2) + v.get(3) + v.get(4);
+    }
+
+    // Test Index trait (v[i] syntax)
+    pub fn test_index() -> (u256) {
+        let v: &dm Vec<u256> = Vec::new(4);
+        v.push(42);
+        v.push(84);
+        // Return v[1] (should be 84)
+        return v[1];
+    }
+}
