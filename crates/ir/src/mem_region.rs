@@ -249,6 +249,29 @@ pub fn assign_program_offsets(program: &mut crate::schema::EvmProgram) {
 
 /// Replace all `MemRegion(id, _)` with `Const(SmallInt(offset))`.
 fn replace_regions(expr: &RcExpr, assignments: &BTreeMap<i64, usize>) -> RcExpr {
+    let mut cache = std::collections::HashMap::new();
+    replace_regions_memo(expr, assignments, &mut cache)
+}
+
+fn replace_regions_memo(
+    expr: &RcExpr,
+    assignments: &BTreeMap<i64, usize>,
+    cache: &mut std::collections::HashMap<usize, RcExpr>,
+) -> RcExpr {
+    let id = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&id) {
+        return Rc::clone(cached);
+    }
+    let result = replace_regions_inner(expr, assignments, cache);
+    cache.insert(id, Rc::clone(&result));
+    result
+}
+
+fn replace_regions_inner(
+    expr: &RcExpr,
+    assignments: &BTreeMap<i64, usize>,
+    cache: &mut std::collections::HashMap<usize, RcExpr>,
+) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::MemRegion(id, _size) => {
             let offset = assignments[id];
@@ -258,101 +281,142 @@ fn replace_regions(expr: &RcExpr, assignments: &BTreeMap<i64, usize>) -> RcExpr 
                 EvmContext::InFunction("__mem__".to_owned()),
             ))
         }
-        // Recurse into all children (same structure as collect_regions)
         EvmExpr::Bop(op, a, b) => {
-            let na = replace_regions(a, assignments);
-            let nb = replace_regions(b, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Bop(*op, na, nb))
         }
         EvmExpr::Uop(op, a) => {
-            let na = replace_regions(a, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
             if Rc::ptr_eq(&na, a) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Uop(*op, na))
         }
         EvmExpr::Top(op, a, b, c) => {
-            let na = replace_regions(a, assignments);
-            let nb = replace_regions(b, assignments);
-            let nc = replace_regions(c, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
+            let nc = replace_regions_memo(c, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Top(*op, na, nb, nc))
         }
         EvmExpr::Concat(a, b) => {
-            let na = replace_regions(a, assignments);
-            let nb = replace_regions(b, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Concat(na, nb))
         }
         EvmExpr::Get(a, idx) => {
-            let na = replace_regions(a, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
             if Rc::ptr_eq(&na, a) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Get(na, *idx))
         }
         EvmExpr::If(c, i, t, e) => {
-            let nc = replace_regions(c, assignments);
-            let ni = replace_regions(i, assignments);
-            let nt = replace_regions(t, assignments);
-            let ne = replace_regions(e, assignments);
+            let nc = replace_regions_memo(c, assignments, cache);
+            let ni = replace_regions_memo(i, assignments, cache);
+            let nt = replace_regions_memo(t, assignments, cache);
+            let ne = replace_regions_memo(e, assignments, cache);
+            if Rc::ptr_eq(&nc, c) && Rc::ptr_eq(&ni, i) && Rc::ptr_eq(&nt, t) && Rc::ptr_eq(&ne, e) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::If(nc, ni, nt, ne))
         }
         EvmExpr::DoWhile(inputs, body) => {
-            let ni = replace_regions(inputs, assignments);
-            let nb = replace_regions(body, assignments);
+            let ni = replace_regions_memo(inputs, assignments, cache);
+            let nb = replace_regions_memo(body, assignments, cache);
+            if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::DoWhile(ni, nb))
         }
         EvmExpr::LetBind(name, init, body) => {
-            let ni = replace_regions(init, assignments);
-            let nb = replace_regions(body, assignments);
+            let ni = replace_regions_memo(init, assignments, cache);
+            let nb = replace_regions_memo(body, assignments, cache);
+            if Rc::ptr_eq(&ni, init) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::LetBind(name.clone(), ni, nb))
         }
         EvmExpr::VarStore(name, val) => {
-            let nv = replace_regions(val, assignments);
+            let nv = replace_regions_memo(val, assignments, cache);
+            if Rc::ptr_eq(&nv, val) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::VarStore(name.clone(), nv))
         }
         EvmExpr::Revert(a, b, c) => {
-            let na = replace_regions(a, assignments);
-            let nb = replace_regions(b, assignments);
-            let nc = replace_regions(c, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
+            let nc = replace_regions_memo(c, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Revert(na, nb, nc))
         }
         EvmExpr::ReturnOp(a, b, c) => {
-            let na = replace_regions(a, assignments);
-            let nb = replace_regions(b, assignments);
-            let nc = replace_regions(c, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
+            let nc = replace_regions_memo(c, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::ReturnOp(na, nb, nc))
         }
         EvmExpr::Log(count, topics, d, s, st) => {
             let nt: Vec<_> = topics
                 .iter()
-                .map(|t| replace_regions(t, assignments))
+                .map(|t| replace_regions_memo(t, assignments, cache))
                 .collect();
-            let nd = replace_regions(d, assignments);
-            let ns = replace_regions(s, assignments);
-            let nst = replace_regions(st, assignments);
+            let nd = replace_regions_memo(d, assignments, cache);
+            let ns = replace_regions_memo(s, assignments, cache);
+            let nst = replace_regions_memo(st, assignments, cache);
+            if nt.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&nd, d) && Rc::ptr_eq(&ns, s) && Rc::ptr_eq(&nst, st)
+            {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Log(*count, nt, nd, ns, nst))
         }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => Rc::new(EvmExpr::ExtCall(
-            replace_regions(a, assignments),
-            replace_regions(b, assignments),
-            replace_regions(c, assignments),
-            replace_regions(d, assignments),
-            replace_regions(e, assignments),
-            replace_regions(f, assignments),
-            replace_regions(g, assignments),
-        )),
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            let na = replace_regions_memo(a, assignments, cache);
+            let nb = replace_regions_memo(b, assignments, cache);
+            let nc = replace_regions_memo(c, assignments, cache);
+            let nd = replace_regions_memo(d, assignments, cache);
+            let ne = replace_regions_memo(e, assignments, cache);
+            let nf = replace_regions_memo(f, assignments, cache);
+            let ng = replace_regions_memo(g, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c)
+                && Rc::ptr_eq(&nd, d) && Rc::ptr_eq(&ne, e) && Rc::ptr_eq(&nf, f)
+                && Rc::ptr_eq(&ng, g)
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::ExtCall(na, nb, nc, nd, ne, nf, ng))
+        }
         EvmExpr::Call(name, args) => {
             let new_args: Vec<_> = args
                 .iter()
-                .map(|a| replace_regions(a, assignments))
+                .map(|a| replace_regions_memo(a, assignments, cache))
                 .collect();
+            if new_args.iter().zip(args.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
-            let nb = replace_regions(body, assignments);
+            let nb = replace_regions_memo(body, assignments, cache);
+            if Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::Function(
                 name.clone(),
                 in_ty.clone(),
@@ -361,23 +425,32 @@ fn replace_regions(expr: &RcExpr, assignments: &BTreeMap<i64, usize>) -> RcExpr 
             ))
         }
         EvmExpr::EnvRead(op, s) => {
-            let ns = replace_regions(s, assignments);
+            let ns = replace_regions_memo(s, assignments, cache);
+            if Rc::ptr_eq(&ns, s) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::EnvRead(*op, ns))
         }
         EvmExpr::EnvRead1(op, a, s) => {
-            let na = replace_regions(a, assignments);
-            let ns = replace_regions(s, assignments);
+            let na = replace_regions_memo(a, assignments, cache);
+            let ns = replace_regions_memo(s, assignments, cache);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&ns, s) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::EnvRead1(*op, na, ns))
         }
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let ni: Vec<_> = inputs
                 .iter()
-                .map(|i| replace_regions(i, assignments))
+                .map(|i| replace_regions_memo(i, assignments, cache))
                 .collect();
+            if ni.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
             Rc::new(EvmExpr::InlineAsm(ni, hex.clone(), *num_outputs))
         }
         EvmExpr::DynAlloc(size) => {
-            let ns = replace_regions(size, assignments);
+            let ns = replace_regions_memo(size, assignments, cache);
             if Rc::ptr_eq(&ns, size) {
                 return Rc::clone(expr);
             }

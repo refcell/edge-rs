@@ -965,7 +965,11 @@ fn ir_stats_dag(
 
     // Recurse into children
     let d = depth + 1;
-    macro_rules! go { ($e:expr) => { ir_stats_dag($e, stats, d, visited) }; }
+    macro_rules! go {
+        ($e:expr) => {
+            ir_stats_dag($e, stats, d, visited)
+        };
+    }
     match expr.as_ref() {
         EvmExpr::Arg(..)
         | EvmExpr::Const(..)
@@ -983,22 +987,53 @@ fn ir_stats_dag(
         EvmExpr::Bop(_, a, b)
         | EvmExpr::Concat(a, b)
         | EvmExpr::DoWhile(a, b)
-        | EvmExpr::EnvRead1(_, a, b) => { go!(a); go!(b); }
-        EvmExpr::LetBind(_, a, b) => { go!(a); go!(b); }
-        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            go!(a); go!(b); go!(c);
+        | EvmExpr::EnvRead1(_, a, b) => {
+            go!(a);
+            go!(b);
         }
-        EvmExpr::If(a, b, c, e) => { go!(a); go!(b); go!(c); go!(e); }
+        EvmExpr::LetBind(_, a, b) => {
+            go!(a);
+            go!(b);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            go!(a);
+            go!(b);
+            go!(c);
+        }
+        EvmExpr::If(a, b, c, e) => {
+            go!(a);
+            go!(b);
+            go!(c);
+            go!(e);
+        }
         EvmExpr::Function(_, _, _, body) => go!(body),
-        EvmExpr::Call(_, args) => { for a in args { go!(a); } }
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                go!(a);
+            }
+        }
         EvmExpr::Log(_, topics, doff, dsz, state) => {
-            for t in topics { go!(t); }
-            go!(doff); go!(dsz); go!(state);
+            for t in topics {
+                go!(t);
+            }
+            go!(doff);
+            go!(dsz);
+            go!(state);
         }
         EvmExpr::ExtCall(a, b, c, e, f, g, h) => {
-            go!(a); go!(b); go!(c); go!(e); go!(f); go!(g); go!(h);
+            go!(a);
+            go!(b);
+            go!(c);
+            go!(e);
+            go!(f);
+            go!(g);
+            go!(h);
         }
-        EvmExpr::InlineAsm(inputs, _, _) => { for inp in inputs { go!(inp); } }
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            for inp in inputs {
+                go!(inp);
+            }
+        }
     }
 }
 
@@ -1087,7 +1122,12 @@ pub fn lower_and_optimize(
     tracing::debug!("  lowering: {:?}", t.elapsed());
     for c in &ir_program.contracts {
         let dag = dag_node_count(&c.runtime);
-        tracing::debug!("    [{}] after lowering: {} DAG nodes, {} fns", c.name, dag, c.internal_functions.len());
+        tracing::debug!(
+            "    [{}] after lowering: {} DAG nodes, {} fns",
+            c.name,
+            dag,
+            c.internal_functions.len()
+        );
         if tracing::enabled!(tracing::Level::TRACE) {
             let stats = ir_stats(&c.runtime);
             tracing::trace!("    [{}] IR stats after lowering:\n{stats}", c.name);
@@ -1102,7 +1142,12 @@ pub fn lower_and_optimize(
     tracing::debug!("  var_opt: {:?}", t.elapsed());
     for c in &ir_program.contracts {
         let dag = dag_node_count(&c.runtime);
-        tracing::debug!("    [{}] after var_opt: {} DAG nodes, {} fns", c.name, dag, c.internal_functions.len());
+        tracing::debug!(
+            "    [{}] after var_opt: {} DAG nodes, {} fns",
+            c.name,
+            dag,
+            c.internal_functions.len()
+        );
         if tracing::enabled!(tracing::Level::TRACE) {
             let stats = ir_stats(&c.runtime);
             tracing::trace!("    [{}] IR stats after var_opt:\n{stats}", c.name);
@@ -1146,6 +1191,7 @@ pub fn lower_and_optimize(
     let schedule = schedule::make_schedule(optimization_level);
     let mut optimized_contracts = Vec::new();
 
+    // TODO: trying to remove this by fixing `replace_regions` w memoization instead
     // Re-establish Rc sharing broken by var_opt/storage_hoist/mem_region.
     // Must run right before serialization, after all IR transform passes.
     let t = std::time::Instant::now();
@@ -1206,15 +1252,11 @@ pub fn lower_and_optimize(
 
         let t_egg = std::time::Instant::now();
         let mut egraph = create_egraph();
-        let outputs = egraph
+        egraph.disable_messages(); // skip 32MB string generation
+        let _ = egraph
             .parse_and_run_program(None, &egglog_program)
             .map_err(|e| IrError::Egglog(format!("{e}")))?;
         tracing::debug!("    egglog run ({}): {:?}", contract.name, t_egg.elapsed());
-
-        // The last output is the extracted expression from (extract __runtime)
-        let extracted_sexp = outputs
-            .last()
-            .ok_or_else(|| IrError::Extraction("no output from extract".to_owned()))?;
 
         tracing::info!(
             "Optimized contract {} at -O{}",
@@ -1222,9 +1264,14 @@ pub fn lower_and_optimize(
             optimization_level
         );
 
+        // Extract directly from egglog's hash-consed TermDag (no string round-trip)
         let t_phase = std::time::Instant::now();
-        let mut optimized_runtime = sexp::sexp_to_expr(extracted_sexp)?;
-        tracing::debug!("      sexp_to_expr: {:?}", t_phase.elapsed());
+        let report = egraph
+            .get_extract_report()
+            .as_ref()
+            .ok_or_else(|| IrError::Extraction("no extract report from egglog".to_owned()))?;
+        let mut optimized_runtime = sexp::extract_report_to_expr(report)?;
+        tracing::debug!("      extract_report_to_expr: {:?}", t_phase.elapsed());
 
         // Check for compile-time-detectable constant overflows in narrow types.
         // This catches overflow revealed by egglog const-folding (e.g. through
@@ -1250,7 +1297,11 @@ pub fn lower_and_optimize(
 
         let t_phase = std::time::Instant::now();
         optimized_runtime = hash_cons_expr(&optimized_runtime);
-        tracing::debug!("      post-egglog hash_cons: {:?} (dag={})", t_phase.elapsed(), dag_node_count(&optimized_runtime));
+        tracing::debug!(
+            "      post-egglog hash_cons: {:?} (dag={})",
+            t_phase.elapsed(),
+            dag_node_count(&optimized_runtime)
+        );
 
         // Only keep internal functions still referenced (directly or transitively)
         // by Call nodes in the optimized runtime. Monomorphized functions that
@@ -1294,17 +1345,23 @@ pub fn lower_and_optimize(
                 schedule
             );
             let mut func_egraph = create_egraph();
-            let func_outputs = func_egraph
+            func_egraph.disable_messages();
+            let _ = func_egraph
                 .parse_and_run_program(None, &func_program)
                 .map_err(|e| IrError::Egglog(format!("{e}")))?;
-            let func_extracted = func_outputs
-                .last()
-                .ok_or_else(|| IrError::Extraction("no output from func extract".to_owned()))?;
-            let optimized_func = sexp::sexp_to_expr(func_extracted)?;
+            let func_report = func_egraph
+                .get_extract_report()
+                .as_ref()
+                .ok_or_else(|| IrError::Extraction("no extract report from func egglog".to_owned()))?;
+            let optimized_func = sexp::extract_report_to_expr(func_report)?;
             let optimized_func = cleanup::cleanup_expr_pub(&optimized_func);
             optimized_functions.push(optimized_func);
         }
-        tracing::debug!("      collect+optimize fns: {:?} ({} kept)", t_phase.elapsed(), optimized_functions.len());
+        tracing::debug!(
+            "      collect+optimize fns: {:?} ({} kept)",
+            t_phase.elapsed(),
+            optimized_functions.len()
+        );
 
         tracing::debug!(
             "    contract {} total: {:?}",
