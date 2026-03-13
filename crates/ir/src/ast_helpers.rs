@@ -289,6 +289,22 @@ pub fn dyn_alloc(size: RcExpr) -> RcExpr {
     Rc::new(EvmExpr::DynAlloc(size))
 }
 
+/// Allocate a memory region with a unique region ID.
+/// `is_dynamic`: true for runtime MSIZE-based allocation, false for static offset assignment.
+pub fn alloc_region(region_id: i64, num_fields: RcExpr, is_dynamic: bool) -> RcExpr {
+    Rc::new(EvmExpr::AllocRegion(region_id, num_fields, is_dynamic))
+}
+
+/// Store a value to a specific field of a memory region.
+pub fn region_store(region_id: i64, field_idx: i64, value: RcExpr, state: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::RegionStore(region_id, field_idx, value, state))
+}
+
+/// Load a value from a specific field of a memory region.
+pub fn region_load(region_id: i64, field_idx: i64, state: RcExpr) -> RcExpr {
+    Rc::new(EvmExpr::RegionLoad(region_id, field_idx, state))
+}
+
 // ---- Integer width helpers ----
 
 /// Create a mask constant for the given bit width: `(1 << bit_width) - 1`.

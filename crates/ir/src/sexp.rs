@@ -161,6 +161,19 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         }
         EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
         EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", expr_to_sexp(size)),
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            format!("(AllocRegion {id} {} {is_dynamic})", expr_to_sexp(num_fields))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            format!(
+                "(RegionStore {id} {field} {} {})",
+                expr_to_sexp(val),
+                expr_to_sexp(state)
+            )
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            format!("(RegionLoad {id} {field} {})", expr_to_sexp(state))
+        }
     }
 }
 
@@ -439,6 +452,16 @@ fn count_refs_dag(expr: &RcExpr, counts: &mut HashMap<usize, usize>, visited: &m
                 visit!(a);
             }
         }
+        EvmExpr::AllocRegion(_, num_fields, _) => {
+            visit!(num_fields);
+        }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            visit!(val);
+            visit!(state);
+        }
+        EvmExpr::RegionLoad(_, _, state) => {
+            visit!(state);
+        }
     }
 }
 
@@ -618,6 +641,25 @@ fn dag_sexp_node(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
         }
         EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
         EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", dag_sexp_rec(size, ctx)),
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            format!(
+                "(AllocRegion {id} {} {is_dynamic})",
+                dag_sexp_rec(num_fields, ctx)
+            )
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            format!(
+                "(RegionStore {id} {field} {} {})",
+                dag_sexp_rec(val, ctx),
+                dag_sexp_rec(state, ctx)
+            )
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            format!(
+                "(RegionLoad {id} {field} {})",
+                dag_sexp_rec(state, ctx)
+            )
+        }
     }
 }
 
@@ -884,6 +926,25 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                 "DynAlloc" => {
                     let size = sexp_to_evm_expr(&items[1])?;
                     Ok(Rc::new(EvmExpr::DynAlloc(size)))
+                }
+                "AllocRegion" => {
+                    let id = atom_i64(&items[1])?;
+                    let num_fields = sexp_to_evm_expr(&items[2])?;
+                    let is_dynamic = atom_bool(&items[3])?;
+                    Ok(Rc::new(EvmExpr::AllocRegion(id, num_fields, is_dynamic)))
+                }
+                "RegionStore" => {
+                    let id = atom_i64(&items[1])?;
+                    let field = atom_i64(&items[2])?;
+                    let val = sexp_to_evm_expr(&items[3])?;
+                    let state = sexp_to_evm_expr(&items[4])?;
+                    Ok(Rc::new(EvmExpr::RegionStore(id, field, val, state)))
+                }
+                "RegionLoad" => {
+                    let id = atom_i64(&items[1])?;
+                    let field = atom_i64(&items[2])?;
+                    let state = sexp_to_evm_expr(&items[3])?;
+                    Ok(Rc::new(EvmExpr::RegionLoad(id, field, state)))
                 }
                 other => Err(IrError::Extraction(format!(
                     "unknown expression constructor: {other}"
@@ -1348,6 +1409,25 @@ fn termdag_convert(
                 "DynAlloc" => {
                     let size = termdag_convert(dag, args[0], cache)?;
                     Ok(Rc::new(EvmExpr::DynAlloc(size)))
+                }
+                "AllocRegion" => {
+                    let id = td_i64(dag, args[0])?;
+                    let num_fields = termdag_convert(dag, args[1], cache)?;
+                    let is_dynamic = td_bool(dag, args[2])?;
+                    Ok(Rc::new(EvmExpr::AllocRegion(id, num_fields, is_dynamic)))
+                }
+                "RegionStore" => {
+                    let id = td_i64(dag, args[0])?;
+                    let field = td_i64(dag, args[1])?;
+                    let val = termdag_convert(dag, args[2], cache)?;
+                    let state = termdag_convert(dag, args[3], cache)?;
+                    Ok(Rc::new(EvmExpr::RegionStore(id, field, val, state)))
+                }
+                "RegionLoad" => {
+                    let id = td_i64(dag, args[0])?;
+                    let field = td_i64(dag, args[1])?;
+                    let state = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::RegionLoad(id, field, state)))
                 }
                 other => Err(IrError::Extraction(format!(
                     "termdag: unknown constructor: {other}"

@@ -1,0 +1,42 @@
+;; ============================================================
+;; Region-Based Memory Optimizations
+;; ============================================================
+;; Symbolic forwarding rules for RegionStore/RegionLoad.
+;; Different region IDs are guaranteed non-overlapping (structural).
+;; Same region + different field indices are guaranteed non-overlapping.
+;;
+;; NOTE: These rules are currently DISABLED because the IR does not
+;; properly thread state through RegionStore/RegionLoad nodes.
+;; All operations use the same Arg(StateT) as their state parameter,
+;; so egglog cannot distinguish between the state BEFORE and AFTER
+;; a store. The forwarding rule would match a RegionLoad with ANY
+;; RegionStore to the same region+field, not necessarily the most
+;; recent one in program order.
+;;
+;; To enable these rules, we need proper state threading where each
+;; RegionStore produces a unique state token consumed by subsequent
+;; operations. Until then, the region nodes serve as symbolic markers
+;; that pass through egglog unchanged and get resolved to MStore/MLoad
+;; post-egglog.
+;;
+;; Planned forwarding rules (for when state threading is implemented):
+;;
+;; ;; Same-region, same-field: load after store → stored value
+;; (rewrite (RegionLoad r f (RegionStore r f val state))
+;;          val :subsume :ruleset memory-opt)
+;;
+;; ;; Same-region, different-field: skip store
+;; (rule ((= e (RegionLoad r f1 (RegionStore r f2 val state)))
+;;        (!= f1 f2))
+;;       ((union e (RegionLoad r f1 state)))
+;;       :ruleset memory-opt)
+;;
+;; ;; Cross-region: skip store
+;; (rule ((= e (RegionLoad r1 f1 (RegionStore r2 f2 val state)))
+;;        (!= r1 r2))
+;;       ((union e (RegionLoad r1 f1 state)))
+;;       :ruleset memory-opt)
+;;
+;; ;; Dead store elimination
+;; (rewrite (RegionStore r f val1 (RegionStore r f val2 state))
+;;          (RegionStore r f val1 state) :subsume :ruleset memory-opt)

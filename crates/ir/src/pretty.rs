@@ -280,7 +280,10 @@ fn inline_width(expr: &RcExpr) -> Option<usize> {
         | EvmExpr::Call(..)
         | EvmExpr::VarStore(..)
         | EvmExpr::InlineAsm(..)
-        | EvmExpr::DynAlloc(_) => None, // never inline — has sub-expression
+        | EvmExpr::DynAlloc(_)
+        | EvmExpr::AllocRegion(..)
+        | EvmExpr::RegionStore(..)
+        | EvmExpr::RegionLoad(..) => None, // never inline — has sub-expression
         EvmExpr::MemRegion(id, sz) => Some(format!("region({id}, {sz})").len()),
     }
 }
@@ -654,6 +657,32 @@ fn pp(expr: &RcExpr, depth: usize, buf: &mut String) {
             }
             buf.push(')');
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            indent(depth, buf);
+            buf.push_str(&format!("@alloc_region({id}, "));
+            if fits_inline(num_fields, budget(depth + 1)) {
+                pp_inline(num_fields, buf);
+            } else {
+                buf.push('\n');
+                pp(num_fields, depth + 1, buf);
+            }
+            buf.push_str(&format!(", {is_dynamic})"));
+        }
+        EvmExpr::RegionStore(id, field_idx, val, _state) => {
+            indent(depth, buf);
+            buf.push_str(&format!("region_store({id}, {field_idx}, "));
+            if fits_inline(val, budget(depth + 1)) {
+                pp_inline(val, buf);
+            } else {
+                buf.push('\n');
+                pp(val, depth + 1, buf);
+            }
+            buf.push_str(", state)");
+        }
+        EvmExpr::RegionLoad(id, field_idx, _state) => {
+            indent(depth, buf);
+            buf.push_str(&format!("region_load({id}, {field_idx}, state)"));
+        }
     }
 }
 
@@ -782,6 +811,19 @@ fn pp_oneline(expr: &RcExpr, buf: &mut String) {
             buf.push_str("@alloc(");
             pp_oneline(size, buf);
             buf.push(')');
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            buf.push_str(&format!("@alloc_region({id}, "));
+            pp_oneline(num_fields, buf);
+            buf.push_str(&format!(", {is_dynamic})"));
+        }
+        EvmExpr::RegionStore(id, field_idx, val, _) => {
+            buf.push_str(&format!("region_store({id}, {field_idx}, "));
+            pp_oneline(val, buf);
+            buf.push_str(", state)");
+        }
+        EvmExpr::RegionLoad(id, field_idx, _) => {
+            buf.push_str(&format!("region_load({id}, {field_idx}, state)"));
         }
     }
 }

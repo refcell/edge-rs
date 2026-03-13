@@ -407,6 +407,14 @@ impl AstToEgglog {
                             }
                         }
                         // Unpacked struct field read
+                        // Use RegionLoad if the binding has a region ID (symbolic forwarding)
+                        if let Some(rid) = self.lookup_region_id(&ident.name) {
+                            return Ok(ast_helpers::region_load(
+                                rid,
+                                field_idx as i64,
+                                Rc::clone(&self.current_state),
+                            ));
+                        }
                         let offset = ast_helpers::add(
                             base_expr,
                             ast_helpers::const_int(
@@ -499,6 +507,18 @@ impl AstToEgglog {
                     (&binding.composite_type, &binding.composite_base)
                 {
                     return Some((ct.clone(), Rc::clone(cb)));
+                }
+            }
+        }
+        None
+    }
+
+    /// Look up a variable's region ID for symbolic field access.
+    pub(crate) fn lookup_region_id(&self, var_name: &str) -> Option<i64> {
+        for scope in self.scopes.iter().rev() {
+            if let Some(binding) = scope.bindings.get(var_name) {
+                if binding.region_id.is_some() {
+                    return binding.region_id;
                 }
             }
         }

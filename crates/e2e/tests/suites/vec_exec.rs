@@ -63,6 +63,14 @@ fn test_vec_grow() {
 }
 
 #[test]
+fn test_vec_zero() {
+    for_all_opt_levels(CONTRACT, |evm, opt| {
+        let r = evm.call(calldata(selector("test_zero_array()"), &[]));
+        assert!(r.success, "test_zero_array() reverted at O{opt}");
+    });
+}
+
+#[test]
 fn test_vec_index() {
     for_all_opt_levels(CONTRACT, |evm, opt| {
         let r = evm.call(calldata(selector("test_index()"), &[]));

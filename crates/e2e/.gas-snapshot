@@ -141,8 +141,8 @@ test_unsafe_arith::test_sub_underflow(), 108, 108, 108, 108
 test_unsafe_arith::test_unsafe_add(), 135, 129, 129, 129
 test_unsafe_arith::test_unsafe_mul(), 112, 104, 104, 104
 test_unsafe_arith::test_unsafe_sub(), 161, 155, 155, 155
-test_vec::test_get(), 1329, 1072, 1072, 1072
-test_vec::test_grow(), 3115, 2491, 2491, 2491
-test_vec::test_index(), 1034, 798, 798, 798
-test_vec::test_new_and_push(), 1082, 903, 903, 903
-test_vec::test_set(), 1514, 1174, 1106, 1106
+test_vec::test_get(), 593, 347, 347, 347
+test_vec::test_grow(), 1545, 1251, 1251, 1251
+test_vec::test_index(), 453, 290, 290, 290
+test_vec::test_new_and_push(), 465, 257, 257, 257
+test_vec::test_set(), 665, 364, 352, 352

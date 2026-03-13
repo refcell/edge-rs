@@ -63,4 +63,26 @@ contract TestVec {
         // Return v[1] (should be 84)
         return v[1];
     }
+
+    pub fn test_zero_array() {
+        let v: &dm Vec<u256> = Vec::new(0);
+        // safe pushes
+        v.push(125);
+        v.push(126);
+        v.push(127);
+        v.push(128);
+        v.push(129);
+        v.push(130);
+        v.push(131);
+        v.push(132);
+        v.push(133);
+        v.push(134);
+        v.push(135);
+        let i = 0;
+        while (i < 11) {
+            if (v.get(i) != 125 + i) {
+                revert();
+            }
+        }
+    }
 }

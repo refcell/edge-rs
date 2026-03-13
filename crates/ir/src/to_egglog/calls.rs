@@ -447,27 +447,32 @@ impl AstToEgglog {
             ));
         }
 
-        // Compiler-provided trait methods for primitive types
+        // Compiler-provided trait methods for primitive types.
+        // Pure arithmetic methods (unsafe_add, unsafe_sub, unsafe_mul) are also allowed
+        // on non-primitive types since all EVM values are u256 at runtime — this enables
+        // unchecked pointer arithmetic on struct pointers like Vec.
         {
             let receiver_type = self.infer_receiver_type(&args[0]);
             let is_primitive = receiver_type
                 .as_ref()
                 .is_none_or(|t| Self::is_primitive_type(t));
-            if is_primitive {
-                if let Some(op) = self.compiler_provided_method(method_name) {
-                    if args.len() != 2 {
-                        return Err(IrError::Diagnostic(
-                            edge_diagnostics::Diagnostic::error(format!(
-                                "`{trait_name}::{method_name}` expects exactly 2 arguments",
-                            ))
-                            .with_label(span.clone(), "expected 2 arguments"),
-                        ));
-                    }
-                    let lhs = self.lower_expr(&args[0])?;
-                    let rhs = self.lower_expr(&args[1])?;
-                    return Ok(ast_helpers::bop(op, lhs, rhs));
-                }
 
+            // Check pure arithmetic methods first — these work on any type
+            if let Some(op) = self.compiler_provided_method(method_name) {
+                if args.len() != 2 {
+                    return Err(IrError::Diagnostic(
+                        edge_diagnostics::Diagnostic::error(format!(
+                            "`{trait_name}::{method_name}` expects exactly 2 arguments",
+                        ))
+                        .with_label(span.clone(), "expected 2 arguments"),
+                    ));
+                }
+                let lhs = self.lower_expr(&args[0])?;
+                let rhs = self.lower_expr(&args[1])?;
+                return Ok(ast_helpers::bop(op, lhs, rhs));
+            }
+
+            if is_primitive {
                 // Compiler-provided stateful methods (sload, sstore, derive_slot)
                 // For qualified calls: Sload::sload(slot) has no receiver (first arg is slot)
                 // Sstore::sstore(value, slot) has receiver as first arg
@@ -694,6 +699,20 @@ impl AstToEgglog {
                 if let Some(ref bt) = base_type {
                     if let Some(output) = self.index_output_type(bt) {
                         return Some(output);
+                    }
+                }
+                None
+            }
+            // FieldAccess: obj.field — return the field's type from the struct definition
+            edge_ast::Expr::FieldAccess(obj, field, _) => {
+                let base_type = self.infer_receiver_type(obj);
+                if let Some(ref bt) = base_type {
+                    if let Some(struct_info) = self.struct_types.get(bt) {
+                        for (fname, fty) in &struct_info.fields {
+                            if *fname == field.name {
+                                return Self::evm_type_to_name(fty);
+                            }
+                        }
                     }
                 }
                 None
@@ -1304,6 +1323,7 @@ impl AstToEgglog {
                         composite_base: alias_binding.composite_base.clone(),
                         composite_type_args: alias_binding.composite_type_args.clone(),
                         is_dynamic_memory: true,
+                        region_id: alias_binding.region_id,
                     };
                     self.scopes
                         .last_mut()
@@ -1330,6 +1350,7 @@ impl AstToEgglog {
                 composite_base,
                 composite_type_args,
                 is_dynamic_memory: is_dm_param,
+                region_id: None,
             };
             self.scopes
                 .last_mut()

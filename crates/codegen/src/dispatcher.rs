@@ -45,6 +45,12 @@ fn contains_dyn_alloc(expr: &edge_ir::schema::RcExpr) -> bool {
         EvmExpr::Call(_, args) => args.iter().any(contains_dyn_alloc),
         EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(contains_dyn_alloc),
         EvmExpr::Get(inner, _) => contains_dyn_alloc(inner),
+        EvmExpr::AllocRegion(_, _, true) => true,
+        EvmExpr::AllocRegion(_, nf, false) => contains_dyn_alloc(nf),
+        EvmExpr::RegionStore(_, _, val, state) => {
+            contains_dyn_alloc(val) || contains_dyn_alloc(state)
+        }
+        EvmExpr::RegionLoad(_, _, state) => contains_dyn_alloc(state),
         EvmExpr::Const(..)
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)

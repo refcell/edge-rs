@@ -147,6 +147,16 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
                 collect_allocations(input, result);
             }
         }
+        EvmExpr::AllocRegion(_, num_fields, _) => {
+            collect_allocations(num_fields, result);
+        }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            collect_allocations(val, result);
+            collect_allocations(state, result);
+        }
+        EvmExpr::RegionLoad(_, _, state) => {
+            collect_allocations(state, result);
+        }
     }
 }
 
@@ -397,6 +407,28 @@ fn rebuild_children_memo(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> R
             }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = optimize_expr_memo(num_fields, cache);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = optimize_expr_memo(val, cache);
+            let new_state = optimize_expr_memo(state, cache);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = optimize_expr_memo(state, cache);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
+        }
     }
 }
 
@@ -526,9 +558,15 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
             analyze_var_inner(name, inputs, in_loop, info);
             analyze_var_inner(name, body, true, info);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
             analyze_var_inner(name, a, in_loop, info);
         }
+        // RegionStore: last arg (state) is state — skip it.
+        EvmExpr::RegionStore(_, _, val, _state) => {
+            analyze_var_inner(name, val, in_loop, info);
+        }
+        // RegionLoad: last arg (state) is state — skip it.
+        EvmExpr::RegionLoad(_, _, _state) => {}
         // Top: last arg may be state OR operand depending on the op.
         EvmExpr::Top(op, a, b, c) => {
             analyze_var_inner(name, a, in_loop, info);
@@ -674,7 +712,10 @@ fn is_pure(expr: &RcExpr) -> bool {
         | EvmExpr::ExtCall(..)
         | EvmExpr::DoWhile(..)
         | EvmExpr::Call(..)
-        | EvmExpr::DynAlloc(..) => false,
+        | EvmExpr::DynAlloc(..)
+        | EvmExpr::AllocRegion(..)
+        | EvmExpr::RegionStore(..)
+        | EvmExpr::RegionLoad(..) => false,
     }
 }
 
@@ -721,8 +762,15 @@ fn collect_immutable_vars_rec(
             collect_immutable_vars_rec(t, immutable, mutable);
             collect_immutable_vars_rec(e, immutable, mutable);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
             collect_immutable_vars_rec(a, immutable, mutable);
+        }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            collect_immutable_vars_rec(val, immutable, mutable);
+            collect_immutable_vars_rec(state, immutable, mutable);
+        }
+        EvmExpr::RegionLoad(_, _, state) => {
+            collect_immutable_vars_rec(state, immutable, mutable);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             collect_immutable_vars_rec(a, immutable, mutable);
@@ -851,6 +899,28 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = insert_drops_rec(num_fields, vars_in_scope);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = insert_drops_rec(val, vars_in_scope);
+            let new_state = insert_drops_rec(state, vars_in_scope);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = insert_drops_rec(state, vars_in_scope);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
+        }
         // Leaf and other nodes: no structural changes needed
         _ => Rc::clone(expr),
     }
@@ -915,8 +985,25 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
             };
             a_ref || b_ref
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
             references_var_inner(a, name, follow_state)
+        }
+        // RegionStore: state is last arg
+        EvmExpr::RegionStore(_, _, val, state) => {
+            references_var_inner(val, name, follow_state)
+                || if follow_state {
+                    references_var_inner(state, name, follow_state)
+                } else {
+                    false
+                }
+        }
+        // RegionLoad: state is last arg
+        EvmExpr::RegionLoad(_, _, state) => {
+            if follow_state {
+                references_var_inner(state, name, follow_state)
+            } else {
+                false
+            }
         }
         EvmExpr::Top(op, a, b, c) => {
             use crate::schema::EvmTernaryOp::*;
@@ -1090,6 +1177,28 @@ fn tighten_drops_rec(expr: &RcExpr) -> RcExpr {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = tighten_drops_rec(num_fields);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = tighten_drops_rec(val);
+            let new_state = tighten_drops_rec(state);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = tighten_drops_rec(state);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
         }
         // Leaf and other nodes: no structural changes needed
         _ => Rc::clone(expr),
@@ -1404,6 +1513,28 @@ fn substitute_var_inner(
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = substitute_var_memo(name, replacement, num_fields, cache);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = substitute_var_memo(name, replacement, val, cache);
+            let new_state = substitute_var_memo(name, replacement, state, cache);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = substitute_var_memo(name, replacement, state, cache);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
         }
 
         // Stop at shadowing LetBind
@@ -1753,6 +1884,28 @@ fn monomorphize_rec(
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = monomorphize_rec(num_fields, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = monomorphize_rec(val, funcs, site_counter, new_functions);
+            let new_state = monomorphize_rec(state, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = monomorphize_rec(state, funcs, site_counter, new_functions);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
+        }
         // Leaves (EnvRead, EnvRead1, Function, Const, Var, Arg, etc.)
         _ => Rc::clone(expr),
     }
@@ -1924,6 +2077,28 @@ fn substitute_args(body: &RcExpr, in_ty: &EvmType, args: &[RcExpr]) -> RcExpr {
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = substitute_args(num_fields, in_ty, args);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(body);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = substitute_args(val, in_ty, args);
+            let new_state = substitute_args(state, in_ty, args);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(body);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = substitute_args(state, in_ty, args);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(body);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
+        }
         // Leaves
         _ => Rc::clone(body),
     }
@@ -1957,8 +2132,16 @@ fn collect_letbind_names(expr: &RcExpr, names: &mut std::collections::HashSet<St
         EvmExpr::Uop(_, a)
         | EvmExpr::VarStore(_, a)
         | EvmExpr::Get(a, _)
-        | EvmExpr::DynAlloc(a) => {
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => {
             collect_letbind_names(a, names);
+        }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            collect_letbind_names(val, names);
+            collect_letbind_names(state, names);
+        }
+        EvmExpr::RegionLoad(_, _, state) => {
+            collect_letbind_names(state, names);
         }
         EvmExpr::If(c, i, t, e) => {
             collect_letbind_names(c, names);
@@ -2180,6 +2363,28 @@ fn rename_locals_rec(
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let new_nf = rename_locals_rec(num_fields, suffix, defined);
+            if Rc::ptr_eq(&new_nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            let new_val = rename_locals_rec(val, suffix, defined);
+            let new_state = rename_locals_rec(state, suffix, defined);
+            if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            let new_state = rename_locals_rec(state, suffix, defined);
+            if Rc::ptr_eq(&new_state, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field, new_state))
         }
         _ => Rc::clone(expr),
     }

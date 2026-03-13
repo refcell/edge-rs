@@ -355,6 +355,23 @@ pub enum EvmExpr {
     /// Uses MSIZE to find the current memory high-water mark and expands memory.
     /// NOT pure — memory expansion is an observable side effect.
     DynAlloc(RcExpr),
+
+    /// Allocate a memory region: (`region_id`, `num_fields`, `is_dynamic`) → base address.
+    /// `region_id` is a compile-time unique identifier for this allocation site.
+    /// `num_fields` is the number of word-sized fields (may be a constant or expression).
+    /// `is_dynamic`: true → runtime MSIZE-based allocation, false → static offset assigned later.
+    AllocRegion(i64, RcExpr, bool),
+
+    /// Store to a region field: (`region_id`, `field_index`, value, state) → state.
+    /// `field_index` is a compile-time constant (0, 1, 2, ...).
+    /// Different region IDs are guaranteed non-overlapping; same region + different field is
+    /// guaranteed non-overlapping. Enables symbolic forwarding in egglog.
+    RegionStore(i64, i64, RcExpr, RcExpr),
+
+    /// Load from a region field: (`region_id`, `field_index`, state) → value.
+    /// Symmetric to `RegionStore`. Egglog can forward through intervening stores to
+    /// different regions or different fields of the same region.
+    RegionLoad(i64, i64, RcExpr),
 }
 
 // ============================================================

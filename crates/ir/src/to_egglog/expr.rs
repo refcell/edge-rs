@@ -153,6 +153,17 @@ impl AstToEgglog {
                     None
                 };
 
+                // Assign a region ID for &dm struct bindings so field access
+                // uses symbolic RegionStore/RegionLoad instead of raw MSTORE/MLOAD.
+                let region_id = if is_dynamic_memory && composite_type.is_some() {
+                    let rid = self.fresh_region_id();
+                    // Register the mapping so post-egglog resolution can convert back
+                    self.region_var_map.insert(rid, var_name.clone());
+                    Some(rid)
+                } else {
+                    None
+                };
+
                 let binding = VarBinding {
                     value: zero,
                     location: DataLocation::Memory,
@@ -163,6 +174,7 @@ impl AstToEgglog {
                     composite_base,
                     composite_type_args: Vec::new(),
                     is_dynamic_memory,
+                    region_id,
                 };
                 self.scopes
                     .last_mut()
@@ -276,6 +288,7 @@ impl AstToEgglog {
                     composite_base: None,
                     composite_type_args: Vec::new(),
                     is_dynamic_memory: false,
+                    region_id: None,
                 };
                 self.scopes
                     .last_mut()
@@ -969,6 +982,17 @@ impl AstToEgglog {
                                 .iter()
                                 .position(|(n, _)| n == &field.name)
                             {
+                                // Use RegionStore if the binding has a region ID
+                                if let Some(rid) = self.lookup_region_id(&ident.name) {
+                                    let store = ast_helpers::region_store(
+                                        rid,
+                                        field_idx as i64,
+                                        rhs_ir,
+                                        Rc::clone(&self.current_state),
+                                    );
+                                    self.current_state = Rc::clone(&store);
+                                    return Ok(store);
+                                }
                                 let offset = ast_helpers::add(
                                     base_expr,
                                     ast_helpers::const_int(
@@ -1920,6 +1944,7 @@ impl AstToEgglog {
                     composite_base: None,
                     composite_type_args: Vec::new(),
                     is_dynamic_memory: false,
+                    region_id: None,
                 };
                 // Get the original name (without prefix) for scope lookup
                 let orig_name = outputs

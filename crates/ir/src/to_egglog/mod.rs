@@ -47,7 +47,8 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
             references_any_var(a, names) || references_any_var(b, names)
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => {
             references_any_var(a, names)
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
@@ -55,6 +56,10 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
                 || references_any_var(b, names)
                 || references_any_var(c, names)
         }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            references_any_var(val, names) || references_any_var(state, names)
+        }
+        EvmExpr::RegionLoad(_, _, state) => references_any_var(state, names),
         EvmExpr::If(c, i, t, e) => {
             references_any_var(c, names)
                 || references_any_var(i, names)
@@ -102,6 +107,9 @@ pub(crate) struct VarBinding {
     pub composite_type_args: Vec<edge_ast::ty::TypeSig>,
     /// Whether this variable is a dynamically-allocated memory pointer (&dm type)
     pub is_dynamic_memory: bool,
+    /// Symbolic region ID for region-based field access (RegionStore/RegionLoad).
+    /// Set when the struct instance has a known allocation site.
+    pub region_id: Option<i64>,
 }
 
 /// Scope for variable resolution during lowering.
@@ -311,6 +319,9 @@ pub struct AstToEgglog {
     pub(crate) storage_array_fields: IndexMap<String, (usize, usize)>,
     /// Next available region ID for symbolic memory allocation.
     pub(crate) next_region_id: i64,
+    /// Mapping from region ID to the LetBind variable name that holds the base pointer.
+    /// Used by the post-egglog resolution pass to convert RegionStore/RegionLoad to MStore/MLoad.
+    pub(crate) region_var_map: IndexMap<i64, String>,
     /// Tracks the last composite allocation `(type_name, base_expr)` for wiring
     /// struct/array assignments to variable bindings.
     pub(crate) last_composite_alloc: Option<(String, RcExpr)>,
@@ -383,6 +394,7 @@ impl AstToEgglog {
             type_aliases: IndexMap::new(),
             storage_array_fields: IndexMap::new(),
             next_region_id: 0,
+            region_var_map: IndexMap::new(),
             last_composite_alloc: None,
             module_prefixes: HashSet::new(),
             generic_type_templates: IndexMap::new(),
@@ -408,6 +420,14 @@ impl AstToEgglog {
         let id = self.next_region_id;
         self.next_region_id += 1;
         crate::ast_helpers::mem_region(id, size_words as i64)
+    }
+
+    /// Allocate a fresh region ID without creating a MemRegion node.
+    /// Used for symbolic field access tracking on &dm struct instances.
+    pub(crate) fn fresh_region_id(&mut self) -> i64 {
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        id
     }
 
     /// Extract the type name and type args from a Named type sig, unwrapping Pointer wrappers.
@@ -481,6 +501,9 @@ impl AstToEgglog {
             "Mstore",
             "Mload",
             "Mcopy",
+            "UnsafeAdd",
+            "UnsafeSub",
+            "UnsafeMul",
         ] {
             self.std_ops_traits.insert(name.to_string());
         }
@@ -622,6 +645,7 @@ impl AstToEgglog {
                     composite_base: None,
                     composite_type_args: Vec::new(),
                     is_dynamic_memory: false,
+                    region_id: None,
                 };
                 self.scopes
                     .last_mut()
@@ -1026,6 +1050,7 @@ impl AstToEgglog {
                 composite_base: None,
                 composite_type_args,
                 is_dynamic_memory: false,
+                region_id: None,
             };
             self.scopes
                 .last_mut()
@@ -1052,6 +1077,7 @@ impl AstToEgglog {
                 composite_base: None,
                 composite_type_args: Vec::new(),
                 is_dynamic_memory: false,
+                region_id: None,
             };
             self.scopes
                 .last_mut()

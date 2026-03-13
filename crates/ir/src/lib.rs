@@ -27,6 +27,7 @@ pub mod cleanup;
 pub mod costs;
 pub mod mem_region;
 pub mod optimizations;
+pub mod region_forward;
 pub mod pretty;
 pub mod schedule;
 pub mod schema;
@@ -617,6 +618,53 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
                 Rc::new(EvmExpr::DynAlloc(ns))
             }
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = child!(num_fields);
+            k.tag(27);
+            k.i64(*id);
+            k.ptr(&nf);
+            k.u8(*is_dynamic as u8);
+            if let Some(cached) = cache.get(&k) {
+                return Rc::clone(cached);
+            }
+            if Rc::ptr_eq(&nf, num_fields) {
+                Rc::clone(expr)
+            } else {
+                Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+            }
+        }
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = child!(val);
+            let ns = child!(state);
+            k.tag(28);
+            k.i64(*id);
+            k.i64(*field_idx);
+            k.ptr(&nv);
+            k.ptr(&ns);
+            if let Some(cached) = cache.get(&k) {
+                return Rc::clone(cached);
+            }
+            if Rc::ptr_eq(&nv, val) && Rc::ptr_eq(&ns, state) {
+                Rc::clone(expr)
+            } else {
+                Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+            }
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = child!(state);
+            k.tag(29);
+            k.i64(*id);
+            k.i64(*field_idx);
+            k.ptr(&ns);
+            if let Some(cached) = cache.get(&k) {
+                return Rc::clone(cached);
+            }
+            if Rc::ptr_eq(&ns, state) {
+                Rc::clone(expr)
+            } else {
+                Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
+            }
+        }
     };
 
     cache.insert(k, Rc::clone(&result));
@@ -663,7 +711,8 @@ fn dag_count_rec(expr: &RcExpr, visited: &mut std::collections::HashSet<usize>) 
         | EvmExpr::VarStore(_, a)
         | EvmExpr::Get(a, _)
         | EvmExpr::EnvRead(_, a)
-        | EvmExpr::DynAlloc(a) => {
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => {
             add!(a);
         }
         EvmExpr::Bop(_, a, b)
@@ -672,6 +721,13 @@ fn dag_count_rec(expr: &RcExpr, visited: &mut std::collections::HashSet<usize>) 
         | EvmExpr::EnvRead1(_, a, b) => {
             add!(a);
             add!(b);
+        }
+        EvmExpr::RegionStore(_, _, a, b) => {
+            add!(a);
+            add!(b);
+        }
+        EvmExpr::RegionLoad(_, _, a) => {
+            add!(a);
         }
         EvmExpr::LetBind(_, a, b) => {
             add!(a);
@@ -960,6 +1016,9 @@ fn ir_stats_dag(
             stats.dyn_allocs += 1;
             "DynAlloc"
         }
+        EvmExpr::AllocRegion(..) => "AllocRegion",
+        EvmExpr::RegionStore(..) => "RegionStore",
+        EvmExpr::RegionLoad(..) => "RegionLoad",
     };
     *stats.node_counts.entry(variant_name).or_default() += 1;
 
@@ -983,13 +1042,21 @@ fn ir_stats_dag(
         | EvmExpr::VarStore(_, a)
         | EvmExpr::Get(a, _)
         | EvmExpr::EnvRead(_, a)
-        | EvmExpr::DynAlloc(a) => go!(a),
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => go!(a),
         EvmExpr::Bop(_, a, b)
         | EvmExpr::Concat(a, b)
         | EvmExpr::DoWhile(a, b)
         | EvmExpr::EnvRead1(_, a, b) => {
             go!(a);
             go!(b);
+        }
+        EvmExpr::RegionStore(_, _, a, b) => {
+            go!(a);
+            go!(b);
+        }
+        EvmExpr::RegionLoad(_, _, a) => {
+            go!(a);
         }
         EvmExpr::LetBind(_, a, b) => {
             go!(a);
@@ -1077,6 +1144,7 @@ pub fn prologue(optimize_for: OptimizeFor) -> String {
         include_str!("optimizations/arithmetic.egg"),
         include_str!("optimizations/storage.egg"),
         include_str!("optimizations/memory.egg"),
+        include_str!("optimizations/region_memory.egg"),
         include_str!("optimizations/dead_code.egg"),
         include_str!("optimizations/range_analysis.egg"),
         include_str!("optimizations/u256_const_fold.egg"),
@@ -1160,14 +1228,26 @@ pub fn lower_and_optimize(
     storage_hoist::hoist_program(&mut ir_program);
     tracing::debug!("  storage_hoist: {:?}", t.elapsed());
 
-    // 4. Resolve symbolic MemRegion nodes to concrete offsets.
+    // 4. Forward RegionStore → RegionLoad in straight-line code.
+    // Walks IR in program order, forwarding known field values through
+    // struct field access. Enables compile-time resolution of Vec len/cap.
+    let t = std::time::Instant::now();
+    region_forward::forward_region_stores_program(&mut ir_program, &lowering.region_var_map);
+    tracing::debug!("  region_forward: {:?}", t.elapsed());
+
+    // 5. Resolve symbolic MemRegion nodes to concrete offsets.
     // Runs before egglog so that Add(Const, Const) patterns from
     // region+field offsets get folded by egglog's constant folding.
     let t = std::time::Instant::now();
-    mem_region::assign_program_offsets(&mut ir_program);
+    mem_region::assign_program_offsets(&mut ir_program, &lowering.region_var_map);
     tracing::debug!("  mem_region: {:?}", t.elapsed());
 
     if optimization_level == 0 {
+        // Resolve RegionStore/RegionLoad → MStore/MLoad (no egglog to forward through)
+        let t = std::time::Instant::now();
+        mem_region::resolve_regions_post_egglog(&mut ir_program, &lowering.region_var_map);
+        tracing::debug!("  resolve_regions: {:?}", t.elapsed());
+
         //    b) At O0 only: forward SStore→SLoad in straight-line code (no egglog)
         let t = std::time::Instant::now();
         storage_hoist::forward_stores_program(&mut ir_program);
@@ -1384,6 +1464,12 @@ pub fn lower_and_optimize(
         free_functions: ir_program.free_functions,
         warnings: ir_program.warnings,
     };
+
+    // Post-egglog: resolve RegionStore/RegionLoad → MStore/MLoad.
+    // These survived into egglog for symbolic forwarding; now lower to concrete memory ops.
+    let t = std::time::Instant::now();
+    mem_region::resolve_regions_post_egglog(&mut result, &lowering.region_var_map);
+    tracing::debug!("  resolve_regions: {:?}", t.elapsed());
 
     // Post-egglog: forward SStore→SLoad and eliminate dead stores in straight-line code.
     // Egglog's storage-opt rules only handle state-threaded SStore chains, not Concat-chained

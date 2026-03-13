@@ -316,6 +316,19 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
             let ns = replace_sloads_inline(size, known);
             Rc::new(EvmExpr::DynAlloc(ns))
         }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = replace_sloads_inline(num_fields, known);
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = replace_sloads_inline(val, known);
+            let ns = replace_sloads_inline(state, known);
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = replace_sloads_inline(state, known);
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
+        }
     }
 }
 
@@ -1064,6 +1077,19 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
         EvmExpr::DynAlloc(size) => {
             let ns = replace_storage(size, key, var_name, replace_stores);
             Rc::new(EvmExpr::DynAlloc(ns))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = replace_storage(num_fields, key, var_name, replace_stores);
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = replace_storage(val, key, var_name, replace_stores);
+            let ns = replace_storage(state, key, var_name, replace_stores);
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = replace_storage(state, key, var_name, replace_stores);
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
         }
         // Leaf nodes — no children
         EvmExpr::Const(..)

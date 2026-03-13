@@ -284,6 +284,27 @@ impl<'a> ExprCompiler<'a> {
                 // stack: [base] — the returned pointer
             }
 
+            EvmExpr::AllocRegion(id, _, _) => {
+                panic!(
+                    "AllocRegion({id}) reached codegen without being resolved. \
+                     Run resolve_regions() after egglog extraction."
+                );
+            }
+
+            EvmExpr::RegionStore(id, field, _, _) => {
+                panic!(
+                    "RegionStore({id}, {field}) reached codegen without being resolved to MStore. \
+                     Run resolve_regions() after egglog extraction."
+                );
+            }
+
+            EvmExpr::RegionLoad(id, field, _) => {
+                panic!(
+                    "RegionLoad({id}, {field}) reached codegen without being resolved to MLoad. \
+                     Run resolve_regions() after egglog extraction."
+                );
+            }
+
             EvmExpr::Empty(_, _) | EvmExpr::StorageField(_, _, _) => {
                 // Empty: unit — no value on stack.
                 // StorageField: declarations don't emit code.
@@ -1756,8 +1777,14 @@ impl<'a> LetOffsetSim<'a> {
             }
             EvmExpr::Uop(_, a)
             | EvmExpr::DynAlloc(a)
+            | EvmExpr::AllocRegion(_, a, _)
             | EvmExpr::Get(a, _)
             | EvmExpr::EnvRead(_, a) => self.walk(a),
+            EvmExpr::RegionStore(_, _, val, state) => {
+                self.walk(val);
+                self.walk(state);
+            }
+            EvmExpr::RegionLoad(_, _, state) => self.walk(state),
             EvmExpr::Log(_, topics, offset, size, state) => {
                 for t in topics {
                     self.walk(t);

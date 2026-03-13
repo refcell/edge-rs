@@ -19,46 +19,56 @@ type Vec<T> = {
 
 impl Vec<T> {
     fn new(cap: u256) -> u256 {
-        let total = 64 + cap * @size_of::<T>();
+        let total = UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(cap, @size_of::<T>()));
         let ptr = @alloc(total);
         // len = 0
         0.mstore(ptr);
         // capacity = cap
-        cap.mstore(ptr + 32);
+        cap.mstore(UnsafeAdd::unsafe_add(ptr, 32));
         ptr
+    }
+
+    fn len(self: &dm Self) -> u256 {
+        self.len
+    }
+
+    fn capacity(self: &dm Self) -> u256 {
+        self.capacity
     }
 
     fn push(self: &dm Self, val: T) {
         if (self.len >= self.capacity) {
-            self.grow(self.capacity + 3);
+            self.grow(UnsafeAdd::unsafe_add(self.capacity, 3));
         }
-        let offset = self + 64 + self.len * @size_of::<T>();
+        // Unchecked arithmetic — internal pointer calculations cannot overflow u256.
+        let offset = UnsafeAdd::unsafe_add(self, UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(self.len, @size_of::<T>())));
         val.mstore(offset);
-        self.len = self.len + 1;
+        self.len = UnsafeAdd::unsafe_add(self.len, 1);
     }
 
     fn get(self: &dm Self, index: u256) -> T {
         if (index >= self.len) {
             revert();
         }
-        (self + 64 + index * @size_of::<T>()).mload()
+        UnsafeAdd::unsafe_add(self, UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(index, @size_of::<T>()))).mload()
     }
 
     fn set(self: &dm Self, index: u256, val: T) {
         if (index >= self.len) {
             revert();
         }
-        val.mstore(self + 64 + index * @size_of::<T>());
+        val.mstore(UnsafeAdd::unsafe_add(self, UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(index, @size_of::<T>()))));
     }
 
     fn grow(self: &dm Self, new_cap: u256) {
-        let old_size = 64 + self.capacity * @size_of::<T>();
-        let new_size = 64 + new_cap * @size_of::<T>();
+        let old_cap = self.capacity;
+        let old_size = UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(old_cap, @size_of::<T>()));
+        let new_size = UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(new_cap, @size_of::<T>()));
         let new_ptr = @alloc(new_size);
         // copy old header + data to new location
         self.mcopy(new_ptr, old_size);
         // update capacity at new location
-        new_cap.mstore(new_ptr + 32);
+        new_cap.mstore(UnsafeAdd::unsafe_add(new_ptr, 32));
         // transparent update via &dm aliasing
         self = new_ptr;
     }
