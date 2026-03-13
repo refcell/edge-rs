@@ -12,7 +12,10 @@
 //! The assigned offsets become the `memory_high_water` value that codegen uses
 //! to start `LetBind` variable slots above all IR-allocated regions.
 
-use std::{collections::BTreeMap, rc::Rc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    rc::Rc,
+};
 
 use crate::schema::{
     EvmBaseType, EvmConstant, EvmContext, EvmExpr, EvmProgram, EvmType, RcExpr,
@@ -100,8 +103,81 @@ fn assign_scoped_offsets(
     }
 }
 
+/// Check whether a subtree contains any MemRegion nodes (memoized by Rc pointer).
+fn has_mem_region(expr: &RcExpr, cache: &mut HashMap<usize, bool>) -> bool {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(&result) = cache.get(&ptr) {
+        return result;
+    }
+    let result = match expr.as_ref() {
+        EvmExpr::MemRegion(..) => true,
+        EvmExpr::Concat(a, b)
+        | EvmExpr::Bop(_, a, b)
+        | EvmExpr::DoWhile(a, b)
+        | EvmExpr::EnvRead1(_, a, b) => {
+            has_mem_region(a, cache) || has_mem_region(b, cache)
+        }
+        EvmExpr::If(a, b, c, d) => {
+            has_mem_region(a, cache)
+                || has_mem_region(b, cache)
+                || has_mem_region(c, cache)
+                || has_mem_region(d, cache)
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            has_mem_region(init, cache) || has_mem_region(body, cache)
+        }
+        EvmExpr::Top(_, a, b, c)
+        | EvmExpr::Revert(a, b, c)
+        | EvmExpr::ReturnOp(a, b, c) => {
+            has_mem_region(a, cache)
+                || has_mem_region(b, cache)
+                || has_mem_region(c, cache)
+        }
+        EvmExpr::Function(_, _, _, body) => has_mem_region(body, cache),
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _)
+        | EvmExpr::EnvRead(_, a) => has_mem_region(a, cache),
+        EvmExpr::RegionStore(_, _, val, state) => {
+            has_mem_region(val, cache) || has_mem_region(state, cache)
+        }
+        EvmExpr::RegionLoad(_, _, state) => has_mem_region(state, cache),
+        EvmExpr::Log(_, topics, d, s, st) => {
+            topics.iter().any(|t| has_mem_region(t, cache))
+                || has_mem_region(d, cache)
+                || has_mem_region(s, cache)
+                || has_mem_region(st, cache)
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            [a, b, c, d, e, f, g]
+                .iter()
+                .any(|x| has_mem_region(x, cache))
+        }
+        EvmExpr::Call(_, args) => args.iter().any(|a| has_mem_region(a, cache)),
+        EvmExpr::InlineAsm(inputs, ..) => inputs.iter().any(|a| has_mem_region(a, cache)),
+        _ => false,
+    };
+    cache.insert(ptr, result);
+    result
+}
+
 /// Build a scope tree from an IR expression.
 fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
+    let mut hmr_cache = HashMap::new();
+    collect_region_scopes_inner(expr, &mut hmr_cache)
+}
+
+fn collect_region_scopes_inner(
+    expr: &RcExpr,
+    hmr_cache: &mut HashMap<usize, bool>,
+) -> RegionScope {
+    // Fast path: if this subtree contains no MemRegion nodes, skip traversal.
+    if !has_mem_region(expr, hmr_cache) {
+        return RegionScope::Sequential(vec![]);
+    }
+
     match expr.as_ref() {
         EvmExpr::MemRegion(id, size_words) => RegionScope::Leaf {
             region_id: *id,
@@ -110,34 +186,35 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
 
         // If: condition+inputs sequential, then/else exclusive
         EvmExpr::If(cond, inputs, then_br, else_br) => RegionScope::Sequential(vec![
-            collect_region_scopes(cond),
-            collect_region_scopes(inputs),
+            collect_region_scopes_inner(cond, hmr_cache),
+            collect_region_scopes_inner(inputs, hmr_cache),
             RegionScope::Exclusive(vec![
-                collect_region_scopes(then_br),
-                collect_region_scopes(else_br),
+                collect_region_scopes_inner(then_br, hmr_cache),
+                collect_region_scopes_inner(else_br, hmr_cache),
             ]),
         ]),
 
         // Sequential composition
-        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => {
-            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(b)])
-        }
+        EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) => RegionScope::Sequential(vec![
+            collect_region_scopes_inner(a, hmr_cache),
+            collect_region_scopes_inner(b, hmr_cache),
+        ]),
         EvmExpr::LetBind(_, init, body) => RegionScope::Sequential(vec![
-            collect_region_scopes(init),
-            collect_region_scopes(body),
+            collect_region_scopes_inner(init, hmr_cache),
+            collect_region_scopes_inner(body, hmr_cache),
         ]),
         EvmExpr::DoWhile(inputs, body) => RegionScope::Sequential(vec![
-            collect_region_scopes(inputs),
-            collect_region_scopes(body),
+            collect_region_scopes_inner(inputs, hmr_cache),
+            collect_region_scopes_inner(body, hmr_cache),
         ]),
-        EvmExpr::Function(_, _, _, body) => collect_region_scopes(body),
+        EvmExpr::Function(_, _, _, body) => collect_region_scopes_inner(body, hmr_cache),
 
         // Ternary children — sequential
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             RegionScope::Sequential(vec![
-                collect_region_scopes(a),
-                collect_region_scopes(b),
-                collect_region_scopes(c),
+                collect_region_scopes_inner(a, hmr_cache),
+                collect_region_scopes_inner(b, hmr_cache),
+                collect_region_scopes_inner(c, hmr_cache),
             ])
         }
 
@@ -146,36 +223,46 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
         | EvmExpr::Get(a, _)
         | EvmExpr::VarStore(_, a)
         | EvmExpr::DynAlloc(a)
-        | EvmExpr::AllocRegion(_, a, _) => collect_region_scopes(a),
+        | EvmExpr::AllocRegion(_, a, _) => collect_region_scopes_inner(a, hmr_cache),
 
         // Multi-child nodes
         EvmExpr::Log(_, topics, d, s, st) => {
-            let mut children: Vec<_> = topics.iter().map(collect_region_scopes).collect();
-            children.push(collect_region_scopes(d));
-            children.push(collect_region_scopes(s));
-            children.push(collect_region_scopes(st));
+            let mut children: Vec<_> = topics
+                .iter()
+                .map(|t| collect_region_scopes_inner(t, hmr_cache))
+                .collect();
+            children.push(collect_region_scopes_inner(d, hmr_cache));
+            children.push(collect_region_scopes_inner(s, hmr_cache));
+            children.push(collect_region_scopes_inner(st, hmr_cache));
             RegionScope::Sequential(children)
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => RegionScope::Sequential(
             [a, b, c, d, e, f, g]
                 .into_iter()
-                .map(collect_region_scopes)
+                .map(|x| collect_region_scopes_inner(x, hmr_cache))
                 .collect(),
         ),
-        EvmExpr::Call(_, args) => {
-            RegionScope::Sequential(args.iter().map(collect_region_scopes).collect())
-        }
-        EvmExpr::RegionStore(_, _, val, state) => {
-            RegionScope::Sequential(vec![collect_region_scopes(val), collect_region_scopes(state)])
-        }
-        EvmExpr::RegionLoad(_, _, state) => collect_region_scopes(state),
-        EvmExpr::EnvRead(_, s) => collect_region_scopes(s),
-        EvmExpr::EnvRead1(_, a, s) => {
-            RegionScope::Sequential(vec![collect_region_scopes(a), collect_region_scopes(s)])
-        }
-        EvmExpr::InlineAsm(inputs, ..) => {
-            RegionScope::Sequential(inputs.iter().map(collect_region_scopes).collect())
-        }
+        EvmExpr::Call(_, args) => RegionScope::Sequential(
+            args.iter()
+                .map(|a| collect_region_scopes_inner(a, hmr_cache))
+                .collect(),
+        ),
+        EvmExpr::RegionStore(_, _, val, state) => RegionScope::Sequential(vec![
+            collect_region_scopes_inner(val, hmr_cache),
+            collect_region_scopes_inner(state, hmr_cache),
+        ]),
+        EvmExpr::RegionLoad(_, _, state) => collect_region_scopes_inner(state, hmr_cache),
+        EvmExpr::EnvRead(_, s) => collect_region_scopes_inner(s, hmr_cache),
+        EvmExpr::EnvRead1(_, a, s) => RegionScope::Sequential(vec![
+            collect_region_scopes_inner(a, hmr_cache),
+            collect_region_scopes_inner(s, hmr_cache),
+        ]),
+        EvmExpr::InlineAsm(inputs, ..) => RegionScope::Sequential(
+            inputs
+                .iter()
+                .map(|a| collect_region_scopes_inner(a, hmr_cache))
+                .collect(),
+        ),
 
         // Leaf nodes — no regions
         EvmExpr::Const(..)

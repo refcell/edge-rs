@@ -61,28 +61,31 @@ pub use schema::{EvmContract, EvmExpr, EvmProgram, RcExpr};
 /// subtrees into shared `Rc` pointers.
 pub fn hash_cons(expr: &RcExpr) -> RcExpr {
     let mut cache: HashMap<HashConsKey, RcExpr> = HashMap::new();
-    hash_cons_rec(expr, &mut cache)
+    let mut visited: HashMap<usize, RcExpr> = HashMap::new();
+    hash_cons_rec(expr, &mut cache, &mut visited)
 }
 
 /// Hash-cons all expressions in a program.
 pub fn hash_cons_program(program: &mut EvmProgram) {
     let mut cache: HashMap<HashConsKey, RcExpr> = HashMap::new();
+    let mut visited: HashMap<usize, RcExpr> = HashMap::new();
     for contract in &mut program.contracts {
-        contract.runtime = hash_cons_rec(&contract.runtime, &mut cache);
+        contract.runtime = hash_cons_rec(&contract.runtime, &mut cache, &mut visited);
         for func in &mut contract.internal_functions {
-            *func = hash_cons_rec(func, &mut cache);
+            *func = hash_cons_rec(func, &mut cache, &mut visited);
         }
-        contract.constructor = hash_cons_rec(&contract.constructor, &mut cache);
+        contract.constructor = hash_cons_rec(&contract.constructor, &mut cache, &mut visited);
     }
     for func in &mut program.free_functions {
-        *func = hash_cons_rec(func, &mut cache);
+        *func = hash_cons_rec(func, &mut cache, &mut visited);
     }
 }
 
 /// Hash-cons a single expression tree, restoring Rc sharing for structurally identical subtrees.
 pub fn hash_cons_expr(expr: &RcExpr) -> RcExpr {
     let mut cache: HashMap<HashConsKey, RcExpr> = HashMap::new();
-    hash_cons_rec(expr, &mut cache)
+    let mut visited: HashMap<usize, RcExpr> = HashMap::new();
+    hash_cons_rec(expr, &mut cache, &mut visited)
 }
 
 /// A hash key that captures node identity by type + inline data + child Rc pointers.
@@ -229,14 +232,33 @@ pub(crate) fn key_for_ctx(k: &mut HashConsKey, ctx: &schema::EvmContext) {
     }
 }
 
-fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcExpr {
+fn hash_cons_rec(
+    expr: &RcExpr,
+    cache: &mut HashMap<HashConsKey, RcExpr>,
+    visited: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
+    // Fast path: if we've already processed this exact Rc node, return the result.
+    // This prevents exponential blowup when the DAG has heavy sharing.
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(result) = visited.get(&ptr) {
+        return Rc::clone(result);
+    }
+
     // Build key and hash-cons children first
     let mut k = HashConsKey::new();
 
     macro_rules! child {
         ($e:expr) => {
-            hash_cons_rec($e, cache)
+            hash_cons_rec($e, cache, visited)
         };
+    }
+
+    macro_rules! cache_hit {
+        ($cached:expr) => {{
+            let r = Rc::clone($cached);
+            visited.insert(ptr, Rc::clone(&r));
+            return r;
+        }};
     }
 
     let result: RcExpr = match expr.as_ref() {
@@ -245,7 +267,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             key_for_type(&mut k, ty);
             key_for_ctx(&mut k, ctx);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -255,7 +277,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             key_for_type(&mut k, ty);
             key_for_ctx(&mut k, ctx);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -264,7 +286,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             key_for_type(&mut k, ty);
             key_for_ctx(&mut k, ctx);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -276,7 +298,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nl);
             k.ptr(&nr);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nl, l) && Rc::ptr_eq(&nr, r) {
                 Rc::clone(expr)
@@ -290,7 +312,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.u8(*op as u8);
             k.ptr(&na);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) {
                 Rc::clone(expr)
@@ -308,7 +330,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nb);
             k.ptr(&nc);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 Rc::clone(expr)
@@ -322,7 +344,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&na);
             k.usize(*idx);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) {
                 Rc::clone(expr)
@@ -337,7 +359,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&na);
             k.ptr(&nb);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
                 Rc::clone(expr)
@@ -356,7 +378,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nt);
             k.ptr(&ne);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nc, cond)
                 && Rc::ptr_eq(&ni, inputs)
@@ -375,7 +397,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&na);
             k.ptr(&nb);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
                 Rc::clone(expr)
@@ -389,7 +411,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.u8(*op as u8);
             k.ptr(&ns);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&ns, st) {
                 Rc::clone(expr)
@@ -405,7 +427,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&na);
             k.ptr(&ns);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, arg) && Rc::ptr_eq(&ns, st) {
                 Rc::clone(expr)
@@ -427,7 +449,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&ns);
             k.ptr(&nst);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::new(EvmExpr::Log(*n, new_topics, nd, ns, nst))
         }
@@ -440,7 +462,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nb);
             k.ptr(&nc);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 Rc::clone(expr)
@@ -457,7 +479,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nb);
             k.ptr(&nc);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 Rc::clone(expr)
@@ -482,7 +504,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nf);
             k.ptr(&ng);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::new(EvmExpr::ExtCall(na, nb, nc, nd, ne, nf, ng))
         }
@@ -494,7 +516,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
                 k.ptr(a);
             }
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::new(EvmExpr::Call(name.clone(), new_args))
         }
@@ -502,7 +524,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.tag(17);
             k.str(s);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -514,7 +536,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nv);
             k.ptr(&nb);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nv, value) && Rc::ptr_eq(&nb, body) {
                 Rc::clone(expr)
@@ -526,7 +548,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.tag(19);
             k.str(name);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -536,7 +558,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.str(name);
             k.ptr(&nv);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nv, val) {
                 Rc::clone(expr)
@@ -548,7 +570,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.tag(21);
             k.str(name);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -560,7 +582,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             key_for_type(&mut k, out_ty);
             k.ptr(&nb);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nb, body) {
                 Rc::clone(expr)
@@ -579,7 +601,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.usize(*slot);
             key_for_type(&mut k, ty);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -592,7 +614,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
                 k.ptr(a);
             }
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
         }
@@ -601,7 +623,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.i64(*id);
             k.i64(*size);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             Rc::clone(expr)
         }
@@ -610,7 +632,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.tag(26);
             k.ptr(&ns);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&ns, size) {
                 Rc::clone(expr)
@@ -625,7 +647,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nf);
             k.u8(*is_dynamic as u8);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nf, num_fields) {
                 Rc::clone(expr)
@@ -642,7 +664,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.ptr(&nv);
             k.ptr(&ns);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&nv, val) && Rc::ptr_eq(&ns, state) {
                 Rc::clone(expr)
@@ -657,7 +679,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
             k.i64(*field_idx);
             k.ptr(&ns);
             if let Some(cached) = cache.get(&k) {
-                return Rc::clone(cached);
+                cache_hit!(cached);
             }
             if Rc::ptr_eq(&ns, state) {
                 Rc::clone(expr)
@@ -668,6 +690,7 @@ fn hash_cons_rec(expr: &RcExpr, cache: &mut HashMap<HashConsKey, RcExpr>) -> RcE
     };
 
     cache.insert(k, Rc::clone(&result));
+    visited.insert(ptr, Rc::clone(&result));
     result
 }
 

@@ -83,6 +83,7 @@ contract TestVec {
             if (v.get(i) != 125 + i) {
                 revert();
             }
+            i = i + 1;
         }
     }
 }
