@@ -1363,7 +1363,9 @@ impl AstToEgglog {
         let old_prefix = std::mem::replace(&mut self.inline_prefix, new_prefix);
         self.inline_counter += 1;
         self.inline_depth += 1;
+        let t_inline = std::time::Instant::now();
         let result = self.lower_code_block(body)?;
+        tracing::debug!("        inline depth={} prefix={} elapsed={:?}", self.inline_depth, &self.inline_prefix, t_inline.elapsed());
         self.inline_depth -= 1;
         self.inline_prefix = old_prefix;
         self.scopes.pop();

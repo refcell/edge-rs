@@ -46,6 +46,15 @@ impl Vec<T> {
         self.len = UnsafeAdd::unsafe_add(self.len, 1);
     }
 
+    fn pop(self: &dm Self) -> T {
+        if (self.len == 0) {
+            revert();
+        }
+        self.len = UnsafeSub::unsafe_sub(self.len, 1);
+        let offset = UnsafeAdd::unsafe_add(self, UnsafeAdd::unsafe_add(64, UnsafeMul::unsafe_mul(self.len, @size_of::<T>())));
+        offset.mload()
+    }
+
     fn get(self: &dm Self, index: u256) -> T {
         if (index >= self.len) {
             revert();

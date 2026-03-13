@@ -388,6 +388,7 @@ impl AstToEgglog {
             .collect();
 
         // Lower all statements
+        let t_block = std::time::Instant::now();
         let mut stmts: Vec<RcExpr> = Vec::new();
         let last_idx = block.stmts.len().saturating_sub(1);
         for (idx, item) in block.stmts.iter().enumerate() {
@@ -407,6 +408,7 @@ impl AstToEgglog {
             };
             stmts.push(ir);
         }
+        let lower_stmts_time = t_block.elapsed();
 
         if stmts.is_empty() {
             return Ok(ast_helpers::empty(
@@ -535,6 +537,11 @@ impl AstToEgglog {
                 .remove(&var_name)
                 .unwrap_or_else(|| ast_helpers::const_int(0, self.current_ctx.clone()));
             result = ast_helpers::let_bind(var_name, init, result);
+        }
+        if block.stmts.len() > 5 {
+            let dag_size = crate::dag_node_count(&result);
+            tracing::debug!("      lower_code_block: n_stmts={}, dag={}, lower_stmts={:?}, store_fwd+letbind={:?}",
+                block.stmts.len(), dag_size, lower_stmts_time, t_block.elapsed() - lower_stmts_time);
         }
 
         Ok(result)

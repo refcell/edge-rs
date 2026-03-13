@@ -46,6 +46,14 @@ struct VarInfo {
     in_loop: bool,
 }
 
+impl VarInfo {
+    fn merge(&mut self, other: &VarInfo) {
+        self.read_count += other.read_count;
+        self.write_count += other.write_count;
+        self.in_loop |= other.in_loop;
+    }
+}
+
 /// Analyze all `LetBind` variables in an expression and decide allocation mode.
 ///
 /// Returns a map from variable name to `VarAllocation`. Variables not in the
@@ -61,9 +69,21 @@ pub fn analyze_allocations(expr: &RcExpr) -> HashMap<String, VarAllocation> {
 }
 
 fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation>) {
+    let mut visited = HashSet::new();
+    collect_allocations_inner(expr, result, &mut visited);
+}
+
+fn collect_allocations_inner(
+    expr: &RcExpr,
+    result: &mut HashMap<String, VarAllocation>,
+    visited: &mut HashSet<usize>,
+) {
+    if !visited.insert(Rc::as_ptr(expr) as usize) {
+        return;
+    }
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
-            collect_allocations(init, result);
+            collect_allocations_inner(init, result, visited);
             let info = analyze_var(name, body);
             let mode = if !info.in_loop && info.read_count <= 16 {
                 AllocationMode::Stack
@@ -85,55 +105,55 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
                     existing.read_count = existing.read_count.max(alloc.read_count);
                 })
                 .or_insert(alloc);
-            collect_allocations(body, result);
+            collect_allocations_inner(body, result, visited);
         }
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) => {
-            collect_allocations(a, result);
-            collect_allocations(b, result);
+            collect_allocations_inner(a, result, visited);
+            collect_allocations_inner(b, result, visited);
         }
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) => {
-            collect_allocations(a, result);
+            collect_allocations_inner(a, result, visited);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            collect_allocations(a, result);
-            collect_allocations(b, result);
-            collect_allocations(c, result);
+            collect_allocations_inner(a, result, visited);
+            collect_allocations_inner(b, result, visited);
+            collect_allocations_inner(c, result, visited);
         }
         EvmExpr::If(c, i, t, e) => {
-            collect_allocations(c, result);
-            collect_allocations(i, result);
-            collect_allocations(t, result);
-            collect_allocations(e, result);
+            collect_allocations_inner(c, result, visited);
+            collect_allocations_inner(i, result, visited);
+            collect_allocations_inner(t, result, visited);
+            collect_allocations_inner(e, result, visited);
         }
         EvmExpr::DoWhile(inputs, body) => {
-            collect_allocations(inputs, result);
-            collect_allocations(body, result);
+            collect_allocations_inner(inputs, result, visited);
+            collect_allocations_inner(body, result, visited);
         }
-        EvmExpr::EnvRead(_, s) => collect_allocations(s, result),
+        EvmExpr::EnvRead(_, s) => collect_allocations_inner(s, result, visited),
         EvmExpr::EnvRead1(_, a, s) => {
-            collect_allocations(a, result);
-            collect_allocations(s, result);
+            collect_allocations_inner(a, result, visited);
+            collect_allocations_inner(s, result, visited);
         }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
-                collect_allocations(t, result);
+                collect_allocations_inner(t, result, visited);
             }
-            collect_allocations(data_offset, result);
-            collect_allocations(data_size, result);
-            collect_allocations(state, result);
+            collect_allocations_inner(data_offset, result, visited);
+            collect_allocations_inner(data_size, result, visited);
+            collect_allocations_inner(state, result, visited);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
             for x in [a, b, c, d, e, f, g] {
-                collect_allocations(x, result);
+                collect_allocations_inner(x, result, visited);
             }
         }
         EvmExpr::Call(_, args) => {
             for arg in args {
-                collect_allocations(arg, result);
+                collect_allocations_inner(arg, result, visited);
             }
         }
-        EvmExpr::VarStore(_, val) => collect_allocations(val, result),
-        EvmExpr::Function(_, _, _, body) => collect_allocations(body, result),
+        EvmExpr::VarStore(_, val) => collect_allocations_inner(val, result, visited),
+        EvmExpr::Function(_, _, _, body) => collect_allocations_inner(body, result, visited),
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
         | EvmExpr::Empty(..)
@@ -144,18 +164,18 @@ fn collect_allocations(expr: &RcExpr, result: &mut HashMap<String, VarAllocation
         | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
-                collect_allocations(input, result);
+                collect_allocations_inner(input, result, visited);
             }
         }
         EvmExpr::AllocRegion(_, num_fields, _) => {
-            collect_allocations(num_fields, result);
+            collect_allocations_inner(num_fields, result, visited);
         }
         EvmExpr::RegionStore(_, _, val, state) => {
-            collect_allocations(val, result);
-            collect_allocations(state, result);
+            collect_allocations_inner(val, result, visited);
+            collect_allocations_inner(state, result, visited);
         }
         EvmExpr::RegionLoad(_, _, state) => {
-            collect_allocations(state, result);
+            collect_allocations_inner(state, result, visited);
         }
     }
 }
@@ -498,36 +518,60 @@ fn apply_letbind_opts(
 }
 
 /// Analyze how a variable is used within an expression.
+///
+/// Uses memoization keyed by (node_ptr, in_loop) to avoid exponential DAG traversal
+/// while returning correct tree-expanded read/write counts (matching codegen's traversal).
 fn analyze_var(name: &str, expr: &RcExpr) -> VarInfo {
-    let mut info = VarInfo::default();
-    analyze_var_inner(name, expr, false, &mut info);
-    info
+    let mut cache = HashMap::new();
+    analyze_var_cached(name, expr, false, &mut cache)
 }
 
-fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInfo) {
+fn analyze_var_cached(
+    name: &str,
+    expr: &RcExpr,
+    in_loop: bool,
+    cache: &mut HashMap<(usize, bool), VarInfo>,
+) -> VarInfo {
+    let key = (Rc::as_ptr(expr) as usize, in_loop);
+    if let Some(cached) = cache.get(&key) {
+        return cached.clone();
+    }
+    let result = analyze_var_compute(name, expr, in_loop, cache);
+    cache.insert(key, result.clone());
+    result
+}
+
+fn analyze_var_compute(
+    name: &str,
+    expr: &RcExpr,
+    in_loop: bool,
+    cache: &mut HashMap<(usize, bool), VarInfo>,
+) -> VarInfo {
     match expr.as_ref() {
         EvmExpr::Var(n) if n == name => {
-            info.read_count += 1;
+            let mut info = VarInfo::default();
+            info.read_count = 1;
             if in_loop {
                 info.in_loop = true;
             }
+            info
         }
         EvmExpr::VarStore(n, val) if n == name => {
+            let mut info = analyze_var_cached(name, val, in_loop, cache);
             info.write_count += 1;
             if in_loop {
                 info.in_loop = true;
             }
-            analyze_var_inner(name, val, in_loop, info);
+            info
         }
-        EvmExpr::VarStore(_, val) => {
-            analyze_var_inner(name, val, in_loop, info);
-        }
+        EvmExpr::VarStore(_, val) => analyze_var_cached(name, val, in_loop, cache),
         EvmExpr::LetBind(n, init, body) => {
-            analyze_var_inner(name, init, in_loop, info);
+            let mut info = analyze_var_cached(name, init, in_loop, cache);
             // If this LetBind shadows our variable, don't count refs in its body
             if n != name {
-                analyze_var_inner(name, body, in_loop, info);
+                info.merge(&analyze_var_cached(name, body, in_loop, cache));
             }
+            info
         }
         EvmExpr::Var(_)
         | EvmExpr::Const(..)
@@ -536,88 +580,88 @@ fn analyze_var_inner(name: &str, expr: &RcExpr, in_loop: bool, info: &mut VarInf
         | EvmExpr::Selector(_)
         | EvmExpr::Drop(_)
         | EvmExpr::StorageField(..)
-        | EvmExpr::MemRegion(..) => {}
+        | EvmExpr::MemRegion(..) => VarInfo::default(),
         EvmExpr::InlineAsm(inputs, ..) => {
+            let mut info = VarInfo::default();
             for input in inputs {
-                analyze_var_inner(name, input, in_loop, info);
+                info.merge(&analyze_var_cached(name, input, in_loop, cache));
             }
+            info
         }
-        // For Bop: skip the state parameter (2nd arg) of stateful ops.
-        // Codegen ignores state parameters, so Var refs there are phantom.
         EvmExpr::Bop(op, a, b) => {
-            analyze_var_inner(name, a, in_loop, info);
+            let mut info = analyze_var_cached(name, a, in_loop, cache);
             if !op.has_state() {
-                analyze_var_inner(name, b, in_loop, info);
+                info.merge(&analyze_var_cached(name, b, in_loop, cache));
             }
+            info
         }
         EvmExpr::Concat(a, b) => {
-            analyze_var_inner(name, a, in_loop, info);
-            analyze_var_inner(name, b, in_loop, info);
+            let mut info = analyze_var_cached(name, a, in_loop, cache);
+            info.merge(&analyze_var_cached(name, b, in_loop, cache));
+            info
         }
         EvmExpr::DoWhile(inputs, body) => {
-            analyze_var_inner(name, inputs, in_loop, info);
-            analyze_var_inner(name, body, true, info);
+            let mut info = analyze_var_cached(name, inputs, in_loop, cache);
+            info.merge(&analyze_var_cached(name, body, true, cache));
+            info
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
-            analyze_var_inner(name, a, in_loop, info);
-        }
-        // RegionStore: last arg (state) is state — skip it.
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => analyze_var_cached(name, a, in_loop, cache),
         EvmExpr::RegionStore(_, _, val, _state) => {
-            analyze_var_inner(name, val, in_loop, info);
+            analyze_var_cached(name, val, in_loop, cache)
         }
-        // RegionLoad: last arg (state) is state — skip it.
-        EvmExpr::RegionLoad(_, _, _state) => {}
-        // Top: last arg may be state OR operand depending on the op.
+        EvmExpr::RegionLoad(_, _, _state) => VarInfo::default(),
         EvmExpr::Top(op, a, b, c) => {
-            analyze_var_inner(name, a, in_loop, info);
-            analyze_var_inner(name, b, in_loop, info);
-            // Select, CalldataCopy, Mcopy use all 3 positions as operands (no state param).
-            // Others (SStore, TStore, MStore, MStore8, Keccak256) have state as 3rd arg.
+            let mut info = analyze_var_cached(name, a, in_loop, cache);
+            info.merge(&analyze_var_cached(name, b, in_loop, cache));
             match op {
                 EvmTernaryOp::Select | EvmTernaryOp::CalldataCopy | EvmTernaryOp::Mcopy => {
-                    analyze_var_inner(name, c, in_loop, info);
+                    info.merge(&analyze_var_cached(name, c, in_loop, cache));
                 }
                 _ => {}
             }
+            info
         }
-        // ReturnOp/Revert: last arg (c) is the state parameter — skip it.
         EvmExpr::Revert(a, b, _c) | EvmExpr::ReturnOp(a, b, _c) => {
-            analyze_var_inner(name, a, in_loop, info);
-            analyze_var_inner(name, b, in_loop, info);
+            let mut info = analyze_var_cached(name, a, in_loop, cache);
+            info.merge(&analyze_var_cached(name, b, in_loop, cache));
+            info
         }
         EvmExpr::If(c, i, t, e) => {
-            analyze_var_inner(name, c, in_loop, info);
-            analyze_var_inner(name, i, in_loop, info);
-            analyze_var_inner(name, t, in_loop, info);
-            analyze_var_inner(name, e, in_loop, info);
+            let mut info = analyze_var_cached(name, c, in_loop, cache);
+            info.merge(&analyze_var_cached(name, i, in_loop, cache));
+            info.merge(&analyze_var_cached(name, t, in_loop, cache));
+            info.merge(&analyze_var_cached(name, e, in_loop, cache));
+            info
         }
-        // EnvRead/EnvRead1: last arg is state — skip it.
-        EvmExpr::EnvRead(_, _s) => {}
-        EvmExpr::EnvRead1(_, a, _s) => {
-            analyze_var_inner(name, a, in_loop, info);
-        }
-        // Log: last arg is state — skip it.
+        EvmExpr::EnvRead(_, _s) => VarInfo::default(),
+        EvmExpr::EnvRead1(_, a, _s) => analyze_var_cached(name, a, in_loop, cache),
         EvmExpr::Log(_, topics, data_offset, data_size, _state) => {
+            let mut info = VarInfo::default();
             for t in topics {
-                analyze_var_inner(name, t, in_loop, info);
+                info.merge(&analyze_var_cached(name, t, in_loop, cache));
             }
-            analyze_var_inner(name, data_offset, in_loop, info);
-            analyze_var_inner(name, data_size, in_loop, info);
+            info.merge(&analyze_var_cached(name, data_offset, in_loop, cache));
+            info.merge(&analyze_var_cached(name, data_size, in_loop, cache));
+            info
         }
-        // ExtCall: last arg (g) is state — skip it.
         EvmExpr::ExtCall(a, b, c, d, e, f, _g) => {
+            let mut info = VarInfo::default();
             for x in [a, b, c, d, e, f] {
-                analyze_var_inner(name, x, in_loop, info);
+                info.merge(&analyze_var_cached(name, x, in_loop, cache));
             }
+            info
         }
         EvmExpr::Call(_, args) => {
+            let mut info = VarInfo::default();
             for arg in args {
-                analyze_var_inner(name, arg, in_loop, info);
+                info.merge(&analyze_var_cached(name, arg, in_loop, cache));
             }
+            info
         }
-        EvmExpr::Function(_, _, _, body) => {
-            analyze_var_inner(name, body, in_loop, info);
-        }
+        EvmExpr::Function(_, _, _, body) => analyze_var_cached(name, body, in_loop, cache),
     }
 }
 
@@ -741,6 +785,19 @@ fn collect_immutable_vars_rec(
     immutable: &mut HashSet<String>,
     mutable: &mut HashSet<String>,
 ) {
+    let mut visited = HashSet::new();
+    collect_immutable_vars_inner(expr, immutable, mutable, &mut visited);
+}
+
+fn collect_immutable_vars_inner(
+    expr: &RcExpr,
+    immutable: &mut HashSet<String>,
+    mutable: &mut HashSet<String>,
+    visited: &mut HashSet<usize>,
+) {
+    if !visited.insert(std::rc::Rc::as_ptr(expr) as usize) {
+        return;
+    }
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
             let info = analyze_var(name, body);
@@ -749,64 +806,64 @@ fn collect_immutable_vars_rec(
             } else {
                 mutable.insert(name.clone());
             }
-            collect_immutable_vars_rec(init, immutable, mutable);
-            collect_immutable_vars_rec(body, immutable, mutable);
+            collect_immutable_vars_inner(init, immutable, mutable, visited);
+            collect_immutable_vars_inner(body, immutable, mutable, visited);
         }
         EvmExpr::Concat(a, b) | EvmExpr::Bop(_, a, b) | EvmExpr::DoWhile(a, b) => {
-            collect_immutable_vars_rec(a, immutable, mutable);
-            collect_immutable_vars_rec(b, immutable, mutable);
+            collect_immutable_vars_inner(a, immutable, mutable, visited);
+            collect_immutable_vars_inner(b, immutable, mutable, visited);
         }
         EvmExpr::If(c, i, t, e) => {
-            collect_immutable_vars_rec(c, immutable, mutable);
-            collect_immutable_vars_rec(i, immutable, mutable);
-            collect_immutable_vars_rec(t, immutable, mutable);
-            collect_immutable_vars_rec(e, immutable, mutable);
+            collect_immutable_vars_inner(c, immutable, mutable, visited);
+            collect_immutable_vars_inner(i, immutable, mutable, visited);
+            collect_immutable_vars_inner(t, immutable, mutable, visited);
+            collect_immutable_vars_inner(e, immutable, mutable, visited);
         }
         EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
-            collect_immutable_vars_rec(a, immutable, mutable);
+            collect_immutable_vars_inner(a, immutable, mutable, visited);
         }
         EvmExpr::RegionStore(_, _, val, state) => {
-            collect_immutable_vars_rec(val, immutable, mutable);
-            collect_immutable_vars_rec(state, immutable, mutable);
+            collect_immutable_vars_inner(val, immutable, mutable, visited);
+            collect_immutable_vars_inner(state, immutable, mutable, visited);
         }
         EvmExpr::RegionLoad(_, _, state) => {
-            collect_immutable_vars_rec(state, immutable, mutable);
+            collect_immutable_vars_inner(state, immutable, mutable, visited);
         }
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            collect_immutable_vars_rec(a, immutable, mutable);
-            collect_immutable_vars_rec(b, immutable, mutable);
-            collect_immutable_vars_rec(c, immutable, mutable);
+            collect_immutable_vars_inner(a, immutable, mutable, visited);
+            collect_immutable_vars_inner(b, immutable, mutable, visited);
+            collect_immutable_vars_inner(c, immutable, mutable, visited);
         }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
-                collect_immutable_vars_rec(t, immutable, mutable);
+                collect_immutable_vars_inner(t, immutable, mutable, visited);
             }
-            collect_immutable_vars_rec(data_offset, immutable, mutable);
-            collect_immutable_vars_rec(data_size, immutable, mutable);
-            collect_immutable_vars_rec(state, immutable, mutable);
+            collect_immutable_vars_inner(data_offset, immutable, mutable, visited);
+            collect_immutable_vars_inner(data_size, immutable, mutable, visited);
+            collect_immutable_vars_inner(state, immutable, mutable, visited);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
             for x in [a, b, c, d, e, f, g] {
-                collect_immutable_vars_rec(x, immutable, mutable);
+                collect_immutable_vars_inner(x, immutable, mutable, visited);
             }
         }
         EvmExpr::VarStore(_, val) => {
-            collect_immutable_vars_rec(val, immutable, mutable);
+            collect_immutable_vars_inner(val, immutable, mutable, visited);
         }
         EvmExpr::Call(_, args) => {
             for arg in args {
-                collect_immutable_vars_rec(arg, immutable, mutable);
+                collect_immutable_vars_inner(arg, immutable, mutable, visited);
             }
         }
         EvmExpr::Function(_, _, _, body) => {
-            collect_immutable_vars_rec(body, immutable, mutable);
+            collect_immutable_vars_inner(body, immutable, mutable, visited);
         }
         EvmExpr::EnvRead(_, s) => {
-            collect_immutable_vars_rec(s, immutable, mutable);
+            collect_immutable_vars_inner(s, immutable, mutable, visited);
         }
         EvmExpr::EnvRead1(_, a, s) => {
-            collect_immutable_vars_rec(a, immutable, mutable);
-            collect_immutable_vars_rec(s, immutable, mutable);
+            collect_immutable_vars_inner(a, immutable, mutable, visited);
+            collect_immutable_vars_inner(s, immutable, mutable, visited);
         }
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
@@ -818,7 +875,7 @@ fn collect_immutable_vars_rec(
         | EvmExpr::MemRegion(..) => {}
         EvmExpr::InlineAsm(inputs, ..) => {
             for input in inputs {
-                collect_immutable_vars_rec(input, immutable, mutable);
+                collect_immutable_vars_inner(input, immutable, mutable, visited);
             }
         }
     }
@@ -2693,10 +2750,25 @@ fn rebuild_nested_letbinds(body: &RcExpr, depth: usize, new_innermost: &RcExpr) 
 }
 
 fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
+    let mut cache = HashMap::new();
+    dead_store_elim_rec_inner(expr, &mut cache)
+}
+
+fn dead_store_elim_rec_inner(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&ptr) {
+        return Rc::clone(cached);
+    }
+    let result = dead_store_elim_rec_body(expr, cache);
+    cache.insert(ptr, Rc::clone(&result));
+    result
+}
+
+fn dead_store_elim_rec_body(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
     match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
-            let new_init = dead_store_elim_rec(init);
-            let new_body = dead_store_elim_rec(body);
+            let new_init = dead_store_elim_rec_inner(init, cache);
+            let new_body = dead_store_elim_rec_inner(body, cache);
 
             // Flatten body into statement list
             let mut stmts = Vec::new();
@@ -2782,18 +2854,18 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             }
         }
         EvmExpr::Concat(a, b) => {
-            let na = dead_store_elim_rec(a);
-            let nb = dead_store_elim_rec(b);
+            let na = dead_store_elim_rec_inner(a, cache);
+            let nb = dead_store_elim_rec_inner(b, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Concat(na, nb))
         }
         EvmExpr::If(cond, inputs, then_b, else_b) => {
-            let nc = dead_store_elim_rec(cond);
-            let ni = dead_store_elim_rec(inputs);
-            let nt = dead_store_elim_rec(then_b);
-            let ne = dead_store_elim_rec(else_b);
+            let nc = dead_store_elim_rec_inner(cond, cache);
+            let ni = dead_store_elim_rec_inner(inputs, cache);
+            let nt = dead_store_elim_rec_inner(then_b, cache);
+            let ne = dead_store_elim_rec_inner(else_b, cache);
             if Rc::ptr_eq(&nc, cond)
                 && Rc::ptr_eq(&ni, inputs)
                 && Rc::ptr_eq(&nt, then_b)
@@ -2804,15 +2876,15 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             Rc::new(EvmExpr::If(nc, ni, nt, ne))
         }
         EvmExpr::DoWhile(inputs, body) => {
-            let ni = dead_store_elim_rec(inputs);
-            let nb = dead_store_elim_rec(body);
+            let ni = dead_store_elim_rec_inner(inputs, cache);
+            let nb = dead_store_elim_rec_inner(body, cache);
             if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DoWhile(ni, nb))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
-            let nb = dead_store_elim_rec(body);
+            let nb = dead_store_elim_rec_inner(body, cache);
             if Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
@@ -2824,56 +2896,56 @@ fn dead_store_elim_rec(expr: &RcExpr) -> RcExpr {
             ))
         }
         EvmExpr::VarStore(name, val) => {
-            let nv = dead_store_elim_rec(val);
+            let nv = dead_store_elim_rec_inner(val, cache);
             if Rc::ptr_eq(&nv, val) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::VarStore(name.clone(), nv))
         }
         EvmExpr::Bop(op, a, b) => {
-            let na = dead_store_elim_rec(a);
-            let nb = dead_store_elim_rec(b);
+            let na = dead_store_elim_rec_inner(a, cache);
+            let nb = dead_store_elim_rec_inner(b, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Bop(*op, na, nb))
         }
         EvmExpr::Uop(op, a) => {
-            let na = dead_store_elim_rec(a);
+            let na = dead_store_elim_rec_inner(a, cache);
             if Rc::ptr_eq(&na, a) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Uop(*op, na))
         }
         EvmExpr::Top(op, a, b, c) => {
-            let na = dead_store_elim_rec(a);
-            let nb = dead_store_elim_rec(b);
-            let nc = dead_store_elim_rec(c);
+            let na = dead_store_elim_rec_inner(a, cache);
+            let nb = dead_store_elim_rec_inner(b, cache);
+            let nc = dead_store_elim_rec_inner(c, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Top(*op, na, nb, nc))
         }
         EvmExpr::Get(a, idx) => {
-            let na = dead_store_elim_rec(a);
+            let na = dead_store_elim_rec_inner(a, cache);
             if Rc::ptr_eq(&na, a) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::Get(na, *idx))
         }
         EvmExpr::ReturnOp(a, b, c) => {
-            let na = dead_store_elim_rec(a);
-            let nb = dead_store_elim_rec(b);
-            let nc = dead_store_elim_rec(c);
+            let na = dead_store_elim_rec_inner(a, cache);
+            let nb = dead_store_elim_rec_inner(b, cache);
+            let nc = dead_store_elim_rec_inner(c, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::ReturnOp(na, nb, nc))
         }
         EvmExpr::Revert(a, b, c) => {
-            let na = dead_store_elim_rec(a);
-            let nb = dead_store_elim_rec(b);
-            let nc = dead_store_elim_rec(c);
+            let na = dead_store_elim_rec_inner(a, cache);
+            let nb = dead_store_elim_rec_inner(b, cache);
+            let nc = dead_store_elim_rec_inner(c, cache);
             if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
                 return Rc::clone(expr);
             }

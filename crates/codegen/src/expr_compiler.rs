@@ -4,7 +4,8 @@
 //! Since the EVM is a stack machine, we compile in postorder: children
 //! first, then the operator.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use edge_ir::{
     schema::{
@@ -631,6 +632,7 @@ impl<'a> ExprCompiler<'a> {
             peak: memory_base,
             allocation_modes,
             stack_var_count: 0,
+            visited: HashSet::new(),
         };
         for expr in exprs {
             state.walk(expr);
@@ -1673,6 +1675,7 @@ struct LetOffsetSim<'a> {
     peak: usize,
     allocation_modes: &'a HashMap<String, VarAllocation>,
     stack_var_count: usize,
+    visited: HashSet<usize>,
 }
 
 impl<'a> LetOffsetSim<'a> {
@@ -1688,6 +1691,9 @@ impl<'a> LetOffsetSim<'a> {
     }
 
     fn walk(&mut self, expr: &RcExpr) {
+        if !self.visited.insert(Rc::as_ptr(expr) as usize) {
+            return;
+        }
         match expr.as_ref() {
             EvmExpr::LetBind(name, init, body) => {
                 self.walk(init);

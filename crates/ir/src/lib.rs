@@ -1309,17 +1309,22 @@ pub fn lower_and_optimize(
         let t_contract = std::time::Instant::now();
 
         // DAG-aware serialization: emit shared sub-expressions as egglog let-bindings
+        let t_phase = std::time::Instant::now();
         let (shared_lets, runtime_sexp, mut next_id) = sexp::expr_to_sexp_dag(&contract.runtime, 0);
+        tracing::debug!("      sexp_dag: {:?}", t_phase.elapsed());
 
         // Collect immutable variable names for bound propagation in egglog
+        let t_phase = std::time::Instant::now();
         let immutable_vars = var_opt::collect_immutable_vars(&contract.runtime);
         let immutable_facts: String = immutable_vars
             .iter()
             .map(|name| format!("(ImmutableVar \"{name}\")\n"))
             .collect();
+        tracing::debug!("      immutable_vars: {:?}", t_phase.elapsed());
 
         // Include internal function definitions in the same egraph so that
         // the inline rule (Call + Function → body) can fire.
+        let t_phase = std::time::Instant::now();
         let mut func_lets = String::new();
         for (i, func) in contract.internal_functions.iter().enumerate() {
             let (func_shared, func_sexp, new_next_id) = sexp::expr_to_sexp_dag(func, next_id);
@@ -1330,7 +1335,9 @@ pub fn lower_and_optimize(
             }
             func_lets.push_str(&format!("(let __fn_{i} {func_sexp})\n"));
         }
+        tracing::debug!("      func_lets: {:?}", t_phase.elapsed());
 
+        let t_phase = std::time::Instant::now();
         let egglog_program = format!(
             "{}\n\n{}\n(let __runtime {})\n{}\n{}\n{}\n\n(extract __runtime)\n",
             prologue(optimize_for),
@@ -1340,6 +1347,7 @@ pub fn lower_and_optimize(
             immutable_facts,
             schedule
         );
+        tracing::debug!("      format_program: {:?}", t_phase.elapsed());
         let prologue_len = prologue(optimize_for).len();
         tracing::debug!(
             "    [{}] egglog input: {} bytes (prologue: {}, shared_lets: {}, runtime_sexp: {}, func_lets: {}, immutable: {}, schedule: {})",

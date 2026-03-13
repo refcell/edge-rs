@@ -9,48 +9,67 @@ use crate::{assembler::Assembler, expr_compiler::ExprCompiler};
 
 /// Recursively check if an IR tree contains any `DynAlloc` nodes.
 fn contains_dyn_alloc(expr: &edge_ir::schema::RcExpr) -> bool {
+    let mut visited = std::collections::HashSet::new();
+    contains_dyn_alloc_inner(expr, &mut visited)
+}
+
+fn contains_dyn_alloc_inner(
+    expr: &edge_ir::schema::RcExpr,
+    visited: &mut std::collections::HashSet<usize>,
+) -> bool {
+    if !visited.insert(std::rc::Rc::as_ptr(expr) as usize) {
+        return false;
+    }
     use edge_ir::schema::EvmExpr;
     match expr.as_ref() {
         EvmExpr::DynAlloc(_) => true,
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
-            contains_dyn_alloc(a) || contains_dyn_alloc(b)
+            contains_dyn_alloc_inner(a, visited) || contains_dyn_alloc_inner(b, visited)
         }
-        EvmExpr::Uop(_, a) => contains_dyn_alloc(a),
+        EvmExpr::Uop(_, a) => contains_dyn_alloc_inner(a, visited),
         EvmExpr::Top(_, a, b, c)
         | EvmExpr::If(_, a, b, c)
         | EvmExpr::Revert(a, b, c)
         | EvmExpr::ReturnOp(a, b, c) => {
-            contains_dyn_alloc(a) || contains_dyn_alloc(b) || contains_dyn_alloc(c)
+            contains_dyn_alloc_inner(a, visited)
+                || contains_dyn_alloc_inner(b, visited)
+                || contains_dyn_alloc_inner(c, visited)
         }
-        EvmExpr::LetBind(_, init, body) => contains_dyn_alloc(init) || contains_dyn_alloc(body),
-        EvmExpr::VarStore(_, val) => contains_dyn_alloc(val),
-        EvmExpr::EnvRead(_, state) => contains_dyn_alloc(state),
-        EvmExpr::EnvRead1(_, arg, state) => contains_dyn_alloc(arg) || contains_dyn_alloc(state),
+        EvmExpr::LetBind(_, init, body) => {
+            contains_dyn_alloc_inner(init, visited) || contains_dyn_alloc_inner(body, visited)
+        }
+        EvmExpr::VarStore(_, val) => contains_dyn_alloc_inner(val, visited),
+        EvmExpr::EnvRead(_, state) => contains_dyn_alloc_inner(state, visited),
+        EvmExpr::EnvRead1(_, arg, state) => {
+            contains_dyn_alloc_inner(arg, visited) || contains_dyn_alloc_inner(state, visited)
+        }
         EvmExpr::Log(_, topics, offset, size, state) => {
-            topics.iter().any(contains_dyn_alloc)
-                || contains_dyn_alloc(offset)
-                || contains_dyn_alloc(size)
-                || contains_dyn_alloc(state)
+            topics.iter().any(|t| contains_dyn_alloc_inner(t, visited))
+                || contains_dyn_alloc_inner(offset, visited)
+                || contains_dyn_alloc_inner(size, visited)
+                || contains_dyn_alloc_inner(state, visited)
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            contains_dyn_alloc(a)
-                || contains_dyn_alloc(b)
-                || contains_dyn_alloc(c)
-                || contains_dyn_alloc(d)
-                || contains_dyn_alloc(e)
-                || contains_dyn_alloc(f)
-                || contains_dyn_alloc(g)
+            contains_dyn_alloc_inner(a, visited)
+                || contains_dyn_alloc_inner(b, visited)
+                || contains_dyn_alloc_inner(c, visited)
+                || contains_dyn_alloc_inner(d, visited)
+                || contains_dyn_alloc_inner(e, visited)
+                || contains_dyn_alloc_inner(f, visited)
+                || contains_dyn_alloc_inner(g, visited)
         }
-        EvmExpr::Function(_, _, _, body) => contains_dyn_alloc(body),
-        EvmExpr::Call(_, args) => args.iter().any(contains_dyn_alloc),
-        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(contains_dyn_alloc),
-        EvmExpr::Get(inner, _) => contains_dyn_alloc(inner),
+        EvmExpr::Function(_, _, _, body) => contains_dyn_alloc_inner(body, visited),
+        EvmExpr::Call(_, args) => args.iter().any(|a| contains_dyn_alloc_inner(a, visited)),
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            inputs.iter().any(|i| contains_dyn_alloc_inner(i, visited))
+        }
+        EvmExpr::Get(inner, _) => contains_dyn_alloc_inner(inner, visited),
         EvmExpr::AllocRegion(_, _, true) => true,
-        EvmExpr::AllocRegion(_, nf, false) => contains_dyn_alloc(nf),
+        EvmExpr::AllocRegion(_, nf, false) => contains_dyn_alloc_inner(nf, visited),
         EvmExpr::RegionStore(_, _, val, state) => {
-            contains_dyn_alloc(val) || contains_dyn_alloc(state)
+            contains_dyn_alloc_inner(val, visited) || contains_dyn_alloc_inner(state, visited)
         }
-        EvmExpr::RegionLoad(_, _, state) => contains_dyn_alloc(state),
+        EvmExpr::RegionLoad(_, _, state) => contains_dyn_alloc_inner(state, visited),
         EvmExpr::Const(..)
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)
@@ -69,6 +88,7 @@ fn contains_dyn_alloc(expr: &edge_ir::schema::RcExpr) -> bool {
 /// Each branch loads the selector from calldata, compares it, and
 /// executes the matching function body (which terminates with RETURN/STOP).
 pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
+    let t = std::time::Instant::now();
     // Analyze variable allocations to decide stack vs memory
     let mut allocations = var_opt::analyze_allocations(&contract.runtime);
     // Also analyze internal function bodies
@@ -87,6 +107,9 @@ pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
                 .or_insert(alloc);
         }
     }
+    tracing::debug!("      analyze_allocations: {:?}", t.elapsed());
+
+    let t = std::time::Instant::now();
     // Compute the DynAlloc floor: the minimum address DynAlloc may return.
     // Without this, DynAlloc (which uses MSIZE) could return pointers that
     // overlap with LetBind slots whose MSTORE hasn't happened yet.
@@ -105,6 +128,7 @@ pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
     } else {
         0
     };
+    tracing::debug!("      dyn_alloc_floor: {:?}", t.elapsed());
 
     // Start LetBind slots after IR-allocated memory regions (arrays, structs)
     let mut compiler = ExprCompiler::with_allocations_base_and_floor(
@@ -113,16 +137,23 @@ pub fn generate_dispatcher(asm: &mut Assembler, contract: &EvmContract) {
         contract.memory_high_water,
         dyn_alloc_floor,
     );
+    let t = std::time::Instant::now();
     // Collect fn_info from both runtime and internal functions
     compiler.collect_fn_info(&contract.runtime);
     for func in &contract.internal_functions {
         compiler.collect_fn_info(func);
     }
+    tracing::debug!("      collect_fn_info: {:?}", t.elapsed());
+
+    let t = std::time::Instant::now();
     compiler.compile_expr(&contract.runtime);
+    tracing::debug!("      compile_expr(runtime): {:?}", t.elapsed());
     // Compile internal function subroutines
+    let t = std::time::Instant::now();
     for func in &contract.internal_functions {
         compiler.compile_expr(func);
     }
+    tracing::debug!("      compile_expr(fns): {:?}", t.elapsed());
     compiler.emit_overflow_revert_trampoline();
 }
 
