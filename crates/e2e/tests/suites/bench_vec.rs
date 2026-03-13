@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-//! Gas benchmarking for Vec operations using the existing test_vec.edge contract.
+//! Gas benchmarking for `Vec` operations using the existing `test_vec.edge` contract.
 //! Uses the test harness to measure actual execution gas at each opt level.
 
 use crate::helpers::*;
@@ -9,6 +9,7 @@ const CONTRACT: &str = "examples/tests/test_vec.edge";
 
 /// Detailed gas analysis of Vec test functions.
 #[test]
+#[ignore = "gas benchmark doesnt need to run for e2e"]
 fn bench_vec_gas_breakdown() {
     let sigs = [
         "test_new_and_push()",
@@ -39,7 +40,10 @@ fn bench_vec_gas_breakdown() {
         eprintln!(
             "║ {:18} ║ {:>6} ║ {:>6} ║ {:>6} ║ {:>6}      ║",
             sig.trim_end_matches("()"),
-            gases[0], gases[1], gases[2], gases[3]
+            gases[0],
+            gases[1],
+            gases[2],
+            gases[3]
         );
     }
     eprintln!("╚════════════════════╩════════╩════════╩════════╩═════════════╝");

@@ -4,8 +4,10 @@
 //! Since the EVM is a stack machine, we compile in postorder: children
 //! first, then the operator.
 
-use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use edge_ir::{
     schema::{

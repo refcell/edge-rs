@@ -22,11 +22,21 @@ fn contains_dyn_alloc_inner(
     }
     use edge_ir::schema::EvmExpr;
     match expr.as_ref() {
-        EvmExpr::DynAlloc(_) => true,
-        EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
+        EvmExpr::DynAlloc(_) | EvmExpr::AllocRegion(_, _, true) => true,
+        EvmExpr::Bop(_, a, b)
+        | EvmExpr::Concat(a, b)
+        | EvmExpr::DoWhile(a, b)
+        | EvmExpr::LetBind(_, a, b)
+        | EvmExpr::EnvRead1(_, a, b)
+        | EvmExpr::RegionStore(_, _, a, b) => {
             contains_dyn_alloc_inner(a, visited) || contains_dyn_alloc_inner(b, visited)
         }
-        EvmExpr::Uop(_, a) => contains_dyn_alloc_inner(a, visited),
+        EvmExpr::Uop(_, a)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::EnvRead(_, a)
+        | EvmExpr::Function(_, _, _, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::RegionLoad(_, _, a) => contains_dyn_alloc_inner(a, visited),
         EvmExpr::Top(_, a, b, c)
         | EvmExpr::If(_, a, b, c)
         | EvmExpr::Revert(a, b, c)
@@ -34,14 +44,6 @@ fn contains_dyn_alloc_inner(
             contains_dyn_alloc_inner(a, visited)
                 || contains_dyn_alloc_inner(b, visited)
                 || contains_dyn_alloc_inner(c, visited)
-        }
-        EvmExpr::LetBind(_, init, body) => {
-            contains_dyn_alloc_inner(init, visited) || contains_dyn_alloc_inner(body, visited)
-        }
-        EvmExpr::VarStore(_, val) => contains_dyn_alloc_inner(val, visited),
-        EvmExpr::EnvRead(_, state) => contains_dyn_alloc_inner(state, visited),
-        EvmExpr::EnvRead1(_, arg, state) => {
-            contains_dyn_alloc_inner(arg, visited) || contains_dyn_alloc_inner(state, visited)
         }
         EvmExpr::Log(_, topics, offset, size, state) => {
             topics.iter().any(|t| contains_dyn_alloc_inner(t, visited))
@@ -58,18 +60,11 @@ fn contains_dyn_alloc_inner(
                 || contains_dyn_alloc_inner(f, visited)
                 || contains_dyn_alloc_inner(g, visited)
         }
-        EvmExpr::Function(_, _, _, body) => contains_dyn_alloc_inner(body, visited),
         EvmExpr::Call(_, args) => args.iter().any(|a| contains_dyn_alloc_inner(a, visited)),
         EvmExpr::InlineAsm(inputs, _, _) => {
             inputs.iter().any(|i| contains_dyn_alloc_inner(i, visited))
         }
-        EvmExpr::Get(inner, _) => contains_dyn_alloc_inner(inner, visited),
-        EvmExpr::AllocRegion(_, _, true) => true,
         EvmExpr::AllocRegion(_, nf, false) => contains_dyn_alloc_inner(nf, visited),
-        EvmExpr::RegionStore(_, _, val, state) => {
-            contains_dyn_alloc_inner(val, visited) || contains_dyn_alloc_inner(state, visited)
-        }
-        EvmExpr::RegionLoad(_, _, state) => contains_dyn_alloc_inner(state, visited),
         EvmExpr::Const(..)
         | EvmExpr::Var(_)
         | EvmExpr::Drop(_)

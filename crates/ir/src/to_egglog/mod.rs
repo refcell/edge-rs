@@ -38,7 +38,11 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
     references_any_var_inner(expr, names, &mut visited)
 }
 
-fn references_any_var_inner(expr: &RcExpr, names: &HashSet<&str>, visited: &mut HashSet<usize>) -> bool {
+fn references_any_var_inner(
+    expr: &RcExpr,
+    names: &HashSet<&str>,
+    visited: &mut HashSet<usize>,
+) -> bool {
     let ptr = Rc::as_ptr(expr) as usize;
     if !visited.insert(ptr) {
         return false;
@@ -52,21 +56,25 @@ fn references_any_var_inner(expr: &RcExpr, names: &HashSet<&str>, visited: &mut 
         | EvmExpr::StorageField(..)
         | EvmExpr::Drop(_)
         | EvmExpr::MemRegion(..) => false,
-        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(|inp| references_any_var_inner(inp, names, visited)),
+        EvmExpr::InlineAsm(inputs, _, _) => inputs
+            .iter()
+            .any(|inp| references_any_var_inner(inp, names, visited)),
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
-            references_any_var_inner(a, names, visited) || references_any_var_inner(b, names, visited)
-        }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a)
-        | EvmExpr::AllocRegion(_, a, _) => {
             references_any_var_inner(a, names, visited)
+                || references_any_var_inner(b, names, visited)
         }
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => references_any_var_inner(a, names, visited),
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             references_any_var_inner(a, names, visited)
                 || references_any_var_inner(b, names, visited)
                 || references_any_var_inner(c, names, visited)
         }
         EvmExpr::RegionStore(_, _, val, state) => {
-            references_any_var_inner(val, names, visited) || references_any_var_inner(state, names, visited)
+            references_any_var_inner(val, names, visited)
+                || references_any_var_inner(state, names, visited)
         }
         EvmExpr::RegionLoad(_, _, state) => references_any_var_inner(state, names, visited),
         EvmExpr::If(c, i, t, e) => {
@@ -77,12 +85,18 @@ fn references_any_var_inner(expr: &RcExpr, names: &HashSet<&str>, visited: &mut 
         }
         EvmExpr::VarStore(_, v) => references_any_var_inner(v, names, visited),
         EvmExpr::LetBind(_, init, body) => {
-            references_any_var_inner(init, names, visited) || references_any_var_inner(body, names, visited)
+            references_any_var_inner(init, names, visited)
+                || references_any_var_inner(body, names, visited)
         }
         EvmExpr::EnvRead(_, s) => references_any_var_inner(s, names, visited),
-        EvmExpr::EnvRead1(_, a, s) => references_any_var_inner(a, names, visited) || references_any_var_inner(s, names, visited),
+        EvmExpr::EnvRead1(_, a, s) => {
+            references_any_var_inner(a, names, visited)
+                || references_any_var_inner(s, names, visited)
+        }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
-            topics.iter().any(|t| references_any_var_inner(t, names, visited))
+            topics
+                .iter()
+                .any(|t| references_any_var_inner(t, names, visited))
                 || references_any_var_inner(data_offset, names, visited)
                 || references_any_var_inner(data_size, names, visited)
                 || references_any_var_inner(state, names, visited)
@@ -90,7 +104,9 @@ fn references_any_var_inner(expr: &RcExpr, names: &HashSet<&str>, visited: &mut 
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
             .iter()
             .any(|x| references_any_var_inner(x, names, visited)),
-        EvmExpr::Call(_, args) => args.iter().any(|a| references_any_var_inner(a, names, visited)),
+        EvmExpr::Call(_, args) => args
+            .iter()
+            .any(|a| references_any_var_inner(a, names, visited)),
         EvmExpr::Function(_, _, _, body) => references_any_var_inner(body, names, visited),
     }
 }
@@ -328,7 +344,7 @@ pub struct AstToEgglog {
     pub(crate) storage_array_fields: IndexMap<String, (usize, usize)>,
     /// Next available region ID for symbolic memory allocation.
     pub(crate) next_region_id: i64,
-    /// Mapping from region ID to the LetBind variable name that holds the base pointer.
+    /// Mapping from region ID to the `LetBind` variable name that holds the base pointer.
     /// Used by the post-egglog resolution pass to convert RegionStore/RegionLoad to MStore/MLoad.
     pub(crate) region_var_map: IndexMap<i64, String>,
     /// Tracks the last composite allocation `(type_name, base_expr)` for wiring
@@ -431,9 +447,9 @@ impl AstToEgglog {
         crate::ast_helpers::mem_region(id, size_words as i64)
     }
 
-    /// Allocate a fresh region ID without creating a MemRegion node.
+    /// Allocate a fresh region ID without creating a `MemRegion` node.
     /// Used for symbolic field access tracking on &dm struct instances.
-    pub(crate) fn fresh_region_id(&mut self) -> i64 {
+    pub(crate) const fn fresh_region_id(&mut self) -> i64 {
         let id = self.next_region_id;
         self.next_region_id += 1;
         id

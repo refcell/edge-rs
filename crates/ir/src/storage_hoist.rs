@@ -72,10 +72,7 @@ fn forward_stores_expr(expr: &RcExpr) -> RcExpr {
     forward_stores_expr_inner(expr, &mut cache)
 }
 
-fn forward_stores_expr_inner(
-    expr: &RcExpr,
-    cache: &mut HashMap<usize, RcExpr>,
-) -> RcExpr {
+fn forward_stores_expr_inner(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
     let ptr = Rc::as_ptr(expr) as usize;
     if let Some(cached) = cache.get(&ptr) {
         return Rc::clone(cached);
@@ -108,10 +105,7 @@ fn forward_stores_expr_inner(
 
 /// Recurse into structural sub-bodies (If branches, `DoWhile` body, `LetBind` body).
 /// These get their own independent forwarding context.
-fn recurse_substructures_inner(
-    expr: &RcExpr,
-    cache: &mut HashMap<usize, RcExpr>,
-) -> RcExpr {
+fn recurse_substructures_inner(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
     let ptr = Rc::as_ptr(expr) as usize;
     if let Some(cached) = cache.get(&ptr) {
         return Rc::clone(cached);
@@ -282,7 +276,10 @@ fn replace_sloads_inline_match(
             replace_sloads_inline_inner(a, known, cache),
             replace_sloads_inline_inner(b, known, cache),
         )),
-        EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(*op, replace_sloads_inline_inner(a, known, cache))),
+        EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(
+            *op,
+            replace_sloads_inline_inner(a, known, cache),
+        )),
         EvmExpr::Top(op, a, b, c) => Rc::new(EvmExpr::Top(
             *op,
             replace_sloads_inline_inner(a, known, cache),
@@ -293,7 +290,10 @@ fn replace_sloads_inline_match(
             replace_sloads_inline_inner(a, known, cache),
             replace_sloads_inline_inner(b, known, cache),
         )),
-        EvmExpr::Get(a, idx) => Rc::new(EvmExpr::Get(replace_sloads_inline_inner(a, known, cache), *idx)),
+        EvmExpr::Get(a, idx) => Rc::new(EvmExpr::Get(
+            replace_sloads_inline_inner(a, known, cache),
+            *idx,
+        )),
         EvmExpr::VarStore(name, val) => Rc::new(EvmExpr::VarStore(
             name.clone(),
             replace_sloads_inline_inner(val, known, cache),
@@ -321,7 +321,10 @@ fn replace_sloads_inline_match(
                 replace_sloads_inline_inner(state, known, cache),
             ))
         }
-        EvmExpr::EnvRead(op, s) => Rc::new(EvmExpr::EnvRead(*op, replace_sloads_inline_inner(s, known, cache))),
+        EvmExpr::EnvRead(op, s) => Rc::new(EvmExpr::EnvRead(
+            *op,
+            replace_sloads_inline_inner(s, known, cache),
+        )),
         EvmExpr::EnvRead1(op, a, s) => Rc::new(EvmExpr::EnvRead1(
             *op,
             replace_sloads_inline_inner(a, known, cache),

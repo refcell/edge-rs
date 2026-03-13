@@ -5,10 +5,7 @@
 
 use std::{collections::HashMap, rc::Rc};
 
-use egglog::{
-    ast::Literal,
-    ExtractReport, Term, TermDag, TermId,
-};
+use egglog::{ast::Literal, ExtractReport, Term, TermDag, TermId};
 
 use crate::{
     schema::{
@@ -162,7 +159,10 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
         EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
         EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", expr_to_sexp(size)),
         EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
-            format!("(AllocRegion {id} {} {is_dynamic})", expr_to_sexp(num_fields))
+            format!(
+                "(AllocRegion {id} {} {is_dynamic})",
+                expr_to_sexp(num_fields)
+            )
         }
         EvmExpr::RegionStore(id, field, val, state) => {
             format!(
@@ -397,17 +397,15 @@ fn count_refs_dag(expr: &RcExpr, counts: &mut HashMap<usize, usize>, visited: &m
         | EvmExpr::VarStore(_, a)
         | EvmExpr::Get(a, _)
         | EvmExpr::EnvRead(_, a)
-        | EvmExpr::DynAlloc(a) => {
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::Function(_, _, _, a) => {
             visit!(a);
         }
         EvmExpr::Bop(_, a, b)
         | EvmExpr::Concat(a, b)
         | EvmExpr::DoWhile(a, b)
-        | EvmExpr::EnvRead1(_, a, b) => {
-            visit!(a);
-            visit!(b);
-        }
-        EvmExpr::LetBind(_, a, b) => {
+        | EvmExpr::EnvRead1(_, a, b)
+        | EvmExpr::LetBind(_, a, b) => {
             visit!(a);
             visit!(b);
         }
@@ -421,9 +419,6 @@ fn count_refs_dag(expr: &RcExpr, counts: &mut HashMap<usize, usize>, visited: &m
             visit!(b);
             visit!(c);
             visit!(d);
-        }
-        EvmExpr::Function(_, _, _, a) => {
-            visit!(a);
         }
         EvmExpr::Call(_, args) => {
             for a in args {
@@ -504,7 +499,7 @@ fn dag_sexp_rec(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
     sexp
 }
 
-/// Serialize a single node's s-expression, using dag_sexp_rec for children.
+/// Serialize a single node's s-expression, using `dag_sexp_rec` for children.
 fn dag_sexp_node(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
     match expr.as_ref() {
         EvmExpr::Arg(ty, c) => format!("(Arg {} {})", type_sexp(ty), ctx_sexp(c)),
@@ -655,10 +650,7 @@ fn dag_sexp_node(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
             )
         }
         EvmExpr::RegionLoad(id, field, state) => {
-            format!(
-                "(RegionLoad {id} {field} {})",
-                dag_sexp_rec(state, ctx)
-            )
+            format!("(RegionLoad {id} {field} {})", dag_sexp_rec(state, ctx))
         }
     }
 }
@@ -1238,9 +1230,9 @@ pub fn extract_report_to_expr(report: &ExtractReport) -> Result<RcExpr, IrError>
             let mut cache: HashMap<TermId, RcExpr> = HashMap::new();
             termdag_convert(termdag, root_id, &mut cache)
         }
-        ExtractReport::Variants { .. } => {
-            Err(IrError::Extraction("expected Best extract, got Variants".to_owned()))
-        }
+        ExtractReport::Variants { .. } => Err(IrError::Extraction(
+            "expected Best extract, got Variants".to_owned(),
+        )),
     }
 }
 
@@ -1434,35 +1426,41 @@ fn termdag_convert(
                 ))),
             }
         }
-        Term::Lit(_) | Term::Var(_) => {
-            Err(IrError::Extraction(format!("termdag: unexpected term: {term:?}")))
-        }
+        Term::Lit(_) | Term::Var(_) => Err(IrError::Extraction(format!(
+            "termdag: unexpected term: {term:?}"
+        ))),
     }?;
     cache.insert(id, Rc::clone(&result));
     Ok(result)
 }
 
-/// Extract an i64 literal from a TermDag node.
+/// Extract an i64 literal from a `TermDag` node.
 fn td_i64(dag: &TermDag, id: TermId) -> Result<i64, IrError> {
     match dag.get(id) {
         Term::Lit(Literal::Int(n)) => Ok(*n),
-        other => Err(IrError::Extraction(format!("expected i64 literal, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "expected i64 literal, got: {other:?}"
+        ))),
     }
 }
 
-/// Extract a string literal from a TermDag node.
+/// Extract a string literal from a `TermDag` node.
 fn td_string(dag: &TermDag, id: TermId) -> Result<String, IrError> {
     match dag.get(id) {
         Term::Lit(Literal::String(sym)) => Ok(sym.as_str().to_owned()),
-        other => Err(IrError::Extraction(format!("expected string literal, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "expected string literal, got: {other:?}"
+        ))),
     }
 }
 
-/// Extract a bool literal from a TermDag node.
+/// Extract a bool literal from a `TermDag` node.
 fn td_bool(dag: &TermDag, id: TermId) -> Result<bool, IrError> {
     match dag.get(id) {
         Term::Lit(Literal::Bool(b)) => Ok(*b),
-        other => Err(IrError::Extraction(format!("expected bool literal, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "expected bool literal, got: {other:?}"
+        ))),
     }
 }
 
@@ -1473,9 +1471,13 @@ fn td_const(dag: &TermDag, id: TermId) -> Result<EvmConstant, IrError> {
             "LargeInt" => Ok(EvmConstant::LargeInt(td_string(dag, args[0])?)),
             "ConstBool" => Ok(EvmConstant::Bool(td_bool(dag, args[0])?)),
             "ConstAddr" => Ok(EvmConstant::Addr(td_string(dag, args[0])?)),
-            other => Err(IrError::Extraction(format!("termdag: unknown constant: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown constant: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected constant, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected constant, got: {other:?}"
+        ))),
     }
 }
 
@@ -1492,9 +1494,13 @@ fn td_type(dag: &TermDag, id: TermId) -> Result<EvmType, IrError> {
                 let len = td_i64(dag, args[1])? as usize;
                 Ok(EvmType::ArrayT(elem, len))
             }
-            other => Err(IrError::Extraction(format!("termdag: unknown type: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown type: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected type, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected type, got: {other:?}"
+        ))),
     }
 }
 
@@ -1508,9 +1514,13 @@ fn td_basetype(dag: &TermDag, id: TermId) -> Result<EvmBaseType, IrError> {
             "BoolT" => Ok(EvmBaseType::BoolT),
             "UnitT" => Ok(EvmBaseType::UnitT),
             "StateT" => Ok(EvmBaseType::StateT),
-            other => Err(IrError::Extraction(format!("termdag: unknown base type: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown base type: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected base type, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected base type, got: {other:?}"
+        ))),
     }
 }
 
@@ -1525,15 +1535,27 @@ fn td_type_list(dag: &TermDag, id: TermId) -> Result<Vec<EvmBaseType>, IrError> 
                     result.push(td_basetype(dag, args[0])?);
                     cur = args[1];
                 }
-                other => return Err(IrError::Extraction(format!("termdag: expected TLCons/TLNil, got: {other}"))),
+                other => {
+                    return Err(IrError::Extraction(format!(
+                        "termdag: expected TLCons/TLNil, got: {other}"
+                    )))
+                }
             },
-            other => return Err(IrError::Extraction(format!("termdag: expected type list, got: {other:?}"))),
+            other => {
+                return Err(IrError::Extraction(format!(
+                    "termdag: expected type list, got: {other:?}"
+                )))
+            }
         }
     }
     Ok(result)
 }
 
-fn td_ctx(dag: &TermDag, id: TermId, cache: &mut HashMap<TermId, RcExpr>) -> Result<EvmContext, IrError> {
+fn td_ctx(
+    dag: &TermDag,
+    id: TermId,
+    cache: &mut HashMap<TermId, RcExpr>,
+) -> Result<EvmContext, IrError> {
     match dag.get(id) {
         Term::App(sym, args) => match sym.as_str() {
             "InFunction" => Ok(EvmContext::InFunction(td_string(dag, args[0])?)),
@@ -1548,9 +1570,13 @@ fn td_ctx(dag: &TermDag, id: TermId, cache: &mut HashMap<TermId, RcExpr>) -> Res
                 let pred = termdag_convert(dag, args[1], cache)?;
                 Ok(EvmContext::InLoop(input, pred))
             }
-            other => Err(IrError::Extraction(format!("termdag: unknown context: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown context: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected context, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected context, got: {other:?}"
+        ))),
     }
 }
 
@@ -1586,9 +1612,13 @@ fn td_binop(dag: &TermDag, id: TermId) -> Result<EvmBinaryOp, IrError> {
             "OpTLoad" => Ok(EvmBinaryOp::TLoad),
             "OpMLoad" => Ok(EvmBinaryOp::MLoad),
             "OpCalldataLoad" => Ok(EvmBinaryOp::CalldataLoad),
-            other => Err(IrError::Extraction(format!("termdag: unknown binary op: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown binary op: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected binary op, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected binary op, got: {other:?}"
+        ))),
     }
 }
 
@@ -1600,9 +1630,13 @@ fn td_unop(dag: &TermDag, id: TermId) -> Result<EvmUnaryOp, IrError> {
             "OpNeg" => Ok(EvmUnaryOp::Neg),
             "OpSignExtend" => Ok(EvmUnaryOp::SignExtend),
             "OpClz" => Ok(EvmUnaryOp::Clz),
-            other => Err(IrError::Extraction(format!("termdag: unknown unary op: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown unary op: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected unary op, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected unary op, got: {other:?}"
+        ))),
     }
 }
 
@@ -1617,9 +1651,13 @@ fn td_ternop(dag: &TermDag, id: TermId) -> Result<EvmTernaryOp, IrError> {
             "OpSelect" => Ok(EvmTernaryOp::Select),
             "OpCalldataCopy" => Ok(EvmTernaryOp::CalldataCopy),
             "OpMcopy" => Ok(EvmTernaryOp::Mcopy),
-            other => Err(IrError::Extraction(format!("termdag: unknown ternary op: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown ternary op: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected ternary op, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected ternary op, got: {other:?}"
+        ))),
     }
 }
 
@@ -1644,13 +1682,17 @@ fn td_envop(dag: &TermDag, id: TermId) -> Result<EvmEnvOp, IrError> {
             "EnvBalance" => Ok(EvmEnvOp::Balance),
             "EnvCodeSize" => Ok(EvmEnvOp::CodeSize),
             "EnvReturnDataSize" => Ok(EvmEnvOp::ReturnDataSize),
-            other => Err(IrError::Extraction(format!("termdag: unknown env op: {other}"))),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown env op: {other}"
+            ))),
         },
-        other => Err(IrError::Extraction(format!("termdag: expected env op, got: {other:?}"))),
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected env op, got: {other:?}"
+        ))),
     }
 }
 
-/// Convert a Cons/Nil list in TermDag to Vec<RcExpr>.
+/// Convert a Cons/Nil list in `TermDag` to `Vec<RcExpr>`.
 fn td_list(
     dag: &TermDag,
     id: TermId,
@@ -1666,9 +1708,17 @@ fn td_list(
                     result.push(termdag_convert(dag, args[0], cache)?);
                     cur = args[1];
                 }
-                other => return Err(IrError::Extraction(format!("termdag: expected Cons/Nil, got: {other}"))),
+                other => {
+                    return Err(IrError::Extraction(format!(
+                        "termdag: expected Cons/Nil, got: {other}"
+                    )))
+                }
             },
-            other => return Err(IrError::Extraction(format!("termdag: expected list, got: {other:?}"))),
+            other => {
+                return Err(IrError::Extraction(format!(
+                    "termdag: expected list, got: {other:?}"
+                )))
+            }
         }
     }
     Ok(result)

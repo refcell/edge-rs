@@ -27,8 +27,8 @@ pub mod cleanup;
 pub mod costs;
 pub mod mem_region;
 pub mod optimizations;
-pub mod region_forward;
 pub mod pretty;
+pub mod region_forward;
 pub mod schedule;
 pub mod schema;
 pub mod sexp;
@@ -735,24 +735,17 @@ fn dag_count_rec(expr: &RcExpr, visited: &mut std::collections::HashSet<usize>) 
         | EvmExpr::Get(a, _)
         | EvmExpr::EnvRead(_, a)
         | EvmExpr::DynAlloc(a)
-        | EvmExpr::AllocRegion(_, a, _) => {
+        | EvmExpr::AllocRegion(_, a, _)
+        | EvmExpr::RegionLoad(_, _, a)
+        | EvmExpr::Function(_, _, _, a) => {
             add!(a);
         }
         EvmExpr::Bop(_, a, b)
         | EvmExpr::Concat(a, b)
         | EvmExpr::DoWhile(a, b)
-        | EvmExpr::EnvRead1(_, a, b) => {
-            add!(a);
-            add!(b);
-        }
-        EvmExpr::RegionStore(_, _, a, b) => {
-            add!(a);
-            add!(b);
-        }
-        EvmExpr::RegionLoad(_, _, a) => {
-            add!(a);
-        }
-        EvmExpr::LetBind(_, a, b) => {
+        | EvmExpr::EnvRead1(_, a, b)
+        | EvmExpr::RegionStore(_, _, a, b)
+        | EvmExpr::LetBind(_, a, b) => {
             add!(a);
             add!(b);
         }
@@ -766,9 +759,6 @@ fn dag_count_rec(expr: &RcExpr, visited: &mut std::collections::HashSet<usize>) 
             add!(b);
             add!(c);
             add!(d);
-        }
-        EvmExpr::Function(_, _, _, a) => {
-            add!(a);
         }
         EvmExpr::Call(_, args) => {
             for a in args {
@@ -802,7 +792,7 @@ fn dag_count_rec(expr: &RcExpr, visited: &mut std::collections::HashSet<usize>) 
 }
 
 /// Walk the top-level Concat spine and record each child's DAG size + label.
-/// Recurses into LetBind bodies and If branches to break down the dispatcher.
+/// Recurses into `LetBind` bodies and If branches to break down the dispatcher.
 fn collect_top_concat_sizes_dag(expr: &RcExpr, out: &mut Vec<(String, usize)>, depth: usize) {
     if depth > 6 {
         out.push((
@@ -864,7 +854,7 @@ pub struct IrStats {
     pub total_nodes: usize,
     /// Maximum tree depth
     pub max_depth: usize,
-    /// Count of LetBind nodes (proxy for variable allocations)
+    /// Count of `LetBind` nodes (proxy for variable allocations)
     pub let_binds: usize,
     /// Count of Function nodes
     pub functions: usize,
@@ -874,17 +864,17 @@ pub struct IrStats {
     pub concats: usize,
     /// Count of If nodes
     pub ifs: usize,
-    /// Count of VarStore nodes
+    /// Count of `VarStore` nodes
     pub var_stores: usize,
     /// Count of Var nodes (reads)
     pub var_reads: usize,
-    /// Count of DynAlloc nodes
+    /// Count of `DynAlloc` nodes
     pub dyn_allocs: usize,
     /// Per-variable Var read counts
     pub var_read_names: HashMap<String, usize>,
-    /// Per-variable LetBind counts
+    /// Per-variable `LetBind` counts
     pub let_bind_names: HashMap<String, usize>,
-    /// Per-variable VarStore counts
+    /// Per-variable `VarStore` counts
     pub var_store_names: HashMap<String, usize>,
     /// Subtree sizes for top-level Concat children (to identify where bulk lives)
     pub top_concat_child_sizes: Vec<(String, usize)>,
@@ -1066,22 +1056,15 @@ fn ir_stats_dag(
         | EvmExpr::Get(a, _)
         | EvmExpr::EnvRead(_, a)
         | EvmExpr::DynAlloc(a)
-        | EvmExpr::AllocRegion(_, a, _) => go!(a),
+        | EvmExpr::AllocRegion(_, a, _)
+        | EvmExpr::RegionLoad(_, _, a)
+        | EvmExpr::Function(_, _, _, a) => go!(a),
         EvmExpr::Bop(_, a, b)
         | EvmExpr::Concat(a, b)
         | EvmExpr::DoWhile(a, b)
-        | EvmExpr::EnvRead1(_, a, b) => {
-            go!(a);
-            go!(b);
-        }
-        EvmExpr::RegionStore(_, _, a, b) => {
-            go!(a);
-            go!(b);
-        }
-        EvmExpr::RegionLoad(_, _, a) => {
-            go!(a);
-        }
-        EvmExpr::LetBind(_, a, b) => {
+        | EvmExpr::EnvRead1(_, a, b)
+        | EvmExpr::RegionStore(_, _, a, b)
+        | EvmExpr::LetBind(_, a, b) => {
             go!(a);
             go!(b);
         }
@@ -1096,7 +1079,6 @@ fn ir_stats_dag(
             go!(c);
             go!(e);
         }
-        EvmExpr::Function(_, _, _, body) => go!(body),
         EvmExpr::Call(_, args) => {
             for a in args {
                 go!(a);
@@ -1460,10 +1442,9 @@ pub fn lower_and_optimize(
             let _ = func_egraph
                 .parse_and_run_program(None, &func_program)
                 .map_err(|e| IrError::Egglog(format!("{e}")))?;
-            let func_report = func_egraph
-                .get_extract_report()
-                .as_ref()
-                .ok_or_else(|| IrError::Extraction("no extract report from func egglog".to_owned()))?;
+            let func_report = func_egraph.get_extract_report().as_ref().ok_or_else(|| {
+                IrError::Extraction("no extract report from func egglog".to_owned())
+            })?;
             let optimized_func = sexp::extract_report_to_expr(func_report)?;
             let optimized_func = cleanup::cleanup_expr_pub(&optimized_func);
             optimized_functions.push(optimized_func);

@@ -17,9 +17,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::schema::{
-    EvmBaseType, EvmConstant, EvmContext, EvmExpr, EvmProgram, EvmType, RcExpr,
-};
+use crate::schema::{EvmBaseType, EvmConstant, EvmContext, EvmExpr, EvmProgram, EvmType, RcExpr};
 
 /// Scope tree node for memory region allocation.
 ///
@@ -103,7 +101,7 @@ fn assign_scoped_offsets(
     }
 }
 
-/// Check whether a subtree contains any MemRegion nodes (memoized by Rc pointer).
+/// Check whether a subtree contains any `MemRegion` nodes (memoized by Rc pointer).
 fn has_mem_region(expr: &RcExpr, cache: &mut HashMap<usize, bool>) -> bool {
     let ptr = Rc::as_ptr(expr) as usize;
     if let Some(&result) = cache.get(&ptr) {
@@ -114,9 +112,7 @@ fn has_mem_region(expr: &RcExpr, cache: &mut HashMap<usize, bool>) -> bool {
         EvmExpr::Concat(a, b)
         | EvmExpr::Bop(_, a, b)
         | EvmExpr::DoWhile(a, b)
-        | EvmExpr::EnvRead1(_, a, b) => {
-            has_mem_region(a, cache) || has_mem_region(b, cache)
-        }
+        | EvmExpr::EnvRead1(_, a, b) => has_mem_region(a, cache) || has_mem_region(b, cache),
         EvmExpr::If(a, b, c, d) => {
             has_mem_region(a, cache)
                 || has_mem_region(b, cache)
@@ -126,12 +122,8 @@ fn has_mem_region(expr: &RcExpr, cache: &mut HashMap<usize, bool>) -> bool {
         EvmExpr::LetBind(_, init, body) => {
             has_mem_region(init, cache) || has_mem_region(body, cache)
         }
-        EvmExpr::Top(_, a, b, c)
-        | EvmExpr::Revert(a, b, c)
-        | EvmExpr::ReturnOp(a, b, c) => {
-            has_mem_region(a, cache)
-                || has_mem_region(b, cache)
-                || has_mem_region(c, cache)
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            has_mem_region(a, cache) || has_mem_region(b, cache) || has_mem_region(c, cache)
         }
         EvmExpr::Function(_, _, _, body) => has_mem_region(body, cache),
         EvmExpr::Uop(_, a)
@@ -150,11 +142,9 @@ fn has_mem_region(expr: &RcExpr, cache: &mut HashMap<usize, bool>) -> bool {
                 || has_mem_region(s, cache)
                 || has_mem_region(st, cache)
         }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            [a, b, c, d, e, f, g]
-                .iter()
-                .any(|x| has_mem_region(x, cache))
-        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
+            .iter()
+            .any(|x| has_mem_region(x, cache)),
         EvmExpr::Call(_, args) => args.iter().any(|a| has_mem_region(a, cache)),
         EvmExpr::InlineAsm(inputs, ..) => inputs.iter().any(|a| has_mem_region(a, cache)),
         _ => false,
@@ -169,10 +159,7 @@ fn collect_region_scopes(expr: &RcExpr) -> RegionScope {
     collect_region_scopes_inner(expr, &mut hmr_cache)
 }
 
-fn collect_region_scopes_inner(
-    expr: &RcExpr,
-    hmr_cache: &mut HashMap<usize, bool>,
-) -> RegionScope {
+fn collect_region_scopes_inner(expr: &RcExpr, hmr_cache: &mut HashMap<usize, bool>) -> RegionScope {
     // Fast path: if this subtree contains no MemRegion nodes, skip traversal.
     if !has_mem_region(expr, hmr_cache) {
         return RegionScope::Sequential(vec![]);
@@ -351,13 +338,13 @@ pub fn assign_program_offsets(
     }
 }
 
-/// Context for region resolution: both MemRegion offset assignments and
+/// Context for region resolution: both `MemRegion` offset assignments and
 /// RegionStore/RegionLoad → MStore/MLoad variable mappings.
 #[derive(Debug)]
 pub struct RegionResolveCtx {
-    /// MemRegion id → concrete byte offset
+    /// `MemRegion` id → concrete byte offset
     pub assignments: BTreeMap<i64, usize>,
-    /// Region id → LetBind variable name (for &dm struct field access)
+    /// Region id → `LetBind` variable name (for &dm struct field access)
     pub region_var_map: indexmap::IndexMap<i64, String>,
 }
 
@@ -447,320 +434,7 @@ fn replace_regions_inner(
             let ni = rec!(i);
             let nt = rec!(t);
             let ne = rec!(e);
-            if Rc::ptr_eq(&nc, c) && Rc::ptr_eq(&ni, i) && Rc::ptr_eq(&nt, t) && Rc::ptr_eq(&ne, e) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::If(nc, ni, nt, ne))
-        }
-        EvmExpr::DoWhile(inputs, body) => {
-            let ni = rec!(inputs);
-            let nb = rec!(body);
-            if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::DoWhile(ni, nb))
-        }
-        EvmExpr::LetBind(name, init, body) => {
-            let ni = rec!(init);
-            let nb = rec!(body);
-            if Rc::ptr_eq(&ni, init) && Rc::ptr_eq(&nb, body) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::LetBind(name.clone(), ni, nb))
-        }
-        EvmExpr::VarStore(name, val) => {
-            let nv = rec!(val);
-            if Rc::ptr_eq(&nv, val) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::VarStore(name.clone(), nv))
-        }
-        EvmExpr::Revert(a, b, c) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            let nc = rec!(c);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Revert(na, nb, nc))
-        }
-        EvmExpr::ReturnOp(a, b, c) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            let nc = rec!(c);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::ReturnOp(na, nb, nc))
-        }
-        EvmExpr::Log(count, topics, d, s, st) => {
-            let nt: Vec<_> = topics
-                .iter()
-                .map(|t| rec!(t))
-                .collect();
-            let nd = rec!(d);
-            let ns = rec!(s);
-            let nst = rec!(st);
-            if nt.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
-                && Rc::ptr_eq(&nd, d) && Rc::ptr_eq(&ns, s) && Rc::ptr_eq(&nst, st)
-            {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Log(*count, nt, nd, ns, nst))
-        }
-        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            let nc = rec!(c);
-            let nd = rec!(d);
-            let ne = rec!(e);
-            let nf = rec!(f);
-            let ng = rec!(g);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c)
-                && Rc::ptr_eq(&nd, d) && Rc::ptr_eq(&ne, e) && Rc::ptr_eq(&nf, f)
-                && Rc::ptr_eq(&ng, g)
-            {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::ExtCall(na, nb, nc, nd, ne, nf, ng))
-        }
-        EvmExpr::Call(name, args) => {
-            let new_args: Vec<_> = args
-                .iter()
-                .map(|a| rec!(a))
-                .collect();
-            if new_args.iter().zip(args.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Call(name.clone(), new_args))
-        }
-        EvmExpr::Function(name, in_ty, out_ty, body) => {
-            let nb = rec!(body);
-            if Rc::ptr_eq(&nb, body) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Function(
-                name.clone(),
-                in_ty.clone(),
-                out_ty.clone(),
-                nb,
-            ))
-        }
-        EvmExpr::EnvRead(op, s) => {
-            let ns = rec!(s);
-            if Rc::ptr_eq(&ns, s) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::EnvRead(*op, ns))
-        }
-        EvmExpr::EnvRead1(op, a, s) => {
-            let na = rec!(a);
-            let ns = rec!(s);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&ns, s) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::EnvRead1(*op, na, ns))
-        }
-        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
-            let ni: Vec<_> = inputs
-                .iter()
-                .map(|i| rec!(i))
-                .collect();
-            if ni.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::InlineAsm(ni, hex.clone(), *num_outputs))
-        }
-        EvmExpr::DynAlloc(size) => {
-            let ns = rec!(size);
-            if Rc::ptr_eq(&ns, size) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::DynAlloc(ns))
-        }
-        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
-            let nf = rec!(num_fields);
-            if Rc::ptr_eq(&nf, num_fields) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
-        }
-        // RegionStore/RegionLoad: just recurse, don't resolve here.
-        // These survive into egglog for symbolic forwarding and get resolved
-        // post-egglog by `resolve_regions_post_egglog`.
-        EvmExpr::RegionStore(id, field_idx, val, state) => {
-            let nv = rec!(val);
-            let ns = rec!(state);
-            if Rc::ptr_eq(&nv, val) && Rc::ptr_eq(&ns, state) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
-        }
-        EvmExpr::RegionLoad(id, field_idx, state) => {
-            let ns = rec!(state);
-            if Rc::ptr_eq(&ns, state) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
-        }
-        // Leaf nodes — no MemRegion possible
-        EvmExpr::Const(..)
-        | EvmExpr::Arg(..)
-        | EvmExpr::Empty(..)
-        | EvmExpr::Var(_)
-        | EvmExpr::Drop(_)
-        | EvmExpr::Selector(_)
-        | EvmExpr::StorageField(..) => Rc::clone(expr),
-    }
-}
-
-/// Resolve RegionStore/RegionLoad → MStore/MLoad after egglog optimization.
-/// This runs post-egglog so that egglog forwarding rules can fire first.
-pub fn resolve_regions_post_egglog(
-    program: &mut EvmProgram,
-    region_var_map: &indexmap::IndexMap<i64, String>,
-) {
-    if region_var_map.is_empty() {
-        return;
-    }
-    for contract in &mut program.contracts {
-        contract.runtime = resolve_region_expr(&contract.runtime, region_var_map);
-        for func in &mut contract.internal_functions {
-            *func = resolve_region_expr(func, region_var_map);
-        }
-        contract.constructor = resolve_region_expr(&contract.constructor, region_var_map);
-    }
-}
-
-fn resolve_region_expr(
-    expr: &RcExpr,
-    region_var_map: &indexmap::IndexMap<i64, String>,
-) -> RcExpr {
-    let mut cache = std::collections::HashMap::new();
-    resolve_region_memo(expr, region_var_map, &mut cache)
-}
-
-fn resolve_region_memo(
-    expr: &RcExpr,
-    rvm: &indexmap::IndexMap<i64, String>,
-    cache: &mut std::collections::HashMap<usize, RcExpr>,
-) -> RcExpr {
-    let id = Rc::as_ptr(expr) as usize;
-    if let Some(cached) = cache.get(&id) {
-        return Rc::clone(cached);
-    }
-    let result = resolve_region_inner(expr, rvm, cache);
-    cache.insert(id, Rc::clone(&result));
-    result
-}
-
-fn resolve_region_inner(
-    expr: &RcExpr,
-    rvm: &indexmap::IndexMap<i64, String>,
-    cache: &mut std::collections::HashMap<usize, RcExpr>,
-) -> RcExpr {
-    macro_rules! rec {
-        ($e:expr) => {
-            resolve_region_memo($e, rvm, cache)
-        };
-    }
-
-    fn region_offset(var_name: &str, field_idx: i64) -> RcExpr {
-        let base = Rc::new(EvmExpr::Var(var_name.to_string()));
-        if field_idx == 0 {
-            base
-        } else {
-            Rc::new(EvmExpr::Bop(
-                crate::schema::EvmBinaryOp::Add,
-                base,
-                Rc::new(EvmExpr::Const(
-                    EvmConstant::SmallInt(field_idx * 32),
-                    EvmType::Base(EvmBaseType::UIntT(256)),
-                    EvmContext::InFunction("__mem__".to_owned()),
-                )),
-            ))
-        }
-    }
-
-    match expr.as_ref() {
-        EvmExpr::RegionStore(id, field_idx, val, state) => {
-            let nv = rec!(val);
-            let ns = rec!(state);
-            if let Some(var_name) = rvm.get(id) {
-                let offset = region_offset(var_name, *field_idx);
-                Rc::new(EvmExpr::Top(
-                    crate::schema::EvmTernaryOp::MStore,
-                    offset,
-                    nv,
-                    ns,
-                ))
-            } else {
-                // Unknown region — shouldn't happen, but pass through
-                Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
-            }
-        }
-        EvmExpr::RegionLoad(id, field_idx, state) => {
-            let ns = rec!(state);
-            if let Some(var_name) = rvm.get(id) {
-                let offset = region_offset(var_name, *field_idx);
-                Rc::new(EvmExpr::Bop(
-                    crate::schema::EvmBinaryOp::MLoad,
-                    offset,
-                    ns,
-                ))
-            } else {
-                Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
-            }
-        }
-        // For all other nodes, just recurse
-        EvmExpr::Bop(op, a, b) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Bop(*op, na, nb))
-        }
-        EvmExpr::Uop(op, a) => {
-            let na = rec!(a);
-            if Rc::ptr_eq(&na, a) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Uop(*op, na))
-        }
-        EvmExpr::Top(op, a, b, c) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            let nc = rec!(c);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Top(*op, na, nb, nc))
-        }
-        EvmExpr::Concat(a, b) => {
-            let na = rec!(a);
-            let nb = rec!(b);
-            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Concat(na, nb))
-        }
-        EvmExpr::Get(a, idx) => {
-            let na = rec!(a);
-            if Rc::ptr_eq(&na, a) {
-                return Rc::clone(expr);
-            }
-            Rc::new(EvmExpr::Get(na, *idx))
-        }
-        EvmExpr::If(c, i, t, e) => {
-            let nc = rec!(c);
-            let ni = rec!(i);
-            let nt = rec!(t);
-            let ne = rec!(e);
-            if Rc::ptr_eq(&nc, c)
-                && Rc::ptr_eq(&ni, i)
-                && Rc::ptr_eq(&nt, t)
-                && Rc::ptr_eq(&ne, e)
+            if Rc::ptr_eq(&nc, c) && Rc::ptr_eq(&ni, i) && Rc::ptr_eq(&nt, t) && Rc::ptr_eq(&ne, e)
             {
                 return Rc::clone(expr);
             }
@@ -857,7 +531,317 @@ fn resolve_region_inner(
             if Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
+        }
+        EvmExpr::EnvRead(op, s) => {
+            let ns = rec!(s);
+            if Rc::ptr_eq(&ns, s) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::EnvRead(*op, ns))
+        }
+        EvmExpr::EnvRead1(op, a, s) => {
+            let na = rec!(a);
+            let ns = rec!(s);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&ns, s) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::EnvRead1(*op, na, ns))
+        }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let ni: Vec<_> = inputs.iter().map(|i| rec!(i)).collect();
+            if ni.iter().zip(inputs.iter()).all(|(n, o)| Rc::ptr_eq(n, o)) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::InlineAsm(ni, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let ns = rec!(size);
+            if Rc::ptr_eq(&ns, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = rec!(num_fields);
+            if Rc::ptr_eq(&nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+        // RegionStore/RegionLoad: just recurse, don't resolve here.
+        // These survive into egglog for symbolic forwarding and get resolved
+        // post-egglog by `resolve_regions_post_egglog`.
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = rec!(val);
+            let ns = rec!(state);
+            if Rc::ptr_eq(&nv, val) && Rc::ptr_eq(&ns, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = rec!(state);
+            if Rc::ptr_eq(&ns, state) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
+        }
+        // Leaf nodes — no MemRegion possible
+        EvmExpr::Const(..)
+        | EvmExpr::Arg(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Var(_)
+        | EvmExpr::Drop(_)
+        | EvmExpr::Selector(_)
+        | EvmExpr::StorageField(..) => Rc::clone(expr),
+    }
+}
+
+/// Resolve RegionStore/RegionLoad → MStore/MLoad after egglog optimization.
+/// This runs post-egglog so that egglog forwarding rules can fire first.
+pub fn resolve_regions_post_egglog(
+    program: &mut EvmProgram,
+    region_var_map: &indexmap::IndexMap<i64, String>,
+) {
+    if region_var_map.is_empty() {
+        return;
+    }
+    for contract in &mut program.contracts {
+        contract.runtime = resolve_region_expr(&contract.runtime, region_var_map);
+        for func in &mut contract.internal_functions {
+            *func = resolve_region_expr(func, region_var_map);
+        }
+        contract.constructor = resolve_region_expr(&contract.constructor, region_var_map);
+    }
+}
+
+fn resolve_region_expr(expr: &RcExpr, region_var_map: &indexmap::IndexMap<i64, String>) -> RcExpr {
+    let mut cache = std::collections::HashMap::new();
+    resolve_region_memo(expr, region_var_map, &mut cache)
+}
+
+fn resolve_region_memo(
+    expr: &RcExpr,
+    rvm: &indexmap::IndexMap<i64, String>,
+    cache: &mut std::collections::HashMap<usize, RcExpr>,
+) -> RcExpr {
+    let id = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&id) {
+        return Rc::clone(cached);
+    }
+    let result = resolve_region_inner(expr, rvm, cache);
+    cache.insert(id, Rc::clone(&result));
+    result
+}
+
+fn resolve_region_inner(
+    expr: &RcExpr,
+    rvm: &indexmap::IndexMap<i64, String>,
+    cache: &mut std::collections::HashMap<usize, RcExpr>,
+) -> RcExpr {
+    macro_rules! rec {
+        ($e:expr) => {
+            resolve_region_memo($e, rvm, cache)
+        };
+    }
+
+    fn region_offset(var_name: &str, field_idx: i64) -> RcExpr {
+        let base = Rc::new(EvmExpr::Var(var_name.to_string()));
+        if field_idx == 0 {
+            base
+        } else {
+            Rc::new(EvmExpr::Bop(
+                crate::schema::EvmBinaryOp::Add,
+                base,
+                Rc::new(EvmExpr::Const(
+                    EvmConstant::SmallInt(field_idx * 32),
+                    EvmType::Base(EvmBaseType::UIntT(256)),
+                    EvmContext::InFunction("__mem__".to_owned()),
+                )),
+            ))
+        }
+    }
+
+    match expr.as_ref() {
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = rec!(val);
+            let ns = rec!(state);
+            if let Some(var_name) = rvm.get(id) {
+                let offset = region_offset(var_name, *field_idx);
+                Rc::new(EvmExpr::Top(
+                    crate::schema::EvmTernaryOp::MStore,
+                    offset,
+                    nv,
+                    ns,
+                ))
+            } else {
+                // Unknown region — shouldn't happen, but pass through
+                Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+            }
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = rec!(state);
+            if let Some(var_name) = rvm.get(id) {
+                let offset = region_offset(var_name, *field_idx);
+                Rc::new(EvmExpr::Bop(crate::schema::EvmBinaryOp::MLoad, offset, ns))
+            } else {
+                Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
+            }
+        }
+        // For all other nodes, just recurse
+        EvmExpr::Bop(op, a, b) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Bop(*op, na, nb))
+        }
+        EvmExpr::Uop(op, a) => {
+            let na = rec!(a);
+            if Rc::ptr_eq(&na, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Uop(*op, na))
+        }
+        EvmExpr::Top(op, a, b, c) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            let nc = rec!(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Top(*op, na, nb, nc))
+        }
+        EvmExpr::Concat(a, b) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Concat(na, nb))
+        }
+        EvmExpr::Get(a, idx) => {
+            let na = rec!(a);
+            if Rc::ptr_eq(&na, a) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Get(na, *idx))
+        }
+        EvmExpr::If(c, i, t, e) => {
+            let nc = rec!(c);
+            let ni = rec!(i);
+            let nt = rec!(t);
+            let ne = rec!(e);
+            if Rc::ptr_eq(&nc, c) && Rc::ptr_eq(&ni, i) && Rc::ptr_eq(&nt, t) && Rc::ptr_eq(&ne, e)
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::If(nc, ni, nt, ne))
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            let ni = rec!(inputs);
+            let nb = rec!(body);
+            if Rc::ptr_eq(&ni, inputs) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DoWhile(ni, nb))
+        }
+        EvmExpr::LetBind(name, init, body) => {
+            let ni = rec!(init);
+            let nb = rec!(body);
+            if Rc::ptr_eq(&ni, init) && Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::LetBind(name.clone(), ni, nb))
+        }
+        EvmExpr::VarStore(name, val) => {
+            let nv = rec!(val);
+            if Rc::ptr_eq(&nv, val) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::VarStore(name.clone(), nv))
+        }
+        EvmExpr::Revert(a, b, c) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            let nc = rec!(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Revert(na, nb, nc))
+        }
+        EvmExpr::ReturnOp(a, b, c) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            let nc = rec!(c);
+            if Rc::ptr_eq(&na, a) && Rc::ptr_eq(&nb, b) && Rc::ptr_eq(&nc, c) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::ReturnOp(na, nb, nc))
+        }
+        EvmExpr::Log(count, topics, d, s, st) => {
+            let nt: Vec<_> = topics.iter().map(|t| rec!(t)).collect();
+            let nd = rec!(d);
+            let ns = rec!(s);
+            let nst = rec!(st);
+            if nt.iter().zip(topics.iter()).all(|(n, o)| Rc::ptr_eq(n, o))
+                && Rc::ptr_eq(&nd, d)
+                && Rc::ptr_eq(&ns, s)
+                && Rc::ptr_eq(&nst, st)
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Log(*count, nt, nd, ns, nst))
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            let na = rec!(a);
+            let nb = rec!(b);
+            let nc = rec!(c);
+            let nd = rec!(d);
+            let ne = rec!(e);
+            let nf = rec!(f);
+            let ng = rec!(g);
+            if Rc::ptr_eq(&na, a)
+                && Rc::ptr_eq(&nb, b)
+                && Rc::ptr_eq(&nc, c)
+                && Rc::ptr_eq(&nd, d)
+                && Rc::ptr_eq(&ne, e)
+                && Rc::ptr_eq(&nf, f)
+                && Rc::ptr_eq(&ng, g)
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::ExtCall(na, nb, nc, nd, ne, nf, ng))
+        }
+        EvmExpr::Call(name, args) => {
+            let new_args: Vec<_> = args.iter().map(|a| rec!(a)).collect();
+            if new_args
+                .iter()
+                .zip(args.iter())
+                .all(|(n, o)| Rc::ptr_eq(n, o))
+            {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Call(name.clone(), new_args))
+        }
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            let nb = rec!(body);
+            if Rc::ptr_eq(&nb, body) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
         }
         EvmExpr::EnvRead(op, s) => {
             let ns = rec!(s);

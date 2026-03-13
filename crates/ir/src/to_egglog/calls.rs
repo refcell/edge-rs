@@ -1365,7 +1365,12 @@ impl AstToEgglog {
         self.inline_depth += 1;
         let t_inline = std::time::Instant::now();
         let result = self.lower_code_block(body)?;
-        tracing::debug!("        inline depth={} prefix={} elapsed={:?}", self.inline_depth, &self.inline_prefix, t_inline.elapsed());
+        tracing::debug!(
+            "        inline depth={} prefix={} elapsed={:?}",
+            self.inline_depth,
+            &self.inline_prefix,
+            t_inline.elapsed()
+        );
         self.inline_depth -= 1;
         self.inline_prefix = old_prefix;
         self.scopes.pop();

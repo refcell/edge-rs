@@ -1,15 +1,14 @@
 //! Region store forwarding pass.
 //!
 //! Walks the IR in program order (Concat chains) and forwards known
-//! RegionStore values to subsequent RegionLoad reads. This enables
+//! `RegionStore` values to subsequent `RegionLoad` reads. This enables
 //! compile-time resolution of struct field access patterns like Vec's
 //! len/capacity fields.
 //!
 //! Runs after lowering, before egglog. Forwarded constants enable
 //! egglog's constant folding and dead-branch elimination.
 
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::schema::{EvmBinaryOp, EvmConstant, EvmExpr, EvmProgram, EvmUnaryOp, RcExpr};
 
@@ -51,9 +50,9 @@ pub fn forward_region_stores_program(
 }
 
 struct ForwardState<'a> {
-    /// Known values for (region_id, field_idx).
+    /// Known values for (`region_id`, `field_idx`).
     known: HashMap<(i64, i64), RcExpr>,
-    /// Variable name → all region_ids for that variable name.
+    /// Variable name → all `region_ids` for that variable name.
     reverse_map: &'a HashMap<String, Vec<i64>>,
 }
 
@@ -156,7 +155,11 @@ fn forward_expr(expr: &RcExpr, state: &mut ForwardState<'_>) -> RcExpr {
             if let Some(rids) = state.reverse_map.get(name.as_str()) {
                 for &rid in rids {
                     if state.known.keys().any(|&(r, _)| r == rid) {
-                        tracing::trace!("region_forward: VarStore to region var '{}' → clear region {}", name, rid);
+                        tracing::trace!(
+                            "region_forward: VarStore to region var '{}' → clear region {}",
+                            name,
+                            rid
+                        );
                         state.clear_region(rid);
                     }
                 }
@@ -181,15 +184,17 @@ fn forward_expr(expr: &RcExpr, state: &mut ForwardState<'_>) -> RcExpr {
                     let nt = forward_expr(then_br, state);
                     // Emit the If with the original condition (egglog will fold it)
                     return Rc::new(EvmExpr::If(nc, ni, nt, Rc::clone(else_br)));
-                } else {
-                    // Condition is false → only else-branch executes
-                    let ne = forward_expr(else_br, state);
-                    return Rc::new(EvmExpr::If(nc, ni, Rc::clone(then_br), ne));
                 }
+                // Condition is false → only else-branch executes
+                let ne = forward_expr(else_br, state);
+                return Rc::new(EvmExpr::If(nc, ni, Rc::clone(then_br), ne));
             }
 
             // Can't evaluate → conservative: process both, clear modified regions
-            tracing::trace!("region_forward: If condition could NOT be evaluated: {:?}", nc);
+            tracing::trace!(
+                "region_forward: If condition could NOT be evaluated: {:?}",
+                nc
+            );
             let saved = state.known.clone();
             let nt = forward_expr(then_br, state);
             let then_known = state.known.clone();
@@ -343,7 +348,12 @@ fn forward_expr(expr: &RcExpr, state: &mut ForwardState<'_>) -> RcExpr {
             if Rc::ptr_eq(&nb, body) {
                 return Rc::clone(expr);
             }
-            Rc::new(EvmExpr::Function(name.clone(), in_ty.clone(), out_ty.clone(), nb))
+            Rc::new(EvmExpr::Function(
+                name.clone(),
+                in_ty.clone(),
+                out_ty.clone(),
+                nb,
+            ))
         }
         // EnvRead: state parameter — skip it.
         EvmExpr::EnvRead(_op, _s) => Rc::clone(expr),
@@ -389,8 +399,8 @@ fn forward_expr(expr: &RcExpr, state: &mut ForwardState<'_>) -> RcExpr {
     }
 }
 
-/// Find which region_id from the candidate list appears in the expression.
-/// Used to disambiguate when multiple region_ids map to the same variable name.
+/// Find which `region_id` from the candidate list appears in the expression.
+/// Used to disambiguate when multiple `region_ids` map to the same variable name.
 fn find_region_id_in_expr(expr: &RcExpr, candidates: &[i64]) -> Option<i64> {
     match expr.as_ref() {
         EvmExpr::RegionLoad(rid, _, _) | EvmExpr::RegionStore(rid, _, _, _) => {
@@ -405,15 +415,17 @@ fn find_region_id_in_expr(expr: &RcExpr, candidates: &[i64]) -> Option<i64> {
                 _ => None,
             }
         }
-        EvmExpr::Concat(a, b) => find_region_id_in_expr(a, candidates)
-            .or_else(|| find_region_id_in_expr(b, candidates)),
+        EvmExpr::Concat(a, b) => {
+            find_region_id_in_expr(a, candidates).or_else(|| find_region_id_in_expr(b, candidates))
+        }
         EvmExpr::LetBind(_, init, body) => find_region_id_in_expr(init, candidates)
             .or_else(|| find_region_id_in_expr(body, candidates)),
         EvmExpr::If(cond, _, then_br, else_br) => find_region_id_in_expr(cond, candidates)
             .or_else(|| find_region_id_in_expr(then_br, candidates))
             .or_else(|| find_region_id_in_expr(else_br, candidates)),
-        EvmExpr::Bop(_, a, b) => find_region_id_in_expr(a, candidates)
-            .or_else(|| find_region_id_in_expr(b, candidates)),
+        EvmExpr::Bop(_, a, b) => {
+            find_region_id_in_expr(a, candidates).or_else(|| find_region_id_in_expr(b, candidates))
+        }
         EvmExpr::Uop(_, a) => find_region_id_in_expr(a, candidates),
         EvmExpr::Top(_, a, b, c) => find_region_id_in_expr(a, candidates)
             .or_else(|| find_region_id_in_expr(b, candidates))
@@ -424,7 +436,7 @@ fn find_region_id_in_expr(expr: &RcExpr, candidates: &[i64]) -> Option<i64> {
 
 /// Find the "return variable" of an expression — the variable whose value
 /// is the result of evaluating the expression. Traces through Concat chains
-/// (which return b) and LetBind (which returns body).
+/// (which return b) and `LetBind` (which returns body).
 fn find_return_var(expr: &RcExpr) -> Option<String> {
     match expr.as_ref() {
         EvmExpr::Var(name) => Some(name.clone()),
@@ -436,7 +448,7 @@ fn find_return_var(expr: &RcExpr) -> Option<String> {
 
 /// Extract initial field values from an init expression.
 ///
-/// Scans for MStore patterns that write to fields of the given inner variable:
+/// Scans for `MStore` patterns that write to fields of the given inner variable:
 /// - `MStore(Var(inner), val, _)` → field 0
 /// - `MStore(Add(Var(inner), Const(32)), val, _)` → field 1
 /// - `MStore(Add(Var(inner), Const(64)), val, _)` → field 2
@@ -529,9 +541,7 @@ fn try_eval_const(expr: &RcExpr) -> Option<bool> {
             // LargeInt is stored as a hex string
             Some(b != "0" && b != "0x0" && !b.chars().all(|c| c == '0' || c == 'x'))
         }
-        EvmExpr::Uop(EvmUnaryOp::IsZero, a) => {
-            try_eval_const(a).map(|v| !v)
-        }
+        EvmExpr::Uop(EvmUnaryOp::IsZero, a) => try_eval_const(a).map(|v| !v),
         EvmExpr::Bop(EvmBinaryOp::Lt, a, b) => {
             let av = try_eval_u256(a)?;
             let bv = try_eval_u256(b)?;
