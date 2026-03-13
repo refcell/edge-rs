@@ -11,7 +11,7 @@ abi IStressLoops {
 }
 
 contract StressLoops {
-    let values: &s u256;
+    let values: &s Map<u256, u256>;
     let count: &s u256;
 
     // Simple accumulator loop: sum 1..n.

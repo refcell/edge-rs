@@ -5,7 +5,7 @@
 //   - b32 type for salt/bytecode hashes
 //   - @caller() builtin
 //   - Events (Deployed) with indexed fields
-//   - map<b32, addr> storage mapping for tracking deployments
+//   - Map<b32, addr> storage mapping for tracking deployments
 //   - Bitwise operators for address derivation
 //   - Multiple return patterns
 //
@@ -29,7 +29,7 @@ abi IFactory {
 
 contract Factory {
     // Mapping from salt to deployed contract address.
-    let deployments: &s map<b32, addr>;
+    let deployments: &s Map<b32, addr>;
 
     // Number of contracts deployed.
     let deploy_count: &s u256;

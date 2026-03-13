@@ -8,6 +8,55 @@ Macros contain their own syntax and semantics, however, comptime
 functionality and built-in assistants cover most of the use cases for
 macros without leaving the language's native syntax.
 
+## Runtime Builtins
+
+### `@size_of`
+
+```
+@size_of::<T>() -> u256
+```
+
+Returns the size in bytes of type `T`. For primitive types this is the
+ABI-encoded word size (32 bytes for `u256`, `address`, etc.).
+
+### `@alloc`
+
+```
+@alloc(size_bytes: u256) -> u256
+```
+
+Allocates `size_bytes` of dynamic memory at runtime and returns a pointer
+to the start of the region. Uses MSIZE-based pointer arithmetic to ensure
+the returned region does not overlap with any other allocation.
+
+`@alloc` is the foundation for dynamically-sized data structures like
+`Vec<T>`. It is used in conjunction with the `&dm` data location annotation
+(see [Data Locations](syntax/locations.md)).
+
+## EVM Environment Builtins
+
+These builtins expose EVM execution environment values directly. Each
+returns a `u256`.
+
+| builtin              | EVM opcode       | description                                |
+|----------------------|------------------|--------------------------------------------|
+| `@caller()`          | `CALLER`         | address of the direct caller               |
+| `@callvalue()`       | `CALLVALUE`      | wei sent with the call                     |
+| `@calldatasize()`    | `CALLDATASIZE`   | size of calldata in bytes                  |
+| `@origin()`          | `ORIGIN`         | transaction origin address                 |
+| `@gasprice()`        | `GASPRICE`       | gas price of the transaction               |
+| `@coinbase()`        | `COINBASE`       | block coinbase address                     |
+| `@timestamp()`       | `TIMESTAMP`      | block timestamp                            |
+| `@number()`          | `NUMBER`         | block number                               |
+| `@gaslimit()`        | `GASLIMIT`       | block gas limit                            |
+| `@chainid()`         | `CHAINID`        | chain ID                                   |
+| `@selfbalance()`     | `SELFBALANCE`    | balance of the current contract            |
+| `@basefee()`         | `BASEFEE`        | block base fee                             |
+| `@gas()`             | `GAS`            | remaining gas                              |
+| `@address()`         | `ADDRESS`        | address of the current contract            |
+| `@codesize()`        | `CODESIZE`       | size of the contract's code                |
+| `@returndatasize()`  | `RETURNDATASIZE` | size of the return data from the last call |
+
 ## Types
 
 ### PrimitiveType
@@ -74,7 +123,9 @@ type HardFork =
     | Cancun;
 ```
 
-### Functions
+## Comptime Builtins (Future Work)
+
+The following builtins are planned but not yet implemented:
 
 ```
 @typeInfo

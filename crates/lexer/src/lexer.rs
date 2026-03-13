@@ -637,6 +637,18 @@ impl<'a> Lexer<'a> {
                             self.consume();
                             self.single_char_token(TokenKind::Pointer(Location::TransientStorage))
                         }
+                        'd' => {
+                            let start = self.position;
+                            self.consume(); // consume 'd'
+                            if self.peek() == Some('m') {
+                                self.consume(); // consume 'm'
+                                self.single_char_token(TokenKind::Pointer(Location::DynamicMemory))
+                            } else {
+                                // Not &dm, just &d — return AND operator
+                                Ok(TokenKind::Operator(Operator::Bitwise(BitwiseOperator::And))
+                                    .into_single_span(start))
+                            }
+                        }
                         'm' => {
                             self.consume();
                             self.single_char_token(TokenKind::Pointer(Location::Memory))

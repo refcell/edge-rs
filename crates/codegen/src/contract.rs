@@ -124,7 +124,9 @@ fn generate_runtime_bytecode(
     // reads from 0x40. This saves 6 bytes + 9 gas per call.
 
     // Function dispatcher
+    let t = std::time::Instant::now();
     dispatcher::generate_dispatcher(&mut asm, contract);
+    tracing::debug!("    dispatcher: {:?}", t.elapsed());
 
     // 4. Function bodies are compiled inline within the dispatcher's
     //    call targets. For now, the dispatcher already contains the
@@ -132,7 +134,9 @@ fn generate_runtime_bytecode(
 
     // 5. Optimize runtime bytecode
     let instructions = asm.take_instructions();
+    let t = std::time::Instant::now();
     let optimized = bytecode_opt::optimize(instructions, optimization_level, optimize_for)?;
+    tracing::debug!("    bytecode_opt: {:?}", t.elapsed());
 
     // 6. Extract repeated sequences into subroutines (size mode only).
     // Subroutine extraction trades ~30 gas per call for significant code size

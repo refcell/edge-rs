@@ -3,7 +3,9 @@
 //! Converts between `EvmExpr` and egglog-compatible s-expression strings.
 //! Used to insert IR into an egglog `EGraph` and extract optimized results.
 
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
+
+use egglog::{ast::Literal, ExtractReport, Term, TermDag, TermId};
 
 use crate::{
     schema::{
@@ -155,6 +157,23 @@ pub fn expr_to_sexp(expr: &EvmExpr) -> String {
             format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
         }
         EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
+        EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", expr_to_sexp(size)),
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            format!(
+                "(AllocRegion {id} {} {is_dynamic})",
+                expr_to_sexp(num_fields)
+            )
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            format!(
+                "(RegionStore {id} {field} {} {})",
+                expr_to_sexp(val),
+                expr_to_sexp(state)
+            )
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            format!("(RegionLoad {id} {field} {})", expr_to_sexp(state))
+        }
     }
 }
 
@@ -294,6 +313,351 @@ const fn envop_sexp(op: &EvmEnvOp) -> &'static str {
 fn list_to_sexp(exprs: &[RcExpr]) -> String {
     exprs.iter().rev().fold("(Nil)".to_owned(), |acc, e| {
         format!("(Cons {} {})", expr_to_sexp(e), acc)
+    })
+}
+
+// ============================================================
+// DAG-aware S-expression conversion
+// ============================================================
+//
+// The IR is a DAG (via Rc sharing), but expr_to_sexp expands it into a tree.
+// For Vec<T> with 5 push calls, this blows up from ~1,500 DAG nodes to
+// ~867,000 expanded nodes (33 MB of s-expression text).
+//
+// This module detects shared Rc nodes and emits egglog `(let __sN ...)` bindings
+// for them. Subsequent references use the binding name instead of re-expanding.
+// This keeps the s-expression size proportional to the DAG, not the expanded tree.
+
+use std::collections::HashSet;
+
+/// Convert an `RcExpr` DAG to egglog s-expressions with `let`-bindings for shared nodes.
+///
+/// Returns `(let_bindings, main_expr)` where `let_bindings` contains
+/// `(let __sN <expr>)` declarations in dependency order.
+///
+/// `id_offset` ensures unique names across multiple calls within the same
+/// egglog program (e.g., runtime + internal functions). Returns the next
+/// available ID after this call.
+pub fn expr_to_sexp_dag(expr: &RcExpr, id_offset: usize) -> (String, String, usize) {
+    // Pass 1: count how many parent edges each Rc node has (DAG-aware traversal)
+    let mut ref_counts: HashMap<usize, usize> = HashMap::new();
+    let mut visited: HashSet<usize> = HashSet::new();
+    count_refs_dag(expr, &mut ref_counts, &mut visited);
+
+    // Check if any node is referenced more than once
+    let has_sharing = ref_counts.values().any(|&c| c > 1);
+    if !has_sharing {
+        return (String::new(), expr_to_sexp(expr), id_offset);
+    }
+
+    // Pass 2: serialize with let-bindings for shared nodes
+    let mut ctx = DagSexpCtx {
+        ref_counts,
+        named: HashMap::new(),
+        let_bindings: Vec::new(),
+        next_id: id_offset,
+    };
+    let main = dag_sexp_rec(expr, &mut ctx);
+    (ctx.let_bindings.join("\n"), main, ctx.next_id)
+}
+
+struct DagSexpCtx {
+    ref_counts: HashMap<usize, usize>,
+    named: HashMap<usize, String>,
+    let_bindings: Vec<String>,
+    next_id: usize,
+}
+
+fn ptr_id(expr: &RcExpr) -> usize {
+    Rc::as_ptr(expr) as usize
+}
+
+/// Count references to each Rc node. Recurses into children only once per node.
+fn count_refs_dag(expr: &RcExpr, counts: &mut HashMap<usize, usize>, visited: &mut HashSet<usize>) {
+    let id = ptr_id(expr);
+    *counts.entry(id).or_default() += 1;
+    if !visited.insert(id) {
+        return;
+    }
+    macro_rules! visit {
+        ($e:expr) => {
+            count_refs_dag($e, counts, visited);
+        };
+    }
+    match expr.as_ref() {
+        EvmExpr::Arg(..)
+        | EvmExpr::Const(..)
+        | EvmExpr::Empty(..)
+        | EvmExpr::Var(..)
+        | EvmExpr::Drop(..)
+        | EvmExpr::StorageField(..)
+        | EvmExpr::MemRegion(..)
+        | EvmExpr::Selector(..) => {}
+        EvmExpr::Uop(_, a)
+        | EvmExpr::VarStore(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::EnvRead(_, a)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::Function(_, _, _, a) => {
+            visit!(a);
+        }
+        EvmExpr::Bop(_, a, b)
+        | EvmExpr::Concat(a, b)
+        | EvmExpr::DoWhile(a, b)
+        | EvmExpr::EnvRead1(_, a, b)
+        | EvmExpr::LetBind(_, a, b) => {
+            visit!(a);
+            visit!(b);
+        }
+        EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+        }
+        EvmExpr::If(a, b, c, d) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+            visit!(d);
+        }
+        EvmExpr::Call(_, args) => {
+            for a in args {
+                visit!(a);
+            }
+        }
+        EvmExpr::Log(_, topics, a, b, c) => {
+            for t in topics {
+                visit!(t);
+            }
+            visit!(a);
+            visit!(b);
+            visit!(c);
+        }
+        EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
+            visit!(a);
+            visit!(b);
+            visit!(c);
+            visit!(d);
+            visit!(e);
+            visit!(f);
+            visit!(g);
+        }
+        EvmExpr::InlineAsm(inputs, _, _) => {
+            for a in inputs {
+                visit!(a);
+            }
+        }
+        EvmExpr::AllocRegion(_, num_fields, _) => {
+            visit!(num_fields);
+        }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            visit!(val);
+            visit!(state);
+        }
+        EvmExpr::RegionLoad(_, _, state) => {
+            visit!(state);
+        }
+    }
+}
+
+/// Serialize a node, emitting let-bindings for shared sub-expressions.
+fn dag_sexp_rec(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
+    let id = ptr_id(expr);
+
+    // If this shared node was already serialized, return its name
+    if let Some(name) = ctx.named.get(&id) {
+        return name.clone();
+    }
+
+    // Serialize the node itself (recurse into children via dag_sexp_rec)
+    let sexp = dag_sexp_node(expr, ctx);
+
+    // If multiply-referenced, emit a let-binding and return the name
+    let is_shared = ctx.ref_counts.get(&id).copied().unwrap_or(0) > 1;
+    if is_shared {
+        // Don't share trivial leaf nodes (saves let-binding overhead)
+        let is_leaf = matches!(
+            expr.as_ref(),
+            EvmExpr::Arg(..)
+                | EvmExpr::Const(..)
+                | EvmExpr::Empty(..)
+                | EvmExpr::Var(..)
+                | EvmExpr::Drop(..)
+                | EvmExpr::Selector(..)
+                | EvmExpr::MemRegion(..)
+                | EvmExpr::StorageField(..)
+        );
+        if !is_leaf {
+            let name = format!("__s{}", ctx.next_id);
+            ctx.next_id += 1;
+            ctx.named.insert(id, name.clone());
+            ctx.let_bindings.push(format!("(let {name} {sexp})"));
+            return name;
+        }
+    }
+
+    sexp
+}
+
+/// Serialize a single node's s-expression, using `dag_sexp_rec` for children.
+fn dag_sexp_node(expr: &RcExpr, ctx: &mut DagSexpCtx) -> String {
+    match expr.as_ref() {
+        EvmExpr::Arg(ty, c) => format!("(Arg {} {})", type_sexp(ty), ctx_sexp(c)),
+        EvmExpr::Const(c, ty, cx) => {
+            format!(
+                "(Const {} {} {})",
+                const_sexp(c),
+                type_sexp(ty),
+                ctx_sexp(cx)
+            )
+        }
+        EvmExpr::Empty(ty, c) => format!("(Empty {} {})", type_sexp(ty), ctx_sexp(c)),
+        EvmExpr::Bop(op, l, r) => {
+            format!(
+                "(Bop {} {} {})",
+                binop_sexp(op),
+                dag_sexp_rec(l, ctx),
+                dag_sexp_rec(r, ctx)
+            )
+        }
+        EvmExpr::Uop(op, e) => format!("(Uop {} {})", unop_sexp(op), dag_sexp_rec(e, ctx)),
+        EvmExpr::Top(op, a, b, c) => {
+            format!(
+                "(Top {} {} {} {})",
+                ternop_sexp(op),
+                dag_sexp_rec(a, ctx),
+                dag_sexp_rec(b, ctx),
+                dag_sexp_rec(c, ctx)
+            )
+        }
+        EvmExpr::Get(e, idx) => format!("(Get {} {})", dag_sexp_rec(e, ctx), idx),
+        EvmExpr::Concat(a, b) => {
+            format!("(Concat {} {})", dag_sexp_rec(a, ctx), dag_sexp_rec(b, ctx))
+        }
+        EvmExpr::If(cond, inputs, t, e) => {
+            format!(
+                "(If {} {} {} {})",
+                dag_sexp_rec(cond, ctx),
+                dag_sexp_rec(inputs, ctx),
+                dag_sexp_rec(t, ctx),
+                dag_sexp_rec(e, ctx)
+            )
+        }
+        EvmExpr::DoWhile(inputs, body) => {
+            format!(
+                "(DoWhile {} {})",
+                dag_sexp_rec(inputs, ctx),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::EnvRead(op, st) => {
+            format!("(EnvRead {} {})", envop_sexp(op), dag_sexp_rec(st, ctx))
+        }
+        EvmExpr::EnvRead1(op, arg, st) => {
+            format!(
+                "(EnvRead1 {} {} {})",
+                envop_sexp(op),
+                dag_sexp_rec(arg, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Log(n, topics, data_offset, data_size, st) => {
+            let topics_s = dag_list_to_sexp(topics, ctx);
+            format!(
+                "(Log {} {} {} {} {})",
+                n,
+                topics_s,
+                dag_sexp_rec(data_offset, ctx),
+                dag_sexp_rec(data_size, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Revert(off, sz, st) => {
+            format!(
+                "(Revert {} {} {})",
+                dag_sexp_rec(off, ctx),
+                dag_sexp_rec(sz, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::ReturnOp(off, sz, st) => {
+            format!(
+                "(ReturnOp {} {} {})",
+                dag_sexp_rec(off, ctx),
+                dag_sexp_rec(sz, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::ExtCall(tgt, val, ao, al, ro, rl, st) => {
+            format!(
+                "(ExtCall {} {} {} {} {} {} {})",
+                dag_sexp_rec(tgt, ctx),
+                dag_sexp_rec(val, ctx),
+                dag_sexp_rec(ao, ctx),
+                dag_sexp_rec(al, ctx),
+                dag_sexp_rec(ro, ctx),
+                dag_sexp_rec(rl, ctx),
+                dag_sexp_rec(st, ctx)
+            )
+        }
+        EvmExpr::Call(name, args) => {
+            let list = dag_list_to_sexp(args, ctx);
+            format!("(Call \"{name}\" {list})")
+        }
+        EvmExpr::Selector(sig) => format!("(Selector \"{sig}\")"),
+        EvmExpr::LetBind(name, value, body) => {
+            format!(
+                "(LetBind \"{}\" {} {})",
+                name,
+                dag_sexp_rec(value, ctx),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::Var(name) => format!("(Var \"{name}\")"),
+        EvmExpr::VarStore(name, value) => {
+            format!("(VarStore \"{}\" {})", name, dag_sexp_rec(value, ctx))
+        }
+        EvmExpr::Drop(name) => format!("(Drop \"{name}\")"),
+        EvmExpr::Function(name, in_ty, out_ty, body) => {
+            format!(
+                "(Function \"{}\" {} {} {})",
+                name,
+                type_sexp(in_ty),
+                type_sexp(out_ty),
+                dag_sexp_rec(body, ctx)
+            )
+        }
+        EvmExpr::StorageField(name, slot, ty) => {
+            format!("(StorageField \"{}\" {} {})", name, slot, type_sexp(ty))
+        }
+        EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
+            let list = dag_list_to_sexp(inputs, ctx);
+            format!("(InlineAsm {list} \"{hex}\" {num_outputs})")
+        }
+        EvmExpr::MemRegion(id, size) => format!("(MemRegion {id} {size})"),
+        EvmExpr::DynAlloc(size) => format!("(DynAlloc {})", dag_sexp_rec(size, ctx)),
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            format!(
+                "(AllocRegion {id} {} {is_dynamic})",
+                dag_sexp_rec(num_fields, ctx)
+            )
+        }
+        EvmExpr::RegionStore(id, field, val, state) => {
+            format!(
+                "(RegionStore {id} {field} {} {})",
+                dag_sexp_rec(val, ctx),
+                dag_sexp_rec(state, ctx)
+            )
+        }
+        EvmExpr::RegionLoad(id, field, state) => {
+            format!("(RegionLoad {id} {field} {})", dag_sexp_rec(state, ctx))
+        }
+    }
+}
+
+fn dag_list_to_sexp(exprs: &[RcExpr], ctx: &mut DagSexpCtx) -> String {
+    exprs.iter().rev().fold("(Nil)".to_owned(), |acc, e| {
+        format!("(Cons {} {})", dag_sexp_rec(e, ctx), acc)
     })
 }
 
@@ -550,6 +914,29 @@ fn sexp_to_evm_expr(sexp: &Sexp) -> Result<RcExpr, IrError> {
                     let id = atom_i64(&items[1])?;
                     let size = atom_i64(&items[2])?;
                     Ok(Rc::new(EvmExpr::MemRegion(id, size)))
+                }
+                "DynAlloc" => {
+                    let size = sexp_to_evm_expr(&items[1])?;
+                    Ok(Rc::new(EvmExpr::DynAlloc(size)))
+                }
+                "AllocRegion" => {
+                    let id = atom_i64(&items[1])?;
+                    let num_fields = sexp_to_evm_expr(&items[2])?;
+                    let is_dynamic = atom_bool(&items[3])?;
+                    Ok(Rc::new(EvmExpr::AllocRegion(id, num_fields, is_dynamic)))
+                }
+                "RegionStore" => {
+                    let id = atom_i64(&items[1])?;
+                    let field = atom_i64(&items[2])?;
+                    let val = sexp_to_evm_expr(&items[3])?;
+                    let state = sexp_to_evm_expr(&items[4])?;
+                    Ok(Rc::new(EvmExpr::RegionStore(id, field, val, state)))
+                }
+                "RegionLoad" => {
+                    let id = atom_i64(&items[1])?;
+                    let field = atom_i64(&items[2])?;
+                    let state = sexp_to_evm_expr(&items[3])?;
+                    Ok(Rc::new(EvmExpr::RegionLoad(id, field, state)))
                 }
                 other => Err(IrError::Extraction(format!(
                     "unknown expression constructor: {other}"
@@ -827,6 +1214,516 @@ fn sexp_to_list(sexp: &Sexp) -> Result<Vec<RcExpr>, IrError> {
     Ok(result)
 }
 
+// ============================================================
+// TermDag → EvmExpr (structured extraction, no string round-trip)
+// ============================================================
+
+/// Convert an egglog `ExtractReport` directly to an `RcExpr`.
+///
+/// This bypasses the 32MB string round-trip through `sexp_to_expr` by walking
+/// egglog's hash-consed `TermDag` directly. Each `TermId` maps to exactly one
+/// `RcExpr`, preserving perfect Rc sharing.
+pub fn extract_report_to_expr(report: &ExtractReport) -> Result<RcExpr, IrError> {
+    match report {
+        ExtractReport::Best { termdag, term, .. } => {
+            let root_id = termdag.lookup(term);
+            let mut cache: HashMap<TermId, RcExpr> = HashMap::new();
+            termdag_convert(termdag, root_id, &mut cache)
+        }
+        ExtractReport::Variants { .. } => Err(IrError::Extraction(
+            "expected Best extract, got Variants".to_owned(),
+        )),
+    }
+}
+
+fn termdag_convert(
+    dag: &TermDag,
+    id: TermId,
+    cache: &mut HashMap<TermId, RcExpr>,
+) -> Result<RcExpr, IrError> {
+    if let Some(cached) = cache.get(&id) {
+        return Ok(Rc::clone(cached));
+    }
+    let term = dag.get(id);
+    let result = match term {
+        Term::App(sym, args) => {
+            let head = sym.as_str();
+            match head {
+                "Arg" => {
+                    let ty = td_type(dag, args[0])?;
+                    let ctx = td_ctx(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::Arg(ty, ctx)))
+                }
+                "Const" => {
+                    let c = td_const(dag, args[0])?;
+                    let ty = td_type(dag, args[1])?;
+                    let ctx = td_ctx(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::Const(c, ty, ctx)))
+                }
+                "Empty" => {
+                    let ty = td_type(dag, args[0])?;
+                    let ctx = td_ctx(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::Empty(ty, ctx)))
+                }
+                "Bop" => {
+                    let op = td_binop(dag, args[0])?;
+                    let l = termdag_convert(dag, args[1], cache)?;
+                    let r = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::Bop(op, l, r)))
+                }
+                "Uop" => {
+                    let op = td_unop(dag, args[0])?;
+                    let e = termdag_convert(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::Uop(op, e)))
+                }
+                "Top" => {
+                    let op = td_ternop(dag, args[0])?;
+                    let a = termdag_convert(dag, args[1], cache)?;
+                    let b = termdag_convert(dag, args[2], cache)?;
+                    let c = termdag_convert(dag, args[3], cache)?;
+                    Ok(Rc::new(EvmExpr::Top(op, a, b, c)))
+                }
+                "Get" => {
+                    let e = termdag_convert(dag, args[0], cache)?;
+                    let idx = td_i64(dag, args[1])? as usize;
+                    Ok(Rc::new(EvmExpr::Get(e, idx)))
+                }
+                "Concat" => {
+                    let a = termdag_convert(dag, args[0], cache)?;
+                    let b = termdag_convert(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::Concat(a, b)))
+                }
+                "If" => {
+                    let cond = termdag_convert(dag, args[0], cache)?;
+                    let inputs = termdag_convert(dag, args[1], cache)?;
+                    let t = termdag_convert(dag, args[2], cache)?;
+                    let e = termdag_convert(dag, args[3], cache)?;
+                    Ok(Rc::new(EvmExpr::If(cond, inputs, t, e)))
+                }
+                "DoWhile" => {
+                    let inputs = termdag_convert(dag, args[0], cache)?;
+                    let body = termdag_convert(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::DoWhile(inputs, body)))
+                }
+                "EnvRead" => {
+                    let op = td_envop(dag, args[0])?;
+                    let st = termdag_convert(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::EnvRead(op, st)))
+                }
+                "EnvRead1" => {
+                    let op = td_envop(dag, args[0])?;
+                    let arg = termdag_convert(dag, args[1], cache)?;
+                    let st = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::EnvRead1(op, arg, st)))
+                }
+                "Log" => {
+                    let n = td_i64(dag, args[0])? as usize;
+                    let topics = td_list(dag, args[1], cache)?;
+                    let data_offset = termdag_convert(dag, args[2], cache)?;
+                    let data_size = termdag_convert(dag, args[3], cache)?;
+                    let st = termdag_convert(dag, args[4], cache)?;
+                    Ok(Rc::new(EvmExpr::Log(n, topics, data_offset, data_size, st)))
+                }
+                "Revert" => {
+                    let off = termdag_convert(dag, args[0], cache)?;
+                    let sz = termdag_convert(dag, args[1], cache)?;
+                    let st = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::Revert(off, sz, st)))
+                }
+                "ReturnOp" => {
+                    let off = termdag_convert(dag, args[0], cache)?;
+                    let sz = termdag_convert(dag, args[1], cache)?;
+                    let st = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::ReturnOp(off, sz, st)))
+                }
+                "ExtCall" => {
+                    let tgt = termdag_convert(dag, args[0], cache)?;
+                    let val = termdag_convert(dag, args[1], cache)?;
+                    let ao = termdag_convert(dag, args[2], cache)?;
+                    let al = termdag_convert(dag, args[3], cache)?;
+                    let ro = termdag_convert(dag, args[4], cache)?;
+                    let rl = termdag_convert(dag, args[5], cache)?;
+                    let st = termdag_convert(dag, args[6], cache)?;
+                    Ok(Rc::new(EvmExpr::ExtCall(tgt, val, ao, al, ro, rl, st)))
+                }
+                "Call" => {
+                    let name = td_string(dag, args[0])?;
+                    let list = td_list(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::Call(name, list)))
+                }
+                "Selector" => {
+                    let sig = td_string(dag, args[0])?;
+                    Ok(Rc::new(EvmExpr::Selector(sig)))
+                }
+                "LetBind" => {
+                    let name = td_string(dag, args[0])?;
+                    let value = termdag_convert(dag, args[1], cache)?;
+                    let body = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::LetBind(name, value, body)))
+                }
+                "Var" => {
+                    let name = td_string(dag, args[0])?;
+                    Ok(Rc::new(EvmExpr::Var(name)))
+                }
+                "VarStore" => {
+                    let name = td_string(dag, args[0])?;
+                    let value = termdag_convert(dag, args[1], cache)?;
+                    Ok(Rc::new(EvmExpr::VarStore(name, value)))
+                }
+                "Drop" => {
+                    let name = td_string(dag, args[0])?;
+                    Ok(Rc::new(EvmExpr::Drop(name)))
+                }
+                "Function" => {
+                    let name = td_string(dag, args[0])?;
+                    let in_ty = td_type(dag, args[1])?;
+                    let out_ty = td_type(dag, args[2])?;
+                    let body = termdag_convert(dag, args[3], cache)?;
+                    Ok(Rc::new(EvmExpr::Function(name, in_ty, out_ty, body)))
+                }
+                "StorageField" => {
+                    let name = td_string(dag, args[0])?;
+                    let slot = td_i64(dag, args[1])? as usize;
+                    let ty = td_type(dag, args[2])?;
+                    Ok(Rc::new(EvmExpr::StorageField(name, slot, ty)))
+                }
+                "InlineAsm" => {
+                    let inputs = td_list(dag, args[0], cache)?;
+                    let hex = td_string(dag, args[1])?;
+                    let num_outputs = td_i64(dag, args[2])? as i32;
+                    Ok(Rc::new(EvmExpr::InlineAsm(inputs, hex, num_outputs)))
+                }
+                "MemRegion" => {
+                    let id = td_i64(dag, args[0])?;
+                    let size = td_i64(dag, args[1])?;
+                    Ok(Rc::new(EvmExpr::MemRegion(id, size)))
+                }
+                "DynAlloc" => {
+                    let size = termdag_convert(dag, args[0], cache)?;
+                    Ok(Rc::new(EvmExpr::DynAlloc(size)))
+                }
+                "AllocRegion" => {
+                    let id = td_i64(dag, args[0])?;
+                    let num_fields = termdag_convert(dag, args[1], cache)?;
+                    let is_dynamic = td_bool(dag, args[2])?;
+                    Ok(Rc::new(EvmExpr::AllocRegion(id, num_fields, is_dynamic)))
+                }
+                "RegionStore" => {
+                    let id = td_i64(dag, args[0])?;
+                    let field = td_i64(dag, args[1])?;
+                    let val = termdag_convert(dag, args[2], cache)?;
+                    let state = termdag_convert(dag, args[3], cache)?;
+                    Ok(Rc::new(EvmExpr::RegionStore(id, field, val, state)))
+                }
+                "RegionLoad" => {
+                    let id = td_i64(dag, args[0])?;
+                    let field = td_i64(dag, args[1])?;
+                    let state = termdag_convert(dag, args[2], cache)?;
+                    Ok(Rc::new(EvmExpr::RegionLoad(id, field, state)))
+                }
+                other => Err(IrError::Extraction(format!(
+                    "termdag: unknown constructor: {other}"
+                ))),
+            }
+        }
+        Term::Lit(_) | Term::Var(_) => Err(IrError::Extraction(format!(
+            "termdag: unexpected term: {term:?}"
+        ))),
+    }?;
+    cache.insert(id, Rc::clone(&result));
+    Ok(result)
+}
+
+/// Extract an i64 literal from a `TermDag` node.
+fn td_i64(dag: &TermDag, id: TermId) -> Result<i64, IrError> {
+    match dag.get(id) {
+        Term::Lit(Literal::Int(n)) => Ok(*n),
+        other => Err(IrError::Extraction(format!(
+            "expected i64 literal, got: {other:?}"
+        ))),
+    }
+}
+
+/// Extract a string literal from a `TermDag` node.
+fn td_string(dag: &TermDag, id: TermId) -> Result<String, IrError> {
+    match dag.get(id) {
+        Term::Lit(Literal::String(sym)) => Ok(sym.as_str().to_owned()),
+        other => Err(IrError::Extraction(format!(
+            "expected string literal, got: {other:?}"
+        ))),
+    }
+}
+
+/// Extract a bool literal from a `TermDag` node.
+fn td_bool(dag: &TermDag, id: TermId) -> Result<bool, IrError> {
+    match dag.get(id) {
+        Term::Lit(Literal::Bool(b)) => Ok(*b),
+        other => Err(IrError::Extraction(format!(
+            "expected bool literal, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_const(dag: &TermDag, id: TermId) -> Result<EvmConstant, IrError> {
+    match dag.get(id) {
+        Term::App(sym, args) => match sym.as_str() {
+            "SmallInt" => Ok(EvmConstant::SmallInt(td_i64(dag, args[0])?)),
+            "LargeInt" => Ok(EvmConstant::LargeInt(td_string(dag, args[0])?)),
+            "ConstBool" => Ok(EvmConstant::Bool(td_bool(dag, args[0])?)),
+            "ConstAddr" => Ok(EvmConstant::Addr(td_string(dag, args[0])?)),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown constant: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected constant, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_type(dag: &TermDag, id: TermId) -> Result<EvmType, IrError> {
+    match dag.get(id) {
+        Term::App(sym, args) => match sym.as_str() {
+            "Base" => Ok(EvmType::Base(td_basetype(dag, args[0])?)),
+            "TupleT" => {
+                let types = td_type_list(dag, args[0])?;
+                Ok(EvmType::TupleT(types))
+            }
+            "ArrayT" => {
+                let elem = td_basetype(dag, args[0])?;
+                let len = td_i64(dag, args[1])? as usize;
+                Ok(EvmType::ArrayT(elem, len))
+            }
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown type: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected type, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_basetype(dag: &TermDag, id: TermId) -> Result<EvmBaseType, IrError> {
+    match dag.get(id) {
+        Term::App(sym, args) => match sym.as_str() {
+            "UIntT" => Ok(EvmBaseType::UIntT(td_i64(dag, args[0])? as u16)),
+            "IntT" => Ok(EvmBaseType::IntT(td_i64(dag, args[0])? as u16)),
+            "BytesT" => Ok(EvmBaseType::BytesT(td_i64(dag, args[0])? as u8)),
+            "AddrT" => Ok(EvmBaseType::AddrT),
+            "BoolT" => Ok(EvmBaseType::BoolT),
+            "UnitT" => Ok(EvmBaseType::UnitT),
+            "StateT" => Ok(EvmBaseType::StateT),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown base type: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected base type, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_type_list(dag: &TermDag, id: TermId) -> Result<Vec<EvmBaseType>, IrError> {
+    let mut result = Vec::new();
+    let mut cur = id;
+    loop {
+        match dag.get(cur) {
+            Term::App(sym, args) => match sym.as_str() {
+                "TLNil" => break,
+                "TLCons" => {
+                    result.push(td_basetype(dag, args[0])?);
+                    cur = args[1];
+                }
+                other => {
+                    return Err(IrError::Extraction(format!(
+                        "termdag: expected TLCons/TLNil, got: {other}"
+                    )))
+                }
+            },
+            other => {
+                return Err(IrError::Extraction(format!(
+                    "termdag: expected type list, got: {other:?}"
+                )))
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn td_ctx(
+    dag: &TermDag,
+    id: TermId,
+    cache: &mut HashMap<TermId, RcExpr>,
+) -> Result<EvmContext, IrError> {
+    match dag.get(id) {
+        Term::App(sym, args) => match sym.as_str() {
+            "InFunction" => Ok(EvmContext::InFunction(td_string(dag, args[0])?)),
+            "InBranch" => {
+                let b = td_bool(dag, args[0])?;
+                let pred = termdag_convert(dag, args[1], cache)?;
+                let input = termdag_convert(dag, args[2], cache)?;
+                Ok(EvmContext::InBranch(b, pred, input))
+            }
+            "InLoop" => {
+                let input = termdag_convert(dag, args[0], cache)?;
+                let pred = termdag_convert(dag, args[1], cache)?;
+                Ok(EvmContext::InLoop(input, pred))
+            }
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown context: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected context, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_binop(dag: &TermDag, id: TermId) -> Result<EvmBinaryOp, IrError> {
+    match dag.get(id) {
+        Term::App(sym, _) => match sym.as_str() {
+            "OpAdd" => Ok(EvmBinaryOp::Add),
+            "OpSub" => Ok(EvmBinaryOp::Sub),
+            "OpMul" => Ok(EvmBinaryOp::Mul),
+            "OpDiv" => Ok(EvmBinaryOp::Div),
+            "OpSDiv" => Ok(EvmBinaryOp::SDiv),
+            "OpMod" => Ok(EvmBinaryOp::Mod),
+            "OpSMod" => Ok(EvmBinaryOp::SMod),
+            "OpExp" => Ok(EvmBinaryOp::Exp),
+            "OpCheckedAdd" => Ok(EvmBinaryOp::CheckedAdd),
+            "OpCheckedSub" => Ok(EvmBinaryOp::CheckedSub),
+            "OpCheckedMul" => Ok(EvmBinaryOp::CheckedMul),
+            "OpLt" => Ok(EvmBinaryOp::Lt),
+            "OpGt" => Ok(EvmBinaryOp::Gt),
+            "OpSLt" => Ok(EvmBinaryOp::SLt),
+            "OpSGt" => Ok(EvmBinaryOp::SGt),
+            "OpEq" => Ok(EvmBinaryOp::Eq),
+            "OpAnd" => Ok(EvmBinaryOp::And),
+            "OpOr" => Ok(EvmBinaryOp::Or),
+            "OpXor" => Ok(EvmBinaryOp::Xor),
+            "OpShl" => Ok(EvmBinaryOp::Shl),
+            "OpShr" => Ok(EvmBinaryOp::Shr),
+            "OpSar" => Ok(EvmBinaryOp::Sar),
+            "OpByte" => Ok(EvmBinaryOp::Byte),
+            "OpLogAnd" => Ok(EvmBinaryOp::LogAnd),
+            "OpLogOr" => Ok(EvmBinaryOp::LogOr),
+            "OpSLoad" => Ok(EvmBinaryOp::SLoad),
+            "OpTLoad" => Ok(EvmBinaryOp::TLoad),
+            "OpMLoad" => Ok(EvmBinaryOp::MLoad),
+            "OpCalldataLoad" => Ok(EvmBinaryOp::CalldataLoad),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown binary op: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected binary op, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_unop(dag: &TermDag, id: TermId) -> Result<EvmUnaryOp, IrError> {
+    match dag.get(id) {
+        Term::App(sym, _) => match sym.as_str() {
+            "OpIsZero" => Ok(EvmUnaryOp::IsZero),
+            "OpNot" => Ok(EvmUnaryOp::Not),
+            "OpNeg" => Ok(EvmUnaryOp::Neg),
+            "OpSignExtend" => Ok(EvmUnaryOp::SignExtend),
+            "OpClz" => Ok(EvmUnaryOp::Clz),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown unary op: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected unary op, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_ternop(dag: &TermDag, id: TermId) -> Result<EvmTernaryOp, IrError> {
+    match dag.get(id) {
+        Term::App(sym, _) => match sym.as_str() {
+            "OpSStore" => Ok(EvmTernaryOp::SStore),
+            "OpTStore" => Ok(EvmTernaryOp::TStore),
+            "OpMStore" => Ok(EvmTernaryOp::MStore),
+            "OpMStore8" => Ok(EvmTernaryOp::MStore8),
+            "OpKeccak256" => Ok(EvmTernaryOp::Keccak256),
+            "OpSelect" => Ok(EvmTernaryOp::Select),
+            "OpCalldataCopy" => Ok(EvmTernaryOp::CalldataCopy),
+            "OpMcopy" => Ok(EvmTernaryOp::Mcopy),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown ternary op: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected ternary op, got: {other:?}"
+        ))),
+    }
+}
+
+fn td_envop(dag: &TermDag, id: TermId) -> Result<EvmEnvOp, IrError> {
+    match dag.get(id) {
+        Term::App(sym, _) => match sym.as_str() {
+            "EnvCaller" => Ok(EvmEnvOp::Caller),
+            "EnvCallValue" => Ok(EvmEnvOp::CallValue),
+            "EnvCallDataSize" => Ok(EvmEnvOp::CallDataSize),
+            "EnvOrigin" => Ok(EvmEnvOp::Origin),
+            "EnvGasPrice" => Ok(EvmEnvOp::GasPrice),
+            "EnvBlockHash" => Ok(EvmEnvOp::BlockHash),
+            "EnvCoinbase" => Ok(EvmEnvOp::Coinbase),
+            "EnvTimestamp" => Ok(EvmEnvOp::Timestamp),
+            "EnvNumber" => Ok(EvmEnvOp::Number),
+            "EnvGasLimit" => Ok(EvmEnvOp::GasLimit),
+            "EnvChainId" => Ok(EvmEnvOp::ChainId),
+            "EnvSelfBalance" => Ok(EvmEnvOp::SelfBalance),
+            "EnvBaseFee" => Ok(EvmEnvOp::BaseFee),
+            "EnvGas" => Ok(EvmEnvOp::Gas),
+            "EnvAddress" => Ok(EvmEnvOp::Address),
+            "EnvBalance" => Ok(EvmEnvOp::Balance),
+            "EnvCodeSize" => Ok(EvmEnvOp::CodeSize),
+            "EnvReturnDataSize" => Ok(EvmEnvOp::ReturnDataSize),
+            other => Err(IrError::Extraction(format!(
+                "termdag: unknown env op: {other}"
+            ))),
+        },
+        other => Err(IrError::Extraction(format!(
+            "termdag: expected env op, got: {other:?}"
+        ))),
+    }
+}
+
+/// Convert a Cons/Nil list in `TermDag` to `Vec<RcExpr>`.
+fn td_list(
+    dag: &TermDag,
+    id: TermId,
+    cache: &mut HashMap<TermId, RcExpr>,
+) -> Result<Vec<RcExpr>, IrError> {
+    let mut result = Vec::new();
+    let mut cur = id;
+    loop {
+        match dag.get(cur) {
+            Term::App(sym, args) => match sym.as_str() {
+                "Nil" => break,
+                "Cons" => {
+                    result.push(termdag_convert(dag, args[0], cache)?);
+                    cur = args[1];
+                }
+                other => {
+                    return Err(IrError::Extraction(format!(
+                        "termdag: expected Cons/Nil, got: {other}"
+                    )))
+                }
+            },
+            other => {
+                return Err(IrError::Extraction(format!(
+                    "termdag: expected list, got: {other:?}"
+                )))
+            }
+        }
+    }
+    Ok(result)
+}
+
 // ---- Atom helpers ----
 
 fn atom_str(sexp: &Sexp) -> Result<String, IrError> {
@@ -1003,7 +1900,7 @@ fn is_leaf_form(tree: &STree) -> bool {
                     // Context
                     | "InFunction"
                     // Leaves
-                    | "Selector" | "Var" | "VarStore" | "StorageField" | "MemRegion"
+                    | "Selector" | "Var" | "VarStore" | "StorageField" | "MemRegion" | "DynAlloc"
                     // Empty/Arg (no sub-expressions)
                     | "Arg" | "Empty" | "Const"
                 )

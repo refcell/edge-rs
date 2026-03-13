@@ -45,28 +45,28 @@ contract Multisig {
     let owner_count: &s u256;
 
     // Whether an address is an owner.
-    let is_owner: &s map<addr, bool>;
+    let is_owner: &s Map<addr, bool>;
 
     // Proposal counter (next proposal ID).
     let proposal_count: &s u256;
 
     // Proposal targets.
-    let proposal_targets: &s map<u256, addr>;
+    let proposal_targets: &s Map<u256, addr>;
 
     // Proposal values.
-    let proposal_values: &s map<u256, u256>;
+    let proposal_values: &s Map<u256, u256>;
 
     // Proposal data.
-    let proposal_data: &s map<u256, b32>;
+    let proposal_data: &s Map<u256, b32>;
 
     // Proposal states: 0=Pending, 1=Approved, 2=Executed, 3=Cancelled.
-    let proposal_states: &s map<u256, u256>;
+    let proposal_states: &s Map<u256, u256>;
 
     // Number of confirmations per proposal.
-    let confirmation_count: &s map<u256, u256>;
+    let confirmation_count: &s Map<u256, u256>;
 
     // Whether an owner has confirmed a proposal.
-    let confirmations: &s map<u256, map<addr, bool>>;
+    let confirmations: &s Map<u256, Map<addr, bool>>;
 
     // Create a new proposal. Only owners can propose.
     pub fn propose(target: addr, value: u256, data: b32) -> (u256) {

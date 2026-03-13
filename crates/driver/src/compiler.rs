@@ -110,6 +110,15 @@ impl Compiler {
             .render_to_string(&path, &self.session.source)
     }
 
+    /// Parse and resolve imports, returning the preprocessed AST.
+    /// Useful for tests that need to control IR/codegen optimization levels separately.
+    pub fn parse_and_resolve(&mut self) -> Result<Program, CompileError> {
+        let _tokens = self.lex()?;
+        let mut ast = self.parse()?;
+        self.resolve_imports(&mut ast)?;
+        Ok(ast)
+    }
+
     /// Run the compilation pipeline
     pub fn compile(&mut self) -> Result<CompileOutput, CompileError> {
         tracing::info!("Compiling {:?}", self.session.config.input_file);
@@ -356,19 +365,48 @@ impl Compiler {
     /// Run the parser and produce an AST
     fn parse(&mut self) -> Result<Program, CompileError> {
         let mut parser = Parser::new(&self.session.source).map_err(|e| {
-            self.session
-                .emit_error(Diagnostic::error(format!("parse error: {e}")));
+            self.session.emit_error(Self::parse_error_to_diagnostic(&e));
             CompileError::ParseErrors
         })?;
 
         match parser.parse() {
             Ok(program) => Ok(program),
             Err(e) => {
-                self.session
-                    .emit_error(Diagnostic::error(format!("parse error: {e}")));
+                self.session.emit_error(Self::parse_error_to_diagnostic(&e));
                 self.session.report_diagnostics();
                 Err(CompileError::ParseErrors)
             }
+        }
+    }
+
+    /// Convert a `ParseError` into a `Diagnostic` with proper span labels.
+    fn parse_error_to_diagnostic(e: &edge_parser::ParseError) -> Diagnostic {
+        use edge_parser::ParseError;
+        match e {
+            ParseError::UnexpectedToken {
+                found,
+                expected,
+                span,
+            } => Diagnostic::error(format!("expected {expected}, found {found}"))
+                .with_label(span.clone(), format!("expected {expected}")),
+            ParseError::InvalidTypeSig { message, span } => {
+                Diagnostic::error(format!("invalid type: {message}"))
+                    .with_label(span.clone(), message.clone())
+            }
+            ParseError::InvalidExpr { message, span } => {
+                Diagnostic::error(format!("invalid expression: {message}"))
+                    .with_label(span.clone(), message.clone())
+            }
+            ParseError::InvalidStmt { message, span } => {
+                Diagnostic::error(format!("invalid statement: {message}"))
+                    .with_label(span.clone(), message.clone())
+            }
+            ParseError::InvalidPattern { message, span } => {
+                Diagnostic::error(format!("invalid pattern: {message}"))
+                    .with_label(span.clone(), message.clone())
+            }
+            ParseError::UnexpectedEof => Diagnostic::error("unexpected end of file"),
+            ParseError::LexerError(msg) => Diagnostic::error(format!("lexer error: {msg}")),
         }
     }
 
@@ -382,6 +420,10 @@ impl Compiler {
     /// 2. Embedded sources baked into the binary at compile time via `build.rs`
     ///    (works on any machine with no extra setup).
     fn resolve_imports(&mut self, ast: &mut Program) -> Result<(), CompileError> {
+        // Auto-import globals: ops, map, option, result.
+        // These are always available without explicit `use` statements.
+        self.auto_import_globals(ast)?;
+
         // Collect std imports from the AST.
         // Build a full path-segments list by combining intermediate `segments` with the final
         // `path` identifier.  For example:
@@ -516,6 +558,107 @@ impl Compiler {
         Ok(())
     }
 
+    /// Auto-import all `std/globals/*.edge` files — these are always available
+    /// without explicit `use` statements. Prepends their declarations (types,
+    /// traits, impls, functions) to the AST.
+    fn auto_import_globals(&mut self, ast: &mut Program) -> Result<(), CompileError> {
+        // Order matters: ops first (trait defs), then map (uses ops traits).
+        let global_keys = [
+            "globals/ops",
+            "globals/option",
+            "globals/result",
+            "globals/map",
+            "globals/vec",
+        ];
+        let mut new_stmts: Vec<edge_ast::Stmt> = Vec::new();
+
+        // Canonicalize the explicit override path once (if provided).
+        let explicit_std_path: Option<std::path::PathBuf> =
+            self.session.config.std_path.as_ref().and_then(|p| {
+                let canon = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
+                if canon.is_dir() {
+                    Some(canon)
+                } else {
+                    None
+                }
+            });
+
+        for key in &global_keys {
+            let segments: Vec<String> = key.split('/').map(String::from).collect();
+            let source = explicit_std_path.as_ref().map_or_else(
+                || Self::try_read_from_embedded(&segments).map(String::from),
+                |std_path| {
+                    Self::try_read_from_fs(std_path, &segments)
+                        .or_else(|| Self::try_read_from_embedded(&segments).map(String::from))
+                },
+            );
+
+            let Some(source) = source else {
+                // Globals not available (e.g., downstream consumer without std/).
+                continue;
+            };
+
+            let mut parser = Parser::new(&source).map_err(|e| {
+                self.session.emit_error(Diagnostic::error(format!(
+                    "parse error in globals `{key}`: {e}"
+                )));
+                CompileError::ParseErrors
+            })?;
+
+            let program = parser.parse().map_err(|e| {
+                self.session.emit_error(Diagnostic::error(format!(
+                    "parse error in globals `{key}`: {e}"
+                )));
+                self.session.report_diagnostics();
+                CompileError::ParseErrors
+            })?;
+
+            // Include everything except ModuleImport/ModuleDecl (internal imports).
+            for stmt in program.stmts {
+                if !matches!(
+                    stmt,
+                    edge_ast::Stmt::ModuleImport(_) | edge_ast::Stmt::ModuleDecl(_)
+                ) {
+                    new_stmts.push(stmt);
+                }
+            }
+        }
+
+        if !new_stmts.is_empty() {
+            // Collect names defined in the user's file so globals don't shadow them.
+            // Like Rust's prelude: local definitions take priority over auto-imports.
+            let user_defined: std::collections::HashSet<String> = ast
+                .stmts
+                .iter()
+                .filter_map(|stmt| match stmt {
+                    edge_ast::Stmt::TypeAssign(td, _, _) => Some(td.name.name.clone()),
+                    edge_ast::Stmt::TraitDecl(tr, _) => Some(tr.name.name.clone()),
+                    edge_ast::Stmt::FnAssign(fd, _) | edge_ast::Stmt::ComptimeFn(fd, _) => {
+                        Some(fd.name.name.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            // Filter out global statements whose name collides with user definitions.
+            new_stmts.retain(|stmt| {
+                let name = match stmt {
+                    edge_ast::Stmt::TypeAssign(td, _, _) => Some(&td.name.name),
+                    edge_ast::Stmt::TraitDecl(tr, _) => Some(&tr.name.name),
+                    edge_ast::Stmt::FnAssign(fd, _) | edge_ast::Stmt::ComptimeFn(fd, _) => {
+                        Some(&fd.name.name)
+                    }
+                    _ => None,
+                };
+                name.is_none_or(|n| !user_defined.contains(n))
+            });
+
+            new_stmts.append(&mut ast.stmts);
+            ast.stmts = new_stmts;
+        }
+        Ok(())
+    }
+
     /// Resolve a set of import path segments to a `(module_key, source)` pair.
     ///
     /// Tries, in order:
@@ -585,6 +728,53 @@ impl Compiler {
                     symbol
                 );
                 return Ok((key, source.to_string(), Some(symbol)));
+            }
+        }
+
+        // Before giving up, check if this import points to a globals module
+        // (e.g., `use std::ops::Add` → file "ops" not found, but "globals/ops" exists).
+        // If so, the content is already auto-imported — just return it.
+        //
+        // Try two forms:
+        // 1. Full path: ["globals"] + segments (e.g., "globals/ops/Add")
+        // 2. Symbol-level: ["globals"] + segments[..n-1], symbol = segments[n-1]
+        //    (e.g., "globals/ops" with symbol "Add")
+        {
+            // Form 1: full path with globals prefix
+            let fallback_segments: Vec<String> = std::iter::once("globals".to_string())
+                .chain(segments.iter().cloned())
+                .collect();
+
+            if let Some(ref std_path) = explicit_std_path {
+                if let Some(source) = Self::try_read_from_fs(std_path, &fallback_segments) {
+                    let key = fallback_segments.join("/");
+                    return Ok((key, source, None));
+                }
+            }
+
+            if let Some(source) = Self::try_read_from_embedded(&fallback_segments) {
+                let key = fallback_segments.join("/");
+                return Ok((key, source.to_string(), None));
+            }
+
+            // Form 2: strip last segment as symbol name within globals file
+            if segments.len() > 1 {
+                let symbol = segments.last().unwrap().clone();
+                let file_fallback: Vec<String> = std::iter::once("globals".to_string())
+                    .chain(segments[..segments.len() - 1].iter().cloned())
+                    .collect();
+
+                if let Some(ref std_path) = explicit_std_path {
+                    if let Some(source) = Self::try_read_from_fs(std_path, &file_fallback) {
+                        let key = file_fallback.join("/");
+                        return Ok((key, source, Some(symbol)));
+                    }
+                }
+
+                if let Some(source) = Self::try_read_from_embedded(&file_fallback) {
+                    let key = file_fallback.join("/");
+                    return Ok((key, source.to_string(), Some(symbol)));
+                }
             }
         }
 

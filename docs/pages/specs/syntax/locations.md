@@ -8,6 +8,7 @@ title: Data locations
 <storage_pointer> ::= "&s" ;
 <transient_storage_pointer> ::= "&t" ;
 <memory_pointer> ::= "&m" ;
+<dynamic_memory_pointer> ::= "&dm" ;
 <calldata_pointer> ::= "&cd" ;
 <returndata_pointer> ::= "&rd" ;
 <internal_code_pointer> ::= "&ic" ;
@@ -17,6 +18,7 @@ title: Data locations
     | <storage_pointer>
     | <transient_storage_pointer>
     | <memory_pointer>
+    | <dynamic_memory_pointer>
     | <calldata_pointer>
     | <returndata_pointer>
     | <internal_code_pointer>
@@ -24,13 +26,14 @@ title: Data locations
 ```
 
 The `<data_location>` is a pointer annotation indicating which EVM data region
-a value resides in. Edge defines seven distinct location annotations. This is a
+a value resides in. Edge defines eight distinct location annotations. This is a
 divergence from general-purpose programming languages to more accurately represent
 the EVM execution environment.
 
 * `&s` — persistent storage
 * `&t` — transient storage (EIP-1153)
 * `&m` — memory
+* `&dm` — dynamic memory
 * `&cd` — calldata
 * `&rd` — returndata
 * `&ic` — internal (local) code
@@ -38,7 +41,7 @@ the EVM execution environment.
 
 :::note
 The `&` character is heavily overloaded in the lexer. It checks for data-location
-sigils first (`&s`, `&t`, `&m`, `&cd`, `&rd`, `&ic`, `&ec`), then `&=`, then
+sigils first (`&s`, `&t`, `&m`, `&dm`, `&cd`, `&rd`, `&ic`, `&ec`), then `&=`, then
 `&&`, and finally falls back to bitwise AND.
 :::
 
@@ -51,6 +54,44 @@ Data locations can be grouped into two broad categories: buffers and maps.
 Persistent and transient storage are part of the map category —
 256-bit keys map to 256-bit values. Both may be written or read one
 word at a time.
+
+### Dynamic memory
+
+The `&dm` annotation designates a pointer to **dynamically allocated
+memory**. Unlike `&m` (which refers to compiler-managed fixed-offset
+memory), `&dm` pointers are obtained at runtime via the `@alloc` builtin
+and point to MSIZE-allocated regions.
+
+`&dm` enables:
+
+- **Runtime-sized allocations**: `@alloc(size_bytes)` returns a pointer
+  to a fresh memory region that does not overlap with any other allocation.
+- **Transparent pointer aliasing**: When a method takes `self: &dm Self`,
+  mutations to the underlying pointer (e.g., during `Vec` growth and
+  reallocation) are propagated back to the caller transparently.
+- **Pass-by-reference semantics**: Methods on `&dm` types receive and
+  can update the caller's pointer, enabling in-place mutation of
+  dynamically-sized structures.
+
+`&dm` is primarily used by `Vec<T>` and other dynamically-sized standard
+library types. The compiler tracks `&dm` regions symbolically for
+optimization (region-based store forwarding, non-aliasing proofs).
+
+```edge
+type Vec<T> = { len: u256, capacity: u256 };
+
+impl Vec<T> {
+    fn len(self: &dm Self) -> u256 {
+        self.len
+    }
+
+    fn push(self: &dm Self, val: T) {
+        // self is a &dm pointer — mutations to self.len
+        // are visible to the caller
+        // ...
+    }
+}
+```
 
 ### Buffers
 
@@ -91,6 +132,7 @@ location are specified in the type system documents.
 | persistent storage | 256 | Storage is a 256-bit key–value hashmap |
 | transient storage  | 256 | Transient storage is a 256-bit key–value hashmap |
 | memory             | 32  | Theoretical maximum memory size does not approach 2³² |
+| dynamic memory     | 32  | Theoretical maximum memory size does not approach 2³² |
 | calldata           | 32  | Theoretical maximum calldata size does not approach 2³² |
 | returndata         | 32  | Maximum returndata size equals maximum memory size |
 | internal code      | 16  | Code size is less than 0xFFFF |

@@ -89,4 +89,10 @@ pub enum Location {
     /// May only be copied to memory.
     #[display("&ec")]
     ExternalCode,
+    /// Dynamic Memory
+    ///
+    /// A runtime-allocated memory region.
+    /// Pointer value is the base address, accessed via MLOAD/MSTORE.
+    #[display("&dm")]
+    DynamicMemory,
 }

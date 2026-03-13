@@ -74,7 +74,7 @@ fn calldata_intrinsic_gas(cd: &[u8]) -> u64 {
     cd.iter().map(|&b| if b == 0 { 4u64 } else { 16u64 }).sum()
 }
 
-fn execution_gas(gas_used: u64, cd: &[u8]) -> u64 {
+pub(crate) fn execution_gas(gas_used: u64, cd: &[u8]) -> u64 {
     gas_used
         .saturating_sub(21000)
         .saturating_sub(calldata_intrinsic_gas(cd))

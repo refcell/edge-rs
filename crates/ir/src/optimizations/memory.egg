@@ -5,8 +5,27 @@
 
 ;; ---- Redundant load after store ----
 ;; MLoad(offset, MStore(offset, val, state)) -> val
-(rewrite (Bop (OpMLoad) offset (Top (OpMStore) offset val state))
+;; SAFETY NOTE: This forwarding is semantically correct in the state-threaded IR,
+;; but can produce wrong codegen when `val` contains MLOAD(offset, s_old) because
+;; codegen ignores state parameters — both MLOAD(offset, s_old) and
+;; MLOAD(offset, s_new) compile to the same MLOAD(offset), reading final memory.
+;; This is only a problem when `val` references the SAME offset being stored,
+;; creating a read-modify-write cycle (e.g., `self.len += 1`).
+;; We restrict to MemRegion-based offsets (compile-time known, typically write-once)
+;; and keep the generic rule only for values that are constants.
+
+;; Safe for MemRegion-based offsets (static allocations)
+(rewrite (Bop (OpMLoad) (MemRegion r s) (Top (OpMStore) (MemRegion r s) val state))
          val :subsume :ruleset memory-opt)
+(rewrite (Bop (OpMLoad) (Bop (OpAdd) (MemRegion r s) off)
+                        (Top (OpMStore) (Bop (OpAdd) (MemRegion r s) off) val state))
+         val :subsume :ruleset memory-opt)
+
+;; Safe for any offset when val is a constant (no MLOAD dependency)
+(rule ((= e (Bop (OpMLoad) offset (Top (OpMStore) offset val state)))
+       (= val (Const c ty ctx)))
+      ((union e val))
+      :ruleset memory-opt)
 
 ;; ---- Redundant store of loaded value ----
 ;; MStore(offset, MLoad(offset, state), state) -> state

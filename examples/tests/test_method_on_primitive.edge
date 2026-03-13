@@ -1,0 +1,26 @@
+// test_method_on_primitive.edge — Test trait method calls on primitive types
+//
+// Tests that trait methods can be called using dot syntax on primitives:
+//   a.unsafe_add(b)  instead of  UnsafeAdd::unsafe_add(a, b)
+
+use std::ops::UnsafeAdd;
+use std::ops::UnsafeSub;
+use std::ops::UnsafeMul;
+
+contract MethodOnPrimitive {
+    pub fn test_unsafe_add(a: u256, b: u256) -> (u256) {
+        return a.unsafe_add(b);
+    }
+
+    pub fn test_unsafe_sub(a: u256, b: u256) -> (u256) {
+        return a.unsafe_sub(b);
+    }
+
+    pub fn test_unsafe_mul(a: u256, b: u256) -> (u256) {
+        return a.unsafe_mul(b);
+    }
+
+    pub fn test_qualified_still_works(a: u256, b: u256) -> (u256) {
+        return a.unsafe_add(b);
+    }
+}

@@ -14,7 +14,10 @@ mod pattern;
 mod storage;
 mod types;
 
-use std::{collections::HashSet, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use indexmap::IndexMap;
 
@@ -31,6 +34,19 @@ use crate::{
 /// Used during lowering to ensure a `LetBind` init expression doesn't reference
 /// variables whose `LetBinds` are inner (not yet allocated).
 pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
+    let mut visited = HashSet::new();
+    references_any_var_inner(expr, names, &mut visited)
+}
+
+fn references_any_var_inner(
+    expr: &RcExpr,
+    names: &HashSet<&str>,
+    visited: &mut HashSet<usize>,
+) -> bool {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if !visited.insert(ptr) {
+        return false;
+    }
     match expr.as_ref() {
         EvmExpr::Var(n) => names.contains(n.as_str()),
         EvmExpr::Const(..)
@@ -40,39 +56,58 @@ pub(crate) fn references_any_var(expr: &RcExpr, names: &HashSet<&str>) -> bool {
         | EvmExpr::StorageField(..)
         | EvmExpr::Drop(_)
         | EvmExpr::MemRegion(..) => false,
-        EvmExpr::InlineAsm(inputs, _, _) => inputs.iter().any(|inp| references_any_var(inp, names)),
+        EvmExpr::InlineAsm(inputs, _, _) => inputs
+            .iter()
+            .any(|inp| references_any_var_inner(inp, names, visited)),
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) | EvmExpr::DoWhile(a, b) => {
-            references_any_var(a, names) || references_any_var(b, names)
+            references_any_var_inner(a, names, visited)
+                || references_any_var_inner(b, names, visited)
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => references_any_var(a, names),
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => references_any_var_inner(a, names, visited),
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            references_any_var(a, names)
-                || references_any_var(b, names)
-                || references_any_var(c, names)
+            references_any_var_inner(a, names, visited)
+                || references_any_var_inner(b, names, visited)
+                || references_any_var_inner(c, names, visited)
         }
+        EvmExpr::RegionStore(_, _, val, state) => {
+            references_any_var_inner(val, names, visited)
+                || references_any_var_inner(state, names, visited)
+        }
+        EvmExpr::RegionLoad(_, _, state) => references_any_var_inner(state, names, visited),
         EvmExpr::If(c, i, t, e) => {
-            references_any_var(c, names)
-                || references_any_var(i, names)
-                || references_any_var(t, names)
-                || references_any_var(e, names)
+            references_any_var_inner(c, names, visited)
+                || references_any_var_inner(i, names, visited)
+                || references_any_var_inner(t, names, visited)
+                || references_any_var_inner(e, names, visited)
         }
-        EvmExpr::VarStore(_, v) => references_any_var(v, names),
+        EvmExpr::VarStore(_, v) => references_any_var_inner(v, names, visited),
         EvmExpr::LetBind(_, init, body) => {
-            references_any_var(init, names) || references_any_var(body, names)
+            references_any_var_inner(init, names, visited)
+                || references_any_var_inner(body, names, visited)
         }
-        EvmExpr::EnvRead(_, s) => references_any_var(s, names),
-        EvmExpr::EnvRead1(_, a, s) => references_any_var(a, names) || references_any_var(s, names),
+        EvmExpr::EnvRead(_, s) => references_any_var_inner(s, names, visited),
+        EvmExpr::EnvRead1(_, a, s) => {
+            references_any_var_inner(a, names, visited)
+                || references_any_var_inner(s, names, visited)
+        }
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
-            topics.iter().any(|t| references_any_var(t, names))
-                || references_any_var(data_offset, names)
-                || references_any_var(data_size, names)
-                || references_any_var(state, names)
+            topics
+                .iter()
+                .any(|t| references_any_var_inner(t, names, visited))
+                || references_any_var_inner(data_offset, names, visited)
+                || references_any_var_inner(data_size, names, visited)
+                || references_any_var_inner(state, names, visited)
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => [a, b, c, d, e, f, g]
             .iter()
-            .any(|x| references_any_var(x, names)),
-        EvmExpr::Call(_, args) => args.iter().any(|a| references_any_var(a, names)),
-        EvmExpr::Function(_, _, _, body) => references_any_var(body, names),
+            .any(|x| references_any_var_inner(x, names, visited)),
+        EvmExpr::Call(_, args) => args
+            .iter()
+            .any(|a| references_any_var_inner(a, names, visited)),
+        EvmExpr::Function(_, _, _, body) => references_any_var_inner(body, names, visited),
     }
 }
 
@@ -93,6 +128,13 @@ pub(crate) struct VarBinding {
     pub composite_type: Option<String>,
     /// For struct/array-typed variables: the memory base offset
     pub composite_base: Option<RcExpr>,
+    /// For generic composite types: the concrete type arguments (e.g., [addr, u256] for Map<addr, u256>)
+    pub composite_type_args: Vec<edge_ast::ty::TypeSig>,
+    /// Whether this variable is a dynamically-allocated memory pointer (&dm type)
+    pub is_dynamic_memory: bool,
+    /// Symbolic region ID for region-based field access (RegionStore/RegionLoad).
+    /// Set when the struct instance has a known allocation site.
+    pub region_id: Option<i64>,
 }
 
 /// Scope for variable resolution during lowering.
@@ -134,6 +176,16 @@ pub(crate) struct FreeFnInfo {
 pub(crate) struct GenericTypeTemplate {
     pub type_params: Vec<edge_ast::ty::TypeParam>,
     pub type_sig: edge_ast::ty::TypeSig,
+}
+
+/// Stored impl block for a generic type, used during monomorphization.
+#[derive(Debug, Clone)]
+pub(crate) struct GenericImplBlock {
+    pub type_params: Vec<edge_ast::ty::TypeParam>,
+    pub trait_impl: Option<String>, // trait name, or None for inherent impl
+    /// The trait's type arguments (e.g., `[K, V]` for `impl Foo: Index<K, V>`)
+    pub trait_type_params: Vec<edge_ast::ty::TypeParam>,
+    pub items: Vec<edge_ast::item::ImplItem>,
 }
 
 /// Packed layout for a single field within a packed struct.
@@ -236,6 +288,8 @@ pub(crate) struct TraitInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct TraitImplInfo {
     pub methods: IndexMap<String, (edge_ast::item::FnDecl, edge_ast::CodeBlock)>,
+    /// Trait type arguments from the impl declaration (e.g., `[K, V]` for `impl Foo: Index<K, V>`).
+    pub trait_type_args: Vec<edge_ast::ty::TypeSig>,
     pub span: edge_types::span::Span,
 }
 
@@ -276,6 +330,8 @@ pub struct AstToEgglog {
     pub(crate) inline_counter: usize,
     /// Prefix for variable names when inlining (empty at top level)
     pub(crate) inline_prefix: String,
+    /// Active type parameter substitutions (e.g., {"K": "addr", "V": "u256"} when inlining Map<addr, u256> methods)
+    pub(crate) type_param_subst: HashMap<String, String>,
     /// Union/enum type declarations: `type_name` -> `[(variant_name, has_data)]`
     /// Variant index is its position in the vector.
     pub(crate) union_types: IndexMap<String, Vec<(String, bool)>>,
@@ -288,6 +344,9 @@ pub struct AstToEgglog {
     pub(crate) storage_array_fields: IndexMap<String, (usize, usize)>,
     /// Next available region ID for symbolic memory allocation.
     pub(crate) next_region_id: i64,
+    /// Mapping from region ID to the `LetBind` variable name that holds the base pointer.
+    /// Used by the post-egglog resolution pass to convert RegionStore/RegionLoad to MStore/MLoad.
+    pub(crate) region_var_map: IndexMap<i64, String>,
     /// Tracks the last composite allocation `(type_name, base_expr)` for wiring
     /// struct/array assignments to variable bindings.
     pub(crate) last_composite_alloc: Option<(String, RcExpr)>,
@@ -298,8 +357,10 @@ pub struct AstToEgglog {
     // ---- Generics & Traits ----
     /// Generic type templates: name -> template info (type params + original `TypeSig`)
     pub(crate) generic_type_templates: IndexMap<String, GenericTypeTemplate>,
+    /// Generic impl blocks: `base_type_name` -> list of impl blocks (for monomorphization)
+    pub(crate) generic_impl_blocks: IndexMap<String, Vec<GenericImplBlock>>,
     /// Cache of monomorphized types: (`generic_name`, `concrete_types`) -> `mangled_name`
-    pub(crate) monomorphized_types: IndexMap<(String, Vec<EvmType>), String>,
+    pub(crate) monomorphized_types: IndexMap<(String, Vec<String>), String>,
     /// Generic function templates: name -> `FreeFnInfo` (with `type_params`)
     pub(crate) generic_fn_templates: IndexMap<String, FreeFnInfo>,
     /// Cache of monomorphized function bodies: `mangled_name` -> `FreeFnInfo`
@@ -318,6 +379,9 @@ pub struct AstToEgglog {
     /// Type hint from assignment target, used for generic return-type inference.
     /// Set before lowering the RHS of a typed variable assignment, cleared after.
     pub(crate) type_hint: Option<EvmType>,
+    /// `TypeSig` hint from assignment target, used to disambiguate generic struct instantiation.
+    /// Set before lowering the RHS of a typed variable declaration, cleared after.
+    pub(crate) type_sig_hint: Option<edge_ast::ty::TypeSig>,
     /// Compiler warnings collected during lowering
     pub(crate) warnings: Vec<edge_diagnostics::Diagnostic>,
 }
@@ -349,14 +413,17 @@ impl AstToEgglog {
             inline_depth: 0,
             inline_counter: 0,
             inline_prefix: String::new(),
+            type_param_subst: HashMap::new(),
             union_types: IndexMap::new(),
             struct_types: IndexMap::new(),
             type_aliases: IndexMap::new(),
             storage_array_fields: IndexMap::new(),
             next_region_id: 0,
+            region_var_map: IndexMap::new(),
             last_composite_alloc: None,
             module_prefixes: HashSet::new(),
             generic_type_templates: IndexMap::new(),
+            generic_impl_blocks: IndexMap::new(),
             monomorphized_types: IndexMap::new(),
             generic_fn_templates: IndexMap::new(),
             monomorphized_fns: IndexMap::new(),
@@ -366,6 +433,7 @@ impl AstToEgglog {
             _self_type: None,
             std_ops_traits: HashSet::new(),
             type_hint: None,
+            type_sig_hint: None,
             warnings: Vec::new(),
         }
     }
@@ -379,8 +447,29 @@ impl AstToEgglog {
         crate::ast_helpers::mem_region(id, size_words as i64)
     }
 
+    /// Allocate a fresh region ID without creating a `MemRegion` node.
+    /// Used for symbolic field access tracking on &dm struct instances.
+    pub(crate) const fn fresh_region_id(&mut self) -> i64 {
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        id
+    }
+
+    /// Extract the type name and type args from a Named type sig, unwrapping Pointer wrappers.
+    /// Returns (`base_name`, `type_args`), e.g., ("Map", [addr, u256]) from `&s Map<addr, u256>`.
+    fn extract_named_type(
+        type_sig: &edge_ast::ty::TypeSig,
+    ) -> Option<(String, Vec<edge_ast::ty::TypeSig>)> {
+        match type_sig {
+            edge_ast::ty::TypeSig::Named(name, args) => Some((name.name.clone(), args.clone())),
+            edge_ast::ty::TypeSig::Pointer(_, inner) => Self::extract_named_type(inner),
+            _ => None,
+        }
+    }
+
     /// Lower an entire program.
     pub fn lower_program(&mut self, program: &edge_ast::Program) -> Result<EvmProgram, IrError> {
+        let t_lower = std::time::Instant::now();
         let mut contracts = Vec::new();
         let mut free_functions = Vec::new();
 
@@ -420,7 +509,30 @@ impl AstToEgglog {
             "UnsafeAdd",
             "UnsafeSub",
             "UnsafeMul",
+            "UniqueSlot",
+            "Sload",
+            "Sstore",
+            "Index",
+            "Mstore",
+            "Mload",
+            "Mcopy",
         ];
+        // Storage/hashing traits are fundamental (auto-imported from globals).
+        // Always enable them so compiler-provided impls work without explicit `use`.
+        for name in [
+            "UniqueSlot",
+            "Sload",
+            "Sstore",
+            "Index",
+            "Mstore",
+            "Mload",
+            "Mcopy",
+            "UnsafeAdd",
+            "UnsafeSub",
+            "UnsafeMul",
+        ] {
+            self.std_ops_traits.insert(name.to_string());
+        }
         for stmt in &program.stmts {
             if let edge_ast::Stmt::ModuleImport(import) = stmt {
                 if import.root.name == "std" {
@@ -452,6 +564,35 @@ impl AstToEgglog {
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // Register compiler-provided trait impls for primitive types so that
+        // trait bound validation in monomorphize_type() passes for types like
+        // `Map<addr, u256>` which requires `addr: UniqueSlot` and `u256: Sload & Sstore`.
+        {
+            let primitive_types = [
+                "u256", "u248", "u240", "u232", "u224", "u216", "u208", "u200", "u192", "u184",
+                "u176", "u168", "u160", "u152", "u144", "u136", "u128", "u120", "u112", "u104",
+                "u96", "u88", "u80", "u72", "u64", "u56", "u48", "u40", "u32", "u24", "u16", "u8",
+                "i256", "i248", "i240", "i232", "i224", "i216", "i208", "i200", "i192", "i184",
+                "i176", "i168", "i160", "i152", "i144", "i136", "i128", "i120", "i112", "i104",
+                "i96", "i88", "i80", "i72", "i64", "i56", "i48", "i40", "i32", "i24", "i16", "i8",
+                "address", "bool", "b32",
+            ];
+            let primitive_traits = ["UniqueSlot", "Sload", "Sstore"];
+            for prim in &primitive_types {
+                for trait_name in &primitive_traits {
+                    // Empty methods — compiler-provided dispatch handles actual codegen
+                    self.trait_impls.insert(
+                        (prim.to_string(), trait_name.to_string()),
+                        TraitImplInfo {
+                            methods: IndexMap::new(),
+                            trait_type_args: Vec::new(),
+                            span: edge_types::span::Span::EOF,
+                        },
+                    );
                 }
             }
         }
@@ -528,6 +669,9 @@ impl AstToEgglog {
                     let_bind_name: None,
                     composite_type: None,
                     composite_base: None,
+                    composite_type_args: Vec::new(),
+                    is_dynamic_memory: false,
+                    region_id: None,
                 };
                 self.scopes
                     .last_mut()
@@ -617,7 +761,36 @@ impl AstToEgglog {
                 }
                 edge_ast::Stmt::ImplBlock(impl_block) => {
                     let type_name = impl_block.ty_name.name.clone();
-                    if let Some((ref trait_name, _)) = impl_block.trait_impl {
+
+                    // Store generic impl blocks for monomorphization.
+                    // Skip normal registration for generic types — their methods
+                    // are registered during monomorphization under the mangled name.
+                    let is_generic = !impl_block.type_params.is_empty()
+                        || self.generic_type_templates.contains_key(&type_name);
+                    if is_generic {
+                        let trait_name =
+                            impl_block.trait_impl.as_ref().map(|(n, _)| n.name.clone());
+                        let trait_type_params = impl_block
+                            .trait_impl
+                            .as_ref()
+                            .map(|(_, params)| params.clone())
+                            .unwrap_or_default();
+                        self.generic_impl_blocks
+                            .entry(type_name.clone())
+                            .or_default()
+                            .push(GenericImplBlock {
+                                type_params: impl_block.type_params.clone(),
+                                trait_impl: trait_name,
+                                trait_type_params,
+                                items: impl_block.items.clone(),
+                            });
+                    }
+
+                    // For generic impl blocks, don't register unsubstituted methods.
+                    // They'll be registered under the mangled name during monomorphization.
+                    if is_generic {
+                        // Skip normal processing
+                    } else if let Some((ref trait_name, _)) = impl_block.trait_impl {
                         // Trait impl — collect methods and validate against trait definition
                         let mut methods = IndexMap::new();
                         for item in &impl_block.items {
@@ -671,10 +844,24 @@ impl AstToEgglog {
                             }
                         }
 
+                        // Extract trait type args from the impl declaration
+                        let trait_type_args: Vec<edge_ast::ty::TypeSig> = impl_block
+                            .trait_impl
+                            .as_ref()
+                            .map(|(_, params)| {
+                                params
+                                    .iter()
+                                    .map(|p| {
+                                        edge_ast::ty::TypeSig::Named(p.name.clone(), Vec::new())
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
                         self.trait_impls.insert(
                             (type_name, trait_name.name.clone()),
                             TraitImplInfo {
                                 methods,
+                                trait_type_args,
                                 span: impl_block.span.clone(),
                             },
                         );
@@ -734,7 +921,10 @@ impl AstToEgglog {
 
         // Fifth pass: eagerly monomorphize generic types used with concrete type args
         // anywhere in the program (function params, return types, variable decls, etc.)
+        tracing::debug!("    lower_program passes 1-4: {:?}", t_lower.elapsed());
+        let t_phase = std::time::Instant::now();
         self.monomorphize_all_type_usages(program)?;
+        tracing::debug!("    monomorphize_all: {:?}", t_phase.elapsed());
 
         // Save top-level const bindings to inject into each contract scope
         let toplevel_consts: IndexMap<String, VarBinding> = self
@@ -746,6 +936,7 @@ impl AstToEgglog {
         // Collect free function declarations for potential synthetic contract
         let mut fn_stmts: Vec<(&edge_ast::FnDecl, &edge_ast::CodeBlock)> = Vec::new();
 
+        let t_phase = std::time::Instant::now();
         for stmt in &program.stmts {
             match stmt {
                 edge_ast::Stmt::ContractDecl(contract) => {
@@ -778,6 +969,7 @@ impl AstToEgglog {
             }
         }
 
+        tracing::debug!("    lower_contracts+fns: {:?}", t_phase.elapsed());
         Ok(EvmProgram {
             contracts,
             free_functions,
@@ -854,7 +1046,26 @@ impl AstToEgglog {
             self.storage_fields.push(field_ir);
 
             // Check if the field type resolves to a packed struct
-            let composite_type = self.resolve_storage_packed_struct_type(type_sig);
+            let mut composite_type = self.resolve_storage_packed_struct_type(type_sig);
+
+            // For generic named types (e.g., Map<K,V>), set composite_type to
+            // the monomorphized name so method dispatch finds concrete methods.
+            let mut composite_type_args = Vec::new();
+            if composite_type.is_none() {
+                if let Some((name, args)) = Self::extract_named_type(type_sig) {
+                    if !args.is_empty() {
+                        // Use monomorphized name (e.g., "Map__address_u256")
+                        if let Ok(mangled) = self.try_monomorphize_named_type(&name, &args, None) {
+                            composite_type = mangled;
+                        } else {
+                            composite_type = Some(name);
+                        }
+                    } else {
+                        composite_type = Some(name);
+                    }
+                    composite_type_args = args;
+                }
+            }
 
             // Register in scope with the correct location
             let binding = VarBinding {
@@ -868,6 +1079,9 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type,
                 composite_base: None,
+                composite_type_args,
+                is_dynamic_memory: false,
+                region_id: None,
             };
             self.scopes
                 .last_mut()
@@ -892,6 +1106,9 @@ impl AstToEgglog {
                 let_bind_name: None,
                 composite_type: None,
                 composite_base: None,
+                composite_type_args: Vec::new(),
+                is_dynamic_memory: false,
+                region_id: None,
             };
             self.scopes
                 .last_mut()
@@ -924,7 +1141,9 @@ impl AstToEgglog {
         let mut fn_bodies: Vec<(&edge_ast::ContractFnDecl, Option<RcExpr>)> = Vec::new();
         for fn_decl in &contract.functions {
             if let Some(body) = &fn_decl.body {
+                let t_fn = std::time::Instant::now();
                 let body_ir = self.lower_contract_fn_body(&contract_name, fn_decl, body)?;
+                tracing::debug!("      lower_fn {}: {:?}", fn_decl.name.name, t_fn.elapsed());
                 fn_bodies.push((fn_decl, Some(body_ir)));
             } else {
                 fn_bodies.push((fn_decl, None));
@@ -932,7 +1151,9 @@ impl AstToEgglog {
         }
 
         // Build dispatcher (runtime entry point) with inlined function bodies
+        let t_disp = std::time::Instant::now();
         let runtime = self.build_dispatcher(&contract_name, &fn_bodies)?;
+        tracing::debug!("      build_dispatcher: {:?}", t_disp.elapsed());
 
         // Internal functions are stored separately (not Concat'd to runtime)
         // so they survive halting-DCE in the cleanup pass.

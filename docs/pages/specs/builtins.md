@@ -47,10 +47,36 @@ fn checkCaller() {
 }
 ```
 
-## Comptime builtins
+## Runtime builtins
+
+### `@size_of`
+
+```edge
+@size_of::<T>() -> u256
+```
+
+Returns the size in bytes of type `T`. For primitive types this is the
+ABI-encoded word size (32 bytes for `u256`, `address`, etc.).
+
+### `@alloc`
+
+```edge
+@alloc(size_bytes: u256) -> u256
+```
+
+Allocates `size_bytes` of dynamic memory at runtime and returns a pointer
+to the start of the region. Uses MSIZE-based pointer arithmetic to ensure
+the returned region does not overlap with any other allocation.
+
+`@alloc` is the foundation for dynamically-sized data structures like
+`Vec<T>`. It is used in conjunction with the `&dm` data location annotation
+(see [Data Locations](/specs/syntax/locations)).
+
+## Comptime builtins (future work)
 
 These builtins execute at compile time and are used for type introspection,
-compile-time assertions, and code generation.
+compile-time assertions, and code generation. They are planned but not yet
+implemented.
 
 ### Types
 

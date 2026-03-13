@@ -250,6 +250,22 @@
 ;; Different region IDs are guaranteed non-overlapping.
 (constructor MemRegion (i64 i64) EvmExpr)
 
+;; Dynamic memory allocation: (DynAlloc size_bytes) -> base address
+;; Uses MSIZE at runtime. NOT pure — memory expansion is observable.
+(constructor DynAlloc (EvmExpr) EvmExpr)
+
+;; Region-based memory allocation: (AllocRegion region_id num_fields is_dynamic) -> base address
+;; Symbolic allocation resolved post-egglog. Different region IDs guaranteed non-overlapping.
+(constructor AllocRegion (i64 EvmExpr bool) EvmExpr)
+
+;; Store to a region field: (RegionStore region_id field_index value state) -> state
+;; Enables symbolic forwarding — same region+field stores/loads can be forwarded.
+(constructor RegionStore (i64 i64 EvmExpr EvmExpr) EvmExpr)
+
+;; Load from a region field: (RegionLoad region_id field_index state) -> value
+;; Symmetric to RegionStore.
+(constructor RegionLoad (i64 i64 EvmExpr) EvmExpr)
+
 ;; ============================================================
 ;; Rulesets
 ;; ============================================================
