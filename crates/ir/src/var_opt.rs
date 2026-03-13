@@ -836,24 +836,39 @@ fn collect_immutable_vars_rec(
 ///
 /// Call this on the full expression tree after other `var_opt` passes.
 pub fn insert_early_drops(expr: &RcExpr) -> RcExpr {
-    insert_drops_rec(expr, &[])
+    let mut cache = HashMap::new();
+    insert_drops_rec(expr, &[], &mut cache)
 }
 
-fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
-    match expr.as_ref() {
+fn insert_drops_rec(
+    expr: &RcExpr,
+    vars_in_scope: &[String],
+    cache: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
+    // When vars_in_scope is empty, the only thing that can change the result is
+    // encountering a LetBind (which adds to scope). For a given Rc-shared subtree
+    // with empty scope, the result is always the same, so we can memoize.
+    let ptr_key = Rc::as_ptr(expr) as usize;
+    if vars_in_scope.is_empty() {
+        if let Some(cached) = cache.get(&ptr_key) {
+            return Rc::clone(cached);
+        }
+    }
+
+    let result = match expr.as_ref() {
         EvmExpr::LetBind(name, init, body) => {
-            let new_init = insert_drops_rec(init, vars_in_scope);
+            let new_init = insert_drops_rec(init, vars_in_scope, cache);
             let mut new_scope = vars_in_scope.to_vec();
             new_scope.push(name.clone());
-            let new_body = insert_drops_rec(body, &new_scope);
+            let new_body = insert_drops_rec(body, &new_scope, cache);
             Rc::new(EvmExpr::LetBind(name.clone(), new_init, new_body))
         }
         EvmExpr::If(cond, inputs, then_body, else_body) => {
             // Recurse first into sub-expressions
-            let new_cond = insert_drops_rec(cond, vars_in_scope);
-            let new_inputs = insert_drops_rec(inputs, vars_in_scope);
-            let mut new_then = insert_drops_rec(then_body, vars_in_scope);
-            let mut new_else = insert_drops_rec(else_body, vars_in_scope);
+            let new_cond = insert_drops_rec(cond, vars_in_scope, cache);
+            let new_inputs = insert_drops_rec(inputs, vars_in_scope, cache);
+            let mut new_then = insert_drops_rec(then_body, vars_in_scope, cache);
+            let mut new_else = insert_drops_rec(else_body, vars_in_scope, cache);
 
             // For each halting branch, add Drops for unreferenced in-scope vars
             if expr_definitely_halts(&new_then) {
@@ -874,17 +889,17 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
             Rc::new(EvmExpr::If(new_cond, new_inputs, new_then, new_else))
         }
         EvmExpr::Concat(a, b) => {
-            let new_a = insert_drops_rec(a, vars_in_scope);
-            let new_b = insert_drops_rec(b, vars_in_scope);
+            let new_a = insert_drops_rec(a, vars_in_scope, cache);
+            let new_b = insert_drops_rec(b, vars_in_scope, cache);
             Rc::new(EvmExpr::Concat(new_a, new_b))
         }
         EvmExpr::DoWhile(inputs, body) => {
-            let new_inputs = insert_drops_rec(inputs, vars_in_scope);
-            let new_body = insert_drops_rec(body, vars_in_scope);
+            let new_inputs = insert_drops_rec(inputs, vars_in_scope, cache);
+            let new_body = insert_drops_rec(body, vars_in_scope, cache);
             Rc::new(EvmExpr::DoWhile(new_inputs, new_body))
         }
         EvmExpr::Function(name, in_ty, out_ty, body) => {
-            let new_body = insert_drops_rec(body, vars_in_scope);
+            let new_body = insert_drops_rec(body, vars_in_scope, cache);
             Rc::new(EvmExpr::Function(
                 name.clone(),
                 in_ty.clone(),
@@ -893,29 +908,29 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
             ))
         }
         EvmExpr::DynAlloc(size) => {
-            let new_size = insert_drops_rec(size, vars_in_scope);
+            let new_size = insert_drops_rec(size, vars_in_scope, cache);
             if Rc::ptr_eq(&new_size, size) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::DynAlloc(new_size))
         }
         EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
-            let new_nf = insert_drops_rec(num_fields, vars_in_scope);
+            let new_nf = insert_drops_rec(num_fields, vars_in_scope, cache);
             if Rc::ptr_eq(&new_nf, num_fields) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::AllocRegion(*id, new_nf, *is_dynamic))
         }
         EvmExpr::RegionStore(id, field, val, state) => {
-            let new_val = insert_drops_rec(val, vars_in_scope);
-            let new_state = insert_drops_rec(state, vars_in_scope);
+            let new_val = insert_drops_rec(val, vars_in_scope, cache);
+            let new_state = insert_drops_rec(state, vars_in_scope, cache);
             if Rc::ptr_eq(&new_val, val) && Rc::ptr_eq(&new_state, state) {
                 return Rc::clone(expr);
             }
             Rc::new(EvmExpr::RegionStore(*id, *field, new_val, new_state))
         }
         EvmExpr::RegionLoad(id, field, state) => {
-            let new_state = insert_drops_rec(state, vars_in_scope);
+            let new_state = insert_drops_rec(state, vars_in_scope, cache);
             if Rc::ptr_eq(&new_state, state) {
                 return Rc::clone(expr);
             }
@@ -923,7 +938,13 @@ fn insert_drops_rec(expr: &RcExpr, vars_in_scope: &[String]) -> RcExpr {
         }
         // Leaf and other nodes: no structural changes needed
         _ => Rc::clone(expr),
+    };
+
+    if vars_in_scope.is_empty() {
+        cache.insert(ptr_key, Rc::clone(&result));
     }
+
+    result
 }
 
 /// Check if an expression is guaranteed to halt (ends with RETURN or REVERT).
@@ -947,7 +968,8 @@ fn expr_definitely_halts(expr: &RcExpr) -> bool {
 /// This follows ALL sub-expressions including state parameters.
 /// Used by `insert_early_drops` which needs full reachability.
 fn references_var(expr: &RcExpr, name: &str) -> bool {
-    references_var_inner(expr, name, true)
+    let mut cache = HashMap::new();
+    references_var_inner(expr, name, true, &mut cache)
 }
 
 /// Check if an expression references a variable in a data-flow sense.
@@ -957,42 +979,69 @@ fn references_var(expr: &RcExpr, name: &str) -> bool {
 /// Also ignores Drop nodes, which are lifetime markers, not data uses.
 /// Used by `tighten_drops` to find the last actual use of a variable.
 fn references_var_dataflow(expr: &RcExpr, name: &str) -> bool {
-    references_var_inner(expr, name, false)
+    let mut cache = HashMap::new();
+    references_var_inner(expr, name, false, &mut cache)
 }
 
-fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
+fn references_var_inner(
+    expr: &RcExpr,
+    name: &str,
+    follow_state: bool,
+    cache: &mut HashMap<usize, bool>,
+) -> bool {
+    let ptr_key = Rc::as_ptr(expr) as usize;
+    if let Some(&cached) = cache.get(&ptr_key) {
+        return cached;
+    }
+
+    let result = references_var_inner_uncached(expr, name, follow_state, cache);
+    cache.insert(ptr_key, result);
+    result
+}
+
+fn references_var_inner_uncached(
+    expr: &RcExpr,
+    name: &str,
+    follow_state: bool,
+    cache: &mut HashMap<usize, bool>,
+) -> bool {
     match expr.as_ref() {
         EvmExpr::Var(n) => n == name,
         EvmExpr::Drop(n) => follow_state && n == name,
-        EvmExpr::VarStore(n, val) => n == name || references_var_inner(val, name, follow_state),
+        EvmExpr::VarStore(n, val) => {
+            n == name || references_var_inner(val, name, follow_state, cache)
+        }
         EvmExpr::LetBind(n, init, body) => {
-            references_var_inner(init, name, follow_state)
-                || (n != name && references_var_inner(body, name, follow_state))
+            references_var_inner(init, name, follow_state, cache)
+                || (n != name && references_var_inner(body, name, follow_state, cache))
         }
         EvmExpr::Concat(a, b) => {
-            references_var_inner(a, name, follow_state)
-                || references_var_inner(b, name, follow_state)
+            references_var_inner(a, name, follow_state, cache)
+                || references_var_inner(b, name, follow_state, cache)
         }
         EvmExpr::Bop(op, a, b) => {
             use crate::schema::EvmBinaryOp::*;
-            let a_ref = references_var_inner(a, name, follow_state);
+            let a_ref = references_var_inner(a, name, follow_state, cache);
             // For state-consuming binary ops, b is the state parameter
             let b_is_state = matches!(op, SLoad | TLoad | MLoad | CalldataLoad);
             let b_ref = if b_is_state && !follow_state {
                 false
             } else {
-                references_var_inner(b, name, follow_state)
+                references_var_inner(b, name, follow_state, cache)
             };
             a_ref || b_ref
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) | EvmExpr::DynAlloc(a) | EvmExpr::AllocRegion(_, a, _) => {
-            references_var_inner(a, name, follow_state)
+        EvmExpr::Uop(_, a)
+        | EvmExpr::Get(a, _)
+        | EvmExpr::DynAlloc(a)
+        | EvmExpr::AllocRegion(_, a, _) => {
+            references_var_inner(a, name, follow_state, cache)
         }
         // RegionStore: state is last arg
         EvmExpr::RegionStore(_, _, val, state) => {
-            references_var_inner(val, name, follow_state)
+            references_var_inner(val, name, follow_state, cache)
                 || if follow_state {
-                    references_var_inner(state, name, follow_state)
+                    references_var_inner(state, name, follow_state, cache)
                 } else {
                     false
                 }
@@ -1000,7 +1049,7 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
         // RegionLoad: state is last arg
         EvmExpr::RegionLoad(_, _, state) => {
             if follow_state {
-                references_var_inner(state, name, follow_state)
+                references_var_inner(state, name, follow_state, cache)
             } else {
                 false
             }
@@ -1011,45 +1060,45 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
                 op,
                 SStore | TStore | MStore | MStore8 | Keccak256 | CalldataCopy | Mcopy
             );
-            references_var_inner(a, name, follow_state)
-                || references_var_inner(b, name, follow_state)
+            references_var_inner(a, name, follow_state, cache)
+                || references_var_inner(b, name, follow_state, cache)
                 || if c_is_state && !follow_state {
                     false
                 } else {
-                    references_var_inner(c, name, follow_state)
+                    references_var_inner(c, name, follow_state, cache)
                 }
         }
         EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
             // c is always state for Revert/ReturnOp
-            references_var_inner(a, name, follow_state)
-                || references_var_inner(b, name, follow_state)
+            references_var_inner(a, name, follow_state, cache)
+                || references_var_inner(b, name, follow_state, cache)
                 || if follow_state {
-                    references_var_inner(c, name, follow_state)
+                    references_var_inner(c, name, follow_state, cache)
                 } else {
                     false
                 }
         }
         EvmExpr::If(c, i, t, e) => {
-            references_var_inner(c, name, follow_state)
-                || references_var_inner(i, name, follow_state)
-                || references_var_inner(t, name, follow_state)
-                || references_var_inner(e, name, follow_state)
+            references_var_inner(c, name, follow_state, cache)
+                || references_var_inner(i, name, follow_state, cache)
+                || references_var_inner(t, name, follow_state, cache)
+                || references_var_inner(e, name, follow_state, cache)
         }
         EvmExpr::DoWhile(inputs, body) => {
-            references_var_inner(inputs, name, follow_state)
-                || references_var_inner(body, name, follow_state)
+            references_var_inner(inputs, name, follow_state, cache)
+                || references_var_inner(body, name, follow_state, cache)
         }
         EvmExpr::EnvRead(_, s) => {
             if follow_state {
-                references_var_inner(s, name, follow_state)
+                references_var_inner(s, name, follow_state, cache)
             } else {
                 false
             }
         }
         EvmExpr::EnvRead1(_, a, s) => {
-            references_var_inner(a, name, follow_state)
+            references_var_inner(a, name, follow_state, cache)
                 || if follow_state {
-                    references_var_inner(s, name, follow_state)
+                    references_var_inner(s, name, follow_state, cache)
                 } else {
                     false
                 }
@@ -1057,11 +1106,11 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             topics
                 .iter()
-                .any(|t| references_var_inner(t, name, follow_state))
-                || references_var_inner(data_offset, name, follow_state)
-                || references_var_inner(data_size, name, follow_state)
+                .any(|t| references_var_inner(t, name, follow_state, cache))
+                || references_var_inner(data_offset, name, follow_state, cache)
+                || references_var_inner(data_size, name, follow_state, cache)
                 || if follow_state {
-                    references_var_inner(state, name, follow_state)
+                    references_var_inner(state, name, follow_state, cache)
                 } else {
                     false
                 }
@@ -1074,12 +1123,14 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
                 &[a, b, c, d, e, f]
             };
             args.iter()
-                .any(|x| references_var_inner(x, name, follow_state))
+                .any(|x| references_var_inner(x, name, follow_state, cache))
         }
         EvmExpr::Call(_, args) => args
             .iter()
-            .any(|a| references_var_inner(a, name, follow_state)),
-        EvmExpr::Function(_, _, _, body) => references_var_inner(body, name, follow_state),
+            .any(|a| references_var_inner(a, name, follow_state, cache)),
+        EvmExpr::Function(_, _, _, body) => {
+            references_var_inner(body, name, follow_state, cache)
+        }
         EvmExpr::Const(..)
         | EvmExpr::Arg(..)
         | EvmExpr::Empty(..)
@@ -1088,7 +1139,7 @@ fn references_var_inner(expr: &RcExpr, name: &str, follow_state: bool) -> bool {
         | EvmExpr::MemRegion(..) => false,
         EvmExpr::InlineAsm(inputs, ..) => inputs
             .iter()
-            .any(|i| references_var_inner(i, name, follow_state)),
+            .any(|i| references_var_inner(i, name, follow_state, cache)),
     }
 }
 
