@@ -21,8 +21,8 @@ contract TestStorageHeavy {
     let field_c: &s u256;
     let field_d: &s u256;
     let field_e: &s u256;
-    let balances: &s u256;
-    let allowances: &s u256;
+    let balances: &s Map<addr, u256>;
+    let allowances: &s Map<addr, Map<addr, u256>>;
 
     pub fn set_all(a: u256, b: u256, c: u256, d: u256, e: u256) {
         field_a = a;

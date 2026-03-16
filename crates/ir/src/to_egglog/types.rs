@@ -2,6 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use indexmap::IndexMap;
+
 use super::{AstToEgglog, StructTypeInfo};
 use crate::{
     schema::{DataLocation, EvmBaseType, EvmType},
@@ -40,19 +42,61 @@ impl AstToEgglog {
     }
 
     /// Resolve a generic type name (e.g., "Result") to its monomorphized name (e.g., "`Result__u256`").
-    /// Searches `union_types` and `struct_types` for any key starting with `"{name}__"`.
-    /// Returns the first match found.
+    /// Returns `Some` only when there's exactly one monomorphization (unambiguous).
+    /// When there are multiple, returns `None` — caller should use
+    /// `resolve_generic_type_name_with_args` for precise resolution.
     pub(crate) fn resolve_generic_type_name(&self, name: &str) -> Option<String> {
+        // Check monomorphized_types cache for entries with this base name
+        let candidates: Vec<&String> = self
+            .monomorphized_types
+            .iter()
+            .filter(|((base, _), _)| base == name)
+            .map(|(_, mangled)| mangled)
+            .collect();
+        if candidates.len() == 1 {
+            return Some(candidates[0].clone());
+        }
+        if candidates.len() > 1 {
+            // Multiple monomorphizations — ambiguous, return None
+            return None;
+        }
+
+        // Fallback: scan union_types and struct_types for "{name}__" prefix,
+        // but only return if unambiguous.
+        let mut fallback_candidates = Vec::new();
         let prefix = format!("{name}__");
         for key in self.union_types.keys() {
             if key.starts_with(&prefix) {
-                return Some(key.clone());
+                fallback_candidates.push(key.clone());
             }
         }
         for key in self.struct_types.keys() {
             if key.starts_with(&prefix) {
-                return Some(key.clone());
+                fallback_candidates.push(key.clone());
             }
+        }
+        if fallback_candidates.len() == 1 {
+            return Some(fallback_candidates.into_iter().next().unwrap());
+        }
+        None
+    }
+
+    /// Resolve a generic type name with specific type args to its monomorphized name.
+    /// More precise than `resolve_generic_type_name` when multiple monomorphizations exist.
+    pub(crate) fn resolve_generic_type_name_with_args(
+        &self,
+        name: &str,
+        type_args: &[edge_ast::ty::TypeSig],
+    ) -> Option<String> {
+        let mangled_args: Vec<String> = type_args.iter().map(Self::type_sig_mangle).collect();
+        let cache_key = (name.to_string(), mangled_args);
+        if let Some(mangled) = self.monomorphized_types.get(&cache_key) {
+            return Some(mangled.clone());
+        }
+        // Fallback: construct the expected mangled name and check if it exists
+        let expected = format!("{}_{}", name, cache_key.1.join("_"));
+        if self.union_types.contains_key(&expected) || self.struct_types.contains_key(&expected) {
+            return Some(expected);
         }
         None
     }
@@ -285,6 +329,193 @@ impl AstToEgglog {
         }
     }
 
+    /// Substitute type parameters in a code block (AST-level).
+    /// Replaces type param names in Path expressions (e.g., `V::sload` → `u256::sload`).
+    /// For generic types like Map<addr, u256>, uses the mangled name (`Map__address_u256`)
+    /// so that qualified calls resolve to monomorphized trait impls.
+    fn substitute_code_block(
+        block: &edge_ast::CodeBlock,
+        subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::CodeBlock {
+        // Build a string→string map for path substitution using mangled names
+        let name_subst: HashMap<&str, String> = subst
+            .iter()
+            .map(|(k, v)| (k.as_str(), Self::type_sig_mangle(v)))
+            .collect();
+
+        edge_ast::CodeBlock {
+            stmts: block
+                .stmts
+                .iter()
+                .map(|item| Self::substitute_block_item(item, &name_subst, subst))
+                .collect(),
+            span: block.span.clone(),
+        }
+    }
+
+    fn substitute_block_item(
+        item: &edge_ast::stmt::BlockItem,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::stmt::BlockItem {
+        match item {
+            edge_ast::stmt::BlockItem::Stmt(stmt) => edge_ast::stmt::BlockItem::Stmt(Box::new(
+                Self::substitute_stmt(stmt, subst, type_subst),
+            )),
+            edge_ast::stmt::BlockItem::Expr(expr) => {
+                edge_ast::stmt::BlockItem::Expr(Self::substitute_expr(expr, subst, type_subst))
+            }
+        }
+    }
+
+    fn substitute_stmt(
+        stmt: &edge_ast::Stmt,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::Stmt {
+        match stmt {
+            edge_ast::Stmt::VarDecl(ident, ty, init, span) => edge_ast::Stmt::VarDecl(
+                ident.clone(),
+                ty.clone(),
+                init.as_ref()
+                    .map(|e| Box::new(Self::substitute_expr(e, subst, type_subst))),
+                span.clone(),
+            ),
+            edge_ast::Stmt::VarAssign(lhs, rhs, span) => edge_ast::Stmt::VarAssign(
+                Self::substitute_expr(lhs, subst, type_subst),
+                Self::substitute_expr(rhs, subst, type_subst),
+                span.clone(),
+            ),
+            edge_ast::Stmt::Return(Some(expr), span) => edge_ast::Stmt::Return(
+                Some(Self::substitute_expr(expr, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Stmt::Expr(expr) => {
+                edge_ast::Stmt::Expr(Self::substitute_expr(expr, subst, type_subst))
+            }
+            edge_ast::Stmt::IfElse(branches, else_block) => {
+                let new_branches: Vec<(edge_ast::Expr, edge_ast::CodeBlock)> = branches
+                    .iter()
+                    .map(|(cond, block)| {
+                        (
+                            Self::substitute_expr(cond, subst, type_subst),
+                            Self::substitute_code_block_with(block, subst, type_subst),
+                        )
+                    })
+                    .collect();
+                edge_ast::Stmt::IfElse(
+                    new_branches,
+                    else_block
+                        .as_ref()
+                        .map(|eb| Self::substitute_code_block_with(eb, subst, type_subst)),
+                )
+            }
+            other => other.clone(),
+        }
+    }
+
+    fn substitute_code_block_with(
+        block: &edge_ast::CodeBlock,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::CodeBlock {
+        edge_ast::CodeBlock {
+            stmts: block
+                .stmts
+                .iter()
+                .map(|item| Self::substitute_block_item(item, subst, type_subst))
+                .collect(),
+            span: block.span.clone(),
+        }
+    }
+
+    fn substitute_expr(
+        expr: &edge_ast::Expr,
+        subst: &HashMap<&str, String>,
+        type_subst: &HashMap<String, edge_ast::ty::TypeSig>,
+    ) -> edge_ast::Expr {
+        match expr {
+            edge_ast::Expr::Path(components, span) => {
+                let new_components: Vec<edge_ast::Ident> = components
+                    .iter()
+                    .map(|c| {
+                        subst.get(c.name.as_str()).map_or_else(
+                            || c.clone(),
+                            |replacement| edge_ast::Ident {
+                                name: replacement.clone(),
+                                span: c.span.clone(),
+                            },
+                        )
+                    })
+                    .collect();
+                edge_ast::Expr::Path(new_components, span.clone())
+            }
+            edge_ast::Expr::FunctionCall(callee, args, turbofish, span) => {
+                let new_turbofish: Vec<edge_ast::ty::TypeSig> = turbofish
+                    .iter()
+                    .map(|ts| Self::substitute_type_params(ts, type_subst))
+                    .collect();
+                edge_ast::Expr::FunctionCall(
+                    Box::new(Self::substitute_expr(callee, subst, type_subst)),
+                    args.iter()
+                        .map(|a| Self::substitute_expr(a, subst, type_subst))
+                        .collect(),
+                    new_turbofish,
+                    span.clone(),
+                )
+            }
+            edge_ast::Expr::At(name, type_args, args, span) => {
+                tracing::trace!(
+                    "substitute_expr At: name={}, type_args={type_args:?}",
+                    name.name
+                );
+                let new_type_args: Vec<edge_ast::ty::TypeSig> = type_args
+                    .iter()
+                    .map(|ts| Self::substitute_type_params(ts, type_subst))
+                    .collect();
+                tracing::trace!("substitute_expr At: new_type_args={new_type_args:?}");
+                edge_ast::Expr::At(
+                    name.clone(),
+                    new_type_args,
+                    args.iter()
+                        .map(|a| Self::substitute_expr(a, subst, type_subst))
+                        .collect(),
+                    span.clone(),
+                )
+            }
+            edge_ast::Expr::FieldAccess(obj, field, span) => edge_ast::Expr::FieldAccess(
+                Box::new(Self::substitute_expr(obj, subst, type_subst)),
+                field.clone(),
+                span.clone(),
+            ),
+            edge_ast::Expr::Binary(lhs, op, rhs, span) => edge_ast::Expr::Binary(
+                Box::new(Self::substitute_expr(lhs, subst, type_subst)),
+                *op,
+                Box::new(Self::substitute_expr(rhs, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Expr::Assign(lhs, rhs, span) => edge_ast::Expr::Assign(
+                Box::new(Self::substitute_expr(lhs, subst, type_subst)),
+                Box::new(Self::substitute_expr(rhs, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Expr::Paren(inner, span) => edge_ast::Expr::Paren(
+                Box::new(Self::substitute_expr(inner, subst, type_subst)),
+                span.clone(),
+            ),
+            edge_ast::Expr::Ident(ident) => subst.get(ident.name.as_str()).map_or_else(
+                || expr.clone(),
+                |replacement| {
+                    edge_ast::Expr::Ident(edge_ast::Ident {
+                        name: replacement.clone(),
+                        span: ident.span.clone(),
+                    })
+                },
+            ),
+            _ => expr.clone(),
+        }
+    }
+
     /// Try to monomorphize a generic union from a variant constructor call.
     ///
     /// Given `Result::Ok(42)` where `Result<T> = Ok(T) | Err(u256)`:
@@ -354,12 +585,12 @@ impl AstToEgglog {
         type_args: &[edge_ast::ty::TypeSig],
         span: Option<&edge_types::span::Span>,
     ) -> Result<String, IrError> {
-        // Lower type args to EvmType for caching
-        let concrete_types: Vec<EvmType> =
-            type_args.iter().map(|t| self.lower_type_sig(t)).collect();
+        // Use mangled type names for caching — EvmType loses source-level
+        // distinctions (e.g., CustomHash and u256 both lower to UIntT(256)).
+        let cache_key_types: Vec<String> = type_args.iter().map(Self::type_sig_mangle).collect();
 
         // Check cache
-        let cache_key = (generic_name.to_string(), concrete_types);
+        let cache_key = (generic_name.to_string(), cache_key_types);
         if let Some(mangled) = self.monomorphized_types.get(&cache_key) {
             return Ok(mangled.clone());
         }
@@ -408,9 +639,35 @@ impl AstToEgglog {
         for (tp, arg) in template.type_params.iter().zip(type_args.iter()) {
             if !tp.constraints.is_empty() {
                 let concrete_name = Self::type_sig_display(arg);
+                // For generic type args (e.g., Map<addr, u256>), also try the mangled name
+                // since monomorphized impls are registered under the mangled name.
+                let mangled_name = if let edge_ast::ty::TypeSig::Named(name, inner_args) = arg {
+                    if !inner_args.is_empty() {
+                        // Ensure the inner type is monomorphized first
+                        match self.try_monomorphize_named_type(&name.name, inner_args, span) {
+                            Ok(Some(m)) => Some(m),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 for constraint in &tp.constraints {
                     let key = (concrete_name.clone(), constraint.name.clone());
-                    if !self.trait_impls.contains_key(&key) {
+                    let mangled_key = mangled_name
+                        .as_ref()
+                        .map(|m| (m.clone(), constraint.name.clone()));
+                    let satisfied = self.trait_impls.contains_key(&key)
+                        || mangled_key
+                            .as_ref()
+                            .is_some_and(|k| self.trait_impls.contains_key(k))
+                        // Compiler provides default derive_slot for struct types,
+                        // so consider UniqueSlot satisfied for any known struct.
+                        || (constraint.name == "UniqueSlot"
+                            && self.struct_types.contains_key(&concrete_name));
+                    if !satisfied {
                         let mut diag = edge_diagnostics::Diagnostic::error(format!(
                             "the trait bound `{}: {}` is not satisfied",
                             concrete_name, constraint.name,
@@ -442,9 +699,8 @@ impl AstToEgglog {
             .map(|(param, arg)| (param.name.name.clone(), arg.clone()))
             .collect();
 
-        // Use source-level type names for mangling to distinguish struct types
-        // that lower to the same EVM representation.
-        let type_name_strs: Vec<String> = type_args.iter().map(Self::type_sig_display).collect();
+        // Use mangled type names for identifier-safe names (no angle brackets).
+        let type_name_strs: Vec<String> = type_args.iter().map(Self::type_sig_mangle).collect();
         let mangled = format!("{generic_name}__{}", type_name_strs.join("_"));
 
         // Substitute and register
@@ -477,6 +733,113 @@ impl AstToEgglog {
             _ => {
                 // Type alias to a concrete type
                 self.type_aliases.insert(mangled.clone(), concrete_sig);
+            }
+        }
+
+        // Monomorphize impl blocks for this generic type
+        if let Some(impl_blocks) = self.generic_impl_blocks.get(generic_name).cloned() {
+            for gib in &impl_blocks {
+                // Build substitution from the generic impl's type params to concrete args
+                let impl_subst: HashMap<String, edge_ast::ty::TypeSig> =
+                    if gib.type_params.is_empty() {
+                        // Use the type template's params (e.g., `impl Map<K, V>` where K,V from the type)
+                        subst.clone()
+                    } else {
+                        gib.type_params
+                            .iter()
+                            .zip(type_args.iter())
+                            .map(|(param, arg)| (param.name.name.clone(), arg.clone()))
+                            .collect()
+                    };
+
+                // Substitute type params in method bodies and register under mangled name
+                let concrete_methods: Vec<edge_ast::item::ImplItem> = gib
+                    .items
+                    .iter()
+                    .map(|item| {
+                        match item {
+                            edge_ast::item::ImplItem::FnAssign(fn_decl, body) => {
+                                let new_params: Vec<(edge_ast::Ident, edge_ast::ty::TypeSig)> =
+                                    fn_decl
+                                        .params
+                                        .iter()
+                                        .map(|(id, ty)| {
+                                            (
+                                                id.clone(),
+                                                Self::substitute_type_params(ty, &impl_subst),
+                                            )
+                                        })
+                                        .collect();
+                                let new_returns: Vec<edge_ast::ty::TypeSig> = fn_decl
+                                    .returns
+                                    .iter()
+                                    .map(|ty| Self::substitute_type_params(ty, &impl_subst))
+                                    .collect();
+                                let new_fn_decl = edge_ast::item::FnDecl {
+                                    name: fn_decl.name.clone(),
+                                    params: new_params,
+                                    returns: new_returns,
+                                    type_params: Vec::new(), // concrete, no type params
+                                    is_pub: fn_decl.is_pub,
+                                    is_ext: fn_decl.is_ext,
+                                    is_mut: fn_decl.is_mut,
+                                    span: fn_decl.span.clone(),
+                                };
+                                // Substitute type params in body expressions
+                                let new_body = Self::substitute_code_block(body, &impl_subst);
+                                edge_ast::item::ImplItem::FnAssign(new_fn_decl, new_body)
+                            }
+                            other => other.clone(),
+                        }
+                    })
+                    .collect();
+
+                if let Some(ref trait_name) = gib.trait_impl {
+                    // Trait impl: register under mangled type name
+                    let mut methods = IndexMap::new();
+                    for item in &concrete_methods {
+                        if let edge_ast::item::ImplItem::FnAssign(fn_decl, body) = item {
+                            methods
+                                .insert(fn_decl.name.name.clone(), (fn_decl.clone(), body.clone()));
+                        }
+                    }
+                    // Substitute type params in trait type args to get concrete types
+                    let trait_type_args: Vec<edge_ast::ty::TypeSig> = gib
+                        .trait_type_params
+                        .iter()
+                        .map(|p| {
+                            let sig = edge_ast::ty::TypeSig::Named(p.name.clone(), Vec::new());
+                            Self::substitute_type_params(&sig, &impl_subst)
+                        })
+                        .collect();
+                    self.trait_impls.insert(
+                        (mangled.clone(), trait_name.clone()),
+                        super::TraitImplInfo {
+                            methods,
+                            trait_type_args,
+                            span: edge_types::span::Span::EOF,
+                        },
+                    );
+                } else {
+                    // Inherent impl: register methods under mangled type name
+                    let methods: Vec<super::InherentMethod> = concrete_methods
+                        .iter()
+                        .filter_map(|item| {
+                            if let edge_ast::item::ImplItem::FnAssign(fn_decl, body) = item {
+                                Some(super::InherentMethod {
+                                    fn_decl: fn_decl.clone(),
+                                    body: body.clone(),
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    self.inherent_methods
+                        .entry(mangled.clone())
+                        .or_default()
+                        .extend(methods);
+                }
             }
         }
 
@@ -574,10 +937,47 @@ impl AstToEgglog {
         Ok(())
     }
 
+    /// Mangle a `TypeSig` into an identifier-safe name for use as mangled type names.
+    /// E.g., `Map<addr, u256>` → `Map__address_u256`, nested types recursively mangled.
+    pub(crate) fn type_sig_mangle(ty: &edge_ast::ty::TypeSig) -> String {
+        match ty {
+            edge_ast::ty::TypeSig::Primitive(p) => {
+                use edge_ast::ty::PrimitiveType;
+                match p {
+                    PrimitiveType::UInt(n) => format!("u{n}"),
+                    PrimitiveType::Int(n) => format!("i{n}"),
+                    PrimitiveType::FixedBytes(n) => format!("b{n}"),
+                    PrimitiveType::Address => "address".to_string(),
+                    PrimitiveType::Bool => "bool".to_string(),
+                    PrimitiveType::Bit => "bit".to_string(),
+                }
+            }
+            edge_ast::ty::TypeSig::Named(ident, args) => {
+                if args.is_empty() {
+                    ident.name.clone()
+                } else {
+                    let arg_strs: Vec<String> = args.iter().map(Self::type_sig_mangle).collect();
+                    format!("{}__{}", ident.name, arg_strs.join("_"))
+                }
+            }
+            _ => "unknown".to_string(),
+        }
+    }
+
     /// Simple display for a `TypeSig` (for error messages).
     pub(crate) fn type_sig_display(ty: &edge_ast::ty::TypeSig) -> String {
         match ty {
-            edge_ast::ty::TypeSig::Primitive(p) => format!("{p:?}").to_lowercase(),
+            edge_ast::ty::TypeSig::Primitive(p) => {
+                use edge_ast::ty::PrimitiveType;
+                match p {
+                    PrimitiveType::UInt(n) => format!("u{n}"),
+                    PrimitiveType::Int(n) => format!("i{n}"),
+                    PrimitiveType::FixedBytes(n) => format!("b{n}"),
+                    PrimitiveType::Address => "address".to_string(),
+                    PrimitiveType::Bool => "bool".to_string(),
+                    PrimitiveType::Bit => "bit".to_string(),
+                }
+            }
             edge_ast::ty::TypeSig::Named(ident, args) => {
                 if args.is_empty() {
                     ident.name.clone()

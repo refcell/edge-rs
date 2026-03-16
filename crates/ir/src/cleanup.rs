@@ -157,6 +157,31 @@ fn cleanup_expr(expr: &RcExpr) -> RcExpr {
             *num_outputs,
         )),
 
+        EvmExpr::DynAlloc(size) => {
+            let ns = cleanup_expr(size);
+            if Rc::ptr_eq(&ns, size) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
+
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = cleanup_expr(num_fields);
+            if Rc::ptr_eq(&nf, num_fields) {
+                return Rc::clone(expr);
+            }
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+
+        EvmExpr::RegionStore(id, field_idx, val, _state) => {
+            let nv = cleanup_expr(val);
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, state_sentinel()))
+        }
+
+        EvmExpr::RegionLoad(id, field_idx, _state) => {
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, state_sentinel()))
+        }
+
         // Leaf nodes — no children to clean
         EvmExpr::Arg(..)
         | EvmExpr::Const(..)

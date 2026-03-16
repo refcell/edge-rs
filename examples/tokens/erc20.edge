@@ -48,10 +48,10 @@ contract Airdrop {
     // ── State ─────────────────────────────────────────────────────────────────
 
     // Amount of tokens each address is entitled to claim.
-    let allocations: &s map<addr, u256>;
+    let allocations: &s Map<addr, u256>;
 
     // Tracks whether an address has already claimed their allocation.
-    let claimed: &s map<addr, bool>;
+    let claimed: &s Map<addr, bool>;
 
     // Total tokens distributed so far.
     let total_distributed: &s u256;

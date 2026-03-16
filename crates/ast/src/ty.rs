@@ -21,6 +21,8 @@ pub enum Location {
     ImmutableCode,
     /// External code (&ec)
     ExternalCode,
+    /// Dynamic memory (&dm)
+    DynamicMemory,
 }
 
 impl std::fmt::Display for Location {
@@ -33,6 +35,7 @@ impl std::fmt::Display for Location {
             Self::Returndata => write!(f, "&rd"),
             Self::ImmutableCode => write!(f, "&ic"),
             Self::ExternalCode => write!(f, "&ec"),
+            Self::DynamicMemory => write!(f, "&dm"),
         }
     }
 }

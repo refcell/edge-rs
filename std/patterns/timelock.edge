@@ -49,13 +49,13 @@ contract Timelock {
     let admin: &s addr;
 
     // Operation execution timestamps (0 = not scheduled, >0 = ready-at time).
-    let timestamps: &s map<b32, u256>;
+    let timestamps: &s Map<b32, u256>;
 
     // Whether an operation has been executed.
-    let executed: &s map<b32, bool>;
+    let executed: &s Map<b32, bool>;
 
     // Whether an operation has been cancelled.
-    let cancelled: &s map<b32, bool>;
+    let cancelled: &s Map<b32, bool>;
 
     // Schedule a new timelocked operation.
     pub fn schedule(id: b32, target: addr, value: u256, delay: u256) {

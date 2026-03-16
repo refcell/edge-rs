@@ -289,9 +289,10 @@ pub fn compile_edge_split(
     bytecode_opt_level: u8,
     optimize_for: edge_ir::OptimizeFor,
 ) -> Vec<u8> {
-    let source = std::fs::read_to_string(path).expect("failed to read source");
-    let mut parser = edge_parser::Parser::new(&source).expect("failed to create parser");
-    let ast = parser.parse().expect("parse failed");
+    let mut config = CompilerConfig::new(PathBuf::from(path));
+    config.emit = EmitKind::Bytecode;
+    let mut compiler = Compiler::new(config).expect("failed to create compiler");
+    let ast = compiler.parse_and_resolve().expect("parse failed");
     let ir_program = edge_ir::lower_and_optimize(&ast, ir_opt_level, optimize_for)
         .expect("IR optimization failed");
     edge_codegen::compile(&ir_program, bytecode_opt_level, optimize_for).expect("codegen failed")

@@ -66,6 +66,9 @@ impl AstToEgglog {
                             let_bind_name: Some(var_name),
                             composite_type: None,
                             composite_base: None,
+                            composite_type_args: Vec::new(),
+                            is_dynamic_memory: false,
+                            region_id: None,
                         },
                     );
             }
@@ -176,6 +179,9 @@ impl AstToEgglog {
                             let_bind_name: Some(var_name.clone()),
                             composite_type: None,
                             composite_base: None,
+                            composite_type_args: Vec::new(),
+                            is_dynamic_memory: false,
+                            region_id: None,
                         };
                         self.scopes
                             .last_mut()
@@ -293,8 +299,22 @@ impl AstToEgglog {
             let item_ir = match item {
                 edge_ast::LoopItem::Stmt(stmt) => self.lower_stmt(stmt)?,
                 edge_ast::LoopItem::Expr(expr) => self.lower_expr(expr)?,
-                edge_ast::LoopItem::Break(_) | edge_ast::LoopItem::Continue(_) => {
-                    // TODO: handle break/continue with control flow markers
+                edge_ast::LoopItem::Break(span) => {
+                    self.warnings.push(
+                        edge_diagnostics::Diagnostic::warning(
+                            "`break` is not yet implemented and will be ignored",
+                        )
+                        .with_label(span.clone(), "has no effect"),
+                    );
+                    continue;
+                }
+                edge_ast::LoopItem::Continue(span) => {
+                    self.warnings.push(
+                        edge_diagnostics::Diagnostic::warning(
+                            "`continue` is not yet implemented and will be ignored",
+                        )
+                        .with_label(span.clone(), "has no effect"),
+                    );
                     continue;
                 }
             };

@@ -6,7 +6,7 @@
 //   - @caller() and @callvalue() builtins
 //   - pub/fn function visibility
 //   - emit keyword for logging events
-//   - map<addr, u256> storage mapping
+//   - Map<addr, u256> storage mapping
 //
 // Usage:
 //   use std::tokens::weth::IWETH;
@@ -38,10 +38,10 @@ contract WETH {
     let total_supply: &s u256;
 
     // Balance of each account (address -> amount).
-    let balances: &s map<addr, u256>;
+    let balances: &s Map<addr, u256>;
 
     // Allowances: owner -> spender -> amount.
-    let allowances: &s map<addr, map<addr, u256>>;
+    let allowances: &s Map<addr, Map<addr, u256>>;
 
     // Deposit ETH and mint equivalent WETH to the caller.
     pub fn deposit() {

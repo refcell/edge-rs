@@ -235,6 +235,102 @@
       :ruleset range-analysis)
 
 ;; ============================================================
+;; Pointer & Environment Bounds (EVM Architecture)
+;; ============================================================
+;; EVM memory is bounded to ~2^32 bytes (gas-limited), calldata/returndata
+;; similarly. These bounds enable checked arithmetic elision on pointer math.
+;;
+;; | Region           | Key width | Bound      |
+;; |------------------|-----------|------------|
+;; | memory           | 32-bit    | 2^32       |
+;; | calldata         | 32-bit    | 2^32       |
+;; | returndata       | 32-bit    | 2^32       |
+;; | internal code    | 16-bit    | 2^16       |
+;; | selector         | 32-bit    | 2^32       |
+
+;; DynAlloc returns a memory pointer (bounded by 2^32)
+(rule ((= e (DynAlloc size)))
+      ((set (lower-bound e) 0)
+       (set (upper-bound e) 4294967296)
+       (set (u256-lower-bound e) (u256-from-i64 0))
+       (set (u256-upper-bound e) (u256-from-i64 4294967296))
+       (set (max-bits e) 32))
+      :ruleset range-analysis)
+
+;; CallDataSize: max ~2^32
+(rule ((= e (EnvRead (EnvCallDataSize) st)))
+      ((set (upper-bound e) 4294967296)
+       (set (u256-upper-bound e) (u256-from-i64 4294967296))
+       (set (max-bits e) 32))
+      :ruleset range-analysis)
+
+;; ReturnDataSize: max ~2^32
+(rule ((= e (EnvRead (EnvReturnDataSize) st)))
+      ((set (upper-bound e) 4294967296)
+       (set (u256-upper-bound e) (u256-from-i64 4294967296))
+       (set (max-bits e) 32))
+      :ruleset range-analysis)
+
+;; CodeSize: max 2^16 (EVM contract code limit is 24576, but 2^16 is safe)
+(rule ((= e (EnvRead (EnvCodeSize) st)))
+      ((set (upper-bound e) 65536)
+       (set (u256-upper-bound e) (u256-from-i64 65536))
+       (set (max-bits e) 16))
+      :ruleset range-analysis)
+
+;; Selector: 4-byte function signature, fits in u32
+(rule ((= e (Selector s)))
+      ((set (lower-bound e) 0)
+       (set (upper-bound e) 4294967295)
+       (set (u256-lower-bound e) (u256-from-i64 0))
+       (set (u256-upper-bound e) (u256-from-i64 4294967295))
+       (set (max-bits e) 32))
+      :ruleset range-analysis)
+
+;; Address: 160-bit (20 bytes)
+(rule ((= e (EnvRead (EnvAddress) st)))
+      ((set (max-bits e) 160))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvCaller) st)))
+      ((set (max-bits e) 160))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvOrigin) st)))
+      ((set (max-bits e) 160))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvCoinbase) st)))
+      ((set (max-bits e) 160))
+      :ruleset range-analysis)
+
+;; Gas: bounded by block gas limit (~2^30 in practice, use 2^64 to be safe)
+(rule ((= e (EnvRead (EnvGas) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvGasLimit) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvGasPrice) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+
+;; Timestamp, block number: bounded by ~2^64
+(rule ((= e (EnvRead (EnvTimestamp) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+(rule ((= e (EnvRead (EnvNumber) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+
+;; BaseFee: bounded by ~2^64
+(rule ((= e (EnvRead (EnvBaseFee) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+
+;; ChainId: bounded by ~2^64
+(rule ((= e (EnvRead (EnvChainId) st)))
+      ((set (max-bits e) 64))
+      :ruleset range-analysis)
+
+;; ============================================================
 ;; NonZero Derivation
 ;; ============================================================
 

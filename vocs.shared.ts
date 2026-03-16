@@ -114,6 +114,7 @@ export default defineConfig({
           },
           { text: 'Inline Assembly', link: '/specs/inline' },
           { text: 'Built-In', link: '/specs/builtins' },
+          { text: 'Standard Library', link: '/specs/stdlib' },
         ],
       },
       {

@@ -1,0 +1,120 @@
+
+use std::ops::UniqueSlot;
+use std::ops::Sstore;
+use std::ops::Sload;
+
+type CustomSStore = {
+    ignored: u256,
+    packed_a: u128,
+    packed_b: u128
+};
+
+type CustomHash = {
+    a: u128,
+    b: u128
+};
+
+// Struct key with NO UniqueSlot impl — uses default keccak-chained derive_slot
+type DefaultKey = {
+    x: u256,
+    y: u256
+};
+
+impl CustomHash: UniqueSlot {
+    fn derive_slot(self, base_slot: u256) -> u256 {
+        let packed_combo: u256 = (self.a << 128) | self.b;
+        base_slot + packed_combo
+    }
+}
+
+impl CustomSStore: Sstore {
+    fn sstore(self, base_slot: u256) {
+        let packed_combo: u256 = (self.packed_a << 128) | self.packed_b;
+        packed_combo.sstore(base_slot);
+    }
+}
+
+impl CustomSStore: Sload {
+    fn sload(base_slot: u256) -> Self {
+        let packed_combo = u256::sload(base_slot);
+        let a = packed_combo >> 128;
+        let b = packed_combo & ((1 << 128) - 1);
+        CustomSStore { ignored: 0, packed_a: a, packed_b: b }
+    }
+}
+
+contract TestMappings {
+    let basic_map: &s Map<u256, u256>;
+    let custom: &s CustomSStore;
+    let custom_sstore_map: &s Map<u256, CustomSStore>;
+    let double_custom_sstore_map: &s Map<CustomHash, CustomSStore>;
+    let default_key_map: &s Map<DefaultKey, u256>;
+
+    // Getters
+    pub fn get_custom() -> CustomSStore {
+        custom
+    }
+
+    pub fn get_basic(key: u256) -> u256 {
+        basic_map.get(key)
+    }
+
+    pub fn get_basic_by_indexable(key: u256) -> u256 {
+        basic_map[key]
+    }
+
+    pub fn get_custom(key: u256) -> u256 {
+        let val: CustomSStore = custom_sstore_map.get(key);
+        (val.packed_a << 128) | val.packed_b
+    }
+
+    pub fn get_custom_by_indexable(key: u256) -> u256 {
+        let val: CustomSStore = custom_sstore_map[key];
+        (val.packed_a << 128) | val.packed_b
+    }
+
+    // Setters
+    pub mut fn set_custom(a: u128, b: u128) {
+        custom = CustomSStore { ignored: 10000, packed_a: a, packed_b: b }
+    }
+
+    pub mut fn set_basic(key: u256, val: u256) -> u256 {
+        basic_map.set(key, val);
+    }
+
+    pub mut fn set_basic_by_indexable(key: u256, val: u256) -> u256 {
+        basic_map[key] = val;
+    }
+
+    pub mut fn set_custom(key: u256, val: CustomSStore) {
+        custom_sstore_map.set(key, val);
+    }
+
+    pub mut fn set_custom_by_indexable(key: u256, val: CustomSStore) {
+        custom_sstore_map[key] = val;
+    }
+
+    // Double custom: CustomHash key + CustomSStore value
+    pub fn get_double_custom(a: u128, b: u128) -> u256 {
+        let key = CustomHash { a: a, b: b };
+        let val: CustomSStore = double_custom_sstore_map.get(key);
+        (val.packed_a << 128) | val.packed_b
+    }
+
+    pub mut fn set_double_custom(a: u128, b: u128, val_a: u128, val_b: u128) {
+        let key = CustomHash { a: a, b: b };
+        let val = CustomSStore { ignored: 0, packed_a: val_a, packed_b: val_b };
+        double_custom_sstore_map.set(key, val);
+    }
+
+    // Default derive_slot (no UniqueSlot impl on DefaultKey)
+    pub fn get_default_key(x: u256, y: u256) -> u256 {
+        let key = DefaultKey { x: x, y: y };
+        default_key_map.get(key)
+    }
+
+    pub mut fn set_default_key(x: u256, y: u256, val: u256) {
+        let key = DefaultKey { x: x, y: y };
+        default_key_map.set(key, val);
+    }
+}

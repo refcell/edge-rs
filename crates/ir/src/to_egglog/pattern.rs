@@ -17,7 +17,11 @@ impl AstToEgglog {
         pattern: &edge_ast::pattern::UnionPattern,
     ) -> Result<RcExpr, IrError> {
         let disc_ir = self.lower_expr(expr)?;
-        let idx = self.variant_index(&pattern.union_name.name, &pattern.member_name.name)?;
+        let idx = self.variant_index(
+            &pattern.union_name.name,
+            &pattern.member_name.name,
+            Some(&pattern.span),
+        )?;
         let idx_ir = ast_helpers::const_int(idx as i64, self.current_ctx.clone());
         Ok(ast_helpers::eq(disc_ir, idx_ir))
     }
@@ -73,7 +77,11 @@ impl AstToEgglog {
         for arm in arms {
             match &arm.pattern {
                 edge_ast::pattern::MatchPattern::Union(up) => {
-                    let idx = self.variant_index(&up.union_name.name, &up.member_name.name)?;
+                    let idx = self.variant_index(
+                        &up.union_name.name,
+                        &up.member_name.name,
+                        Some(&up.span),
+                    )?;
                     let bindings: Vec<String> =
                         up.bindings.iter().map(|b| b.name.clone()).collect();
                     variant_arms.push((idx, &arm.body, bindings));
@@ -126,6 +134,9 @@ impl AstToEgglog {
                                 let_bind_name: Some(var_name),
                                 composite_type: None,
                                 composite_base: None,
+                                composite_type_args: Vec::new(),
+                                is_dynamic_memory: false,
+                                region_id: None,
                             },
                         );
                 }
@@ -176,7 +187,11 @@ impl AstToEgglog {
             Rc::clone(&disc_ir)
         };
 
-        let idx = self.variant_index(&pattern.union_name.name, &pattern.member_name.name)?;
+        let idx = self.variant_index(
+            &pattern.union_name.name,
+            &pattern.member_name.name,
+            Some(&pattern.span),
+        )?;
         let idx_ir = ast_helpers::const_int(idx as i64, self.current_ctx.clone());
         let cond = ast_helpers::eq(disc_val, idx_ir);
         let inputs =
@@ -204,6 +219,9 @@ impl AstToEgglog {
                             let_bind_name: Some(var_name),
                             composite_type: None,
                             composite_base: None,
+                            composite_type_args: Vec::new(),
+                            is_dynamic_memory: false,
+                            region_id: None,
                         },
                     );
             }

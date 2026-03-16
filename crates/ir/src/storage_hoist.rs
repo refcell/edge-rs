@@ -5,7 +5,10 @@
 //! SLoad/SStore with Var/VarStore inside the loop. Write-backs are
 //! emitted after the loop exits.
 
-use std::{collections::HashMap, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::schema::{
     EvmBaseType, EvmBinaryOp, EvmConstant, EvmContext, EvmExpr, EvmTernaryOp, EvmType, RcExpr,
@@ -65,7 +68,17 @@ pub fn forward_stores_program(program: &mut crate::schema::EvmProgram) {
 
 /// Top-level entry: find Concat chains and apply forwarding.
 fn forward_stores_expr(expr: &RcExpr) -> RcExpr {
-    match expr.as_ref() {
+    let mut cache = HashMap::new();
+    forward_stores_expr_inner(expr, &mut cache)
+}
+
+fn forward_stores_expr_inner(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&ptr) {
+        return Rc::clone(cached);
+    }
+
+    let result = match expr.as_ref() {
         EvmExpr::Concat(..) => {
             // Flatten this Concat chain
             let mut stmts = Vec::new();
@@ -77,41 +90,52 @@ fn forward_stores_expr(expr: &RcExpr) -> RcExpr {
             // Phase 3: Recurse into structural sub-bodies of each statement
             let recursed: Vec<RcExpr> = processed
                 .into_iter()
-                .map(|s| recurse_substructures(&s))
+                .map(|s| recurse_substructures_inner(&s, cache))
                 .collect();
 
             rebuild_concat(&recursed)
         }
         // For non-Concat nodes, just recurse into sub-structures
-        _ => recurse_substructures(expr),
-    }
+        _ => recurse_substructures_inner(expr, cache),
+    };
+
+    cache.insert(ptr, Rc::clone(&result));
+    result
 }
 
 /// Recurse into structural sub-bodies (If branches, `DoWhile` body, `LetBind` body).
 /// These get their own independent forwarding context.
-fn recurse_substructures(expr: &RcExpr) -> RcExpr {
-    match expr.as_ref() {
+fn recurse_substructures_inner(expr: &RcExpr, cache: &mut HashMap<usize, RcExpr>) -> RcExpr {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&ptr) {
+        return Rc::clone(cached);
+    }
+
+    let result = match expr.as_ref() {
         EvmExpr::If(c, i, t, e) => Rc::new(EvmExpr::If(
             Rc::clone(c),
             Rc::clone(i),
-            forward_stores_expr(t),
-            forward_stores_expr(e),
+            forward_stores_expr_inner(t, cache),
+            forward_stores_expr_inner(e, cache),
         )),
         EvmExpr::LetBind(name, init, body) => Rc::new(EvmExpr::LetBind(
             name.clone(),
-            forward_stores_expr(init),
-            forward_stores_expr(body),
+            forward_stores_expr_inner(init, cache),
+            forward_stores_expr_inner(body, cache),
         )),
         EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
             name.clone(),
             in_ty.clone(),
             out_ty.clone(),
-            forward_stores_expr(body),
+            forward_stores_expr_inner(body, cache),
         )),
         // Don't forward inside DoWhile bodies — they're cyclic (SStores from
         // iteration N affect SLoads at iteration N+1). Loop hoisting handles these.
         _ => Rc::clone(expr),
-    }
+    };
+
+    cache.insert(ptr, Rc::clone(&result));
+    result
 }
 
 /// Forward `SStore` values and eliminate dead stores in a flat statement list.
@@ -184,7 +208,30 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
     if known.is_empty() {
         return Rc::clone(expr);
     }
+    let mut cache = HashMap::new();
+    replace_sloads_inline_inner(expr, known, &mut cache)
+}
 
+fn replace_sloads_inline_inner(
+    expr: &RcExpr,
+    known: &HashMap<SlotKey, RcExpr>,
+    cache: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if let Some(cached) = cache.get(&ptr) {
+        return Rc::clone(cached);
+    }
+
+    let result = replace_sloads_inline_match(expr, known, cache);
+    cache.insert(ptr, Rc::clone(&result));
+    result
+}
+
+fn replace_sloads_inline_match(
+    expr: &RcExpr,
+    known: &HashMap<SlotKey, RcExpr>,
+    cache: &mut HashMap<usize, RcExpr>,
+) -> RcExpr {
     match expr.as_ref() {
         // SLoad/TLoad → known value
         EvmExpr::Bop(op @ (EvmBinaryOp::SLoad | EvmBinaryOp::TLoad), slot, _state) => {
@@ -202,98 +249,107 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
                     return Rc::clone(val);
                 }
             }
-            let ns = replace_sloads_inline(slot, known);
+            let ns = replace_sloads_inline_inner(slot, known, cache);
             Rc::new(EvmExpr::Bop(*op, ns, Rc::clone(_state)))
         }
 
         // Structural nodes: forward into inline parts ONLY
         EvmExpr::If(cond, inputs, then_b, else_b) => Rc::new(EvmExpr::If(
-            replace_sloads_inline(cond, known),
-            replace_sloads_inline(inputs, known),
+            replace_sloads_inline_inner(cond, known, cache),
+            replace_sloads_inline_inner(inputs, known, cache),
             Rc::clone(then_b), // don't forward into branches
             Rc::clone(else_b),
         )),
         EvmExpr::DoWhile(inputs, body) => Rc::new(EvmExpr::DoWhile(
-            replace_sloads_inline(inputs, known),
+            replace_sloads_inline_inner(inputs, known, cache),
             Rc::clone(body), // don't forward into loop body
         )),
         EvmExpr::LetBind(name, init, body) => Rc::new(EvmExpr::LetBind(
             name.clone(),
-            replace_sloads_inline(init, known),
+            replace_sloads_inline_inner(init, known, cache),
             Rc::clone(body), // don't forward into body
         )),
 
         // All other nodes: recurse normally
         EvmExpr::Bop(op, a, b) => Rc::new(EvmExpr::Bop(
             *op,
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
         )),
-        EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(*op, replace_sloads_inline(a, known))),
+        EvmExpr::Uop(op, a) => Rc::new(EvmExpr::Uop(
+            *op,
+            replace_sloads_inline_inner(a, known, cache),
+        )),
         EvmExpr::Top(op, a, b, c) => Rc::new(EvmExpr::Top(
             *op,
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
-            replace_sloads_inline(c, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
+            replace_sloads_inline_inner(c, known, cache),
         )),
         EvmExpr::Concat(a, b) => Rc::new(EvmExpr::Concat(
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
         )),
-        EvmExpr::Get(a, idx) => Rc::new(EvmExpr::Get(replace_sloads_inline(a, known), *idx)),
+        EvmExpr::Get(a, idx) => Rc::new(EvmExpr::Get(
+            replace_sloads_inline_inner(a, known, cache),
+            *idx,
+        )),
         EvmExpr::VarStore(name, val) => Rc::new(EvmExpr::VarStore(
             name.clone(),
-            replace_sloads_inline(val, known),
+            replace_sloads_inline_inner(val, known, cache),
         )),
         EvmExpr::Revert(a, b, c) => Rc::new(EvmExpr::Revert(
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
-            replace_sloads_inline(c, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
+            replace_sloads_inline_inner(c, known, cache),
         )),
         EvmExpr::ReturnOp(a, b, c) => Rc::new(EvmExpr::ReturnOp(
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
-            replace_sloads_inline(c, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
+            replace_sloads_inline_inner(c, known, cache),
         )),
         EvmExpr::Log(count, topics, data_offset, data_size, state) => {
             let ts: Vec<_> = topics
                 .iter()
-                .map(|t| replace_sloads_inline(t, known))
+                .map(|t| replace_sloads_inline_inner(t, known, cache))
                 .collect();
             Rc::new(EvmExpr::Log(
                 *count,
                 ts,
-                replace_sloads_inline(data_offset, known),
-                replace_sloads_inline(data_size, known),
-                replace_sloads_inline(state, known),
+                replace_sloads_inline_inner(data_offset, known, cache),
+                replace_sloads_inline_inner(data_size, known, cache),
+                replace_sloads_inline_inner(state, known, cache),
             ))
         }
-        EvmExpr::EnvRead(op, s) => Rc::new(EvmExpr::EnvRead(*op, replace_sloads_inline(s, known))),
+        EvmExpr::EnvRead(op, s) => Rc::new(EvmExpr::EnvRead(
+            *op,
+            replace_sloads_inline_inner(s, known, cache),
+        )),
         EvmExpr::EnvRead1(op, a, s) => Rc::new(EvmExpr::EnvRead1(
             *op,
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(s, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(s, known, cache),
         )),
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => Rc::new(EvmExpr::ExtCall(
-            replace_sloads_inline(a, known),
-            replace_sloads_inline(b, known),
-            replace_sloads_inline(c, known),
-            replace_sloads_inline(d, known),
-            replace_sloads_inline(e, known),
-            replace_sloads_inline(f, known),
-            replace_sloads_inline(g, known),
+            replace_sloads_inline_inner(a, known, cache),
+            replace_sloads_inline_inner(b, known, cache),
+            replace_sloads_inline_inner(c, known, cache),
+            replace_sloads_inline_inner(d, known, cache),
+            replace_sloads_inline_inner(e, known, cache),
+            replace_sloads_inline_inner(f, known, cache),
+            replace_sloads_inline_inner(g, known, cache),
         )),
         EvmExpr::Call(name, args) => Rc::new(EvmExpr::Call(
             name.clone(),
             args.iter()
-                .map(|a| replace_sloads_inline(a, known))
+                .map(|a| replace_sloads_inline_inner(a, known, cache))
                 .collect(),
         )),
         EvmExpr::Function(name, in_ty, out_ty, body) => Rc::new(EvmExpr::Function(
             name.clone(),
             in_ty.clone(),
             out_ty.clone(),
-            replace_sloads_inline(body, known),
+            replace_sloads_inline_inner(body, known, cache),
         )),
 
         // Leaf nodes
@@ -308,28 +364,61 @@ fn replace_sloads_inline(expr: &RcExpr, known: &HashMap<SlotKey, RcExpr>) -> RcE
         EvmExpr::InlineAsm(inputs, hex, num_outputs) => {
             let new_inputs: Vec<_> = inputs
                 .iter()
-                .map(|i| replace_sloads_inline(i, known))
+                .map(|i| replace_sloads_inline_inner(i, known, cache))
                 .collect();
             Rc::new(EvmExpr::InlineAsm(new_inputs, hex.clone(), *num_outputs))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let ns = replace_sloads_inline_inner(size, known, cache);
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = replace_sloads_inline_inner(num_fields, known, cache);
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = replace_sloads_inline_inner(val, known, cache);
+            let ns = replace_sloads_inline_inner(state, known, cache);
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = replace_sloads_inline_inner(state, known, cache);
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
         }
     }
 }
 
 /// Check if an expression (non-top-level `SStore`) might modify storage.
 fn might_modify_storage(expr: &RcExpr) -> bool {
+    let mut visited = HashSet::new();
+    might_modify_storage_inner(expr, &mut visited)
+}
+
+fn might_modify_storage_inner(expr: &RcExpr, visited: &mut HashSet<usize>) -> bool {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if !visited.insert(ptr) {
+        return false;
+    }
+
     match expr.as_ref() {
         EvmExpr::ExtCall(..)
         | EvmExpr::InlineAsm(..)
         | EvmExpr::Top(EvmTernaryOp::SStore | EvmTernaryOp::TStore, ..) => true,
         EvmExpr::If(c, i, t, e) => {
-            might_modify_storage(c)
-                || might_modify_storage(i)
-                || might_modify_storage(t)
-                || might_modify_storage(e)
+            might_modify_storage_inner(c, visited)
+                || might_modify_storage_inner(i, visited)
+                || might_modify_storage_inner(t, visited)
+                || might_modify_storage_inner(e, visited)
         }
-        EvmExpr::DoWhile(i, b) => might_modify_storage(i) || might_modify_storage(b),
-        EvmExpr::LetBind(_, init, body) => might_modify_storage(init) || might_modify_storage(body),
-        EvmExpr::Concat(a, b) => might_modify_storage(a) || might_modify_storage(b),
+        EvmExpr::DoWhile(i, b) => {
+            might_modify_storage_inner(i, visited) || might_modify_storage_inner(b, visited)
+        }
+        EvmExpr::LetBind(_, init, body) => {
+            might_modify_storage_inner(init, visited) || might_modify_storage_inner(body, visited)
+        }
+        EvmExpr::Concat(a, b) => {
+            might_modify_storage_inner(a, visited) || might_modify_storage_inner(b, visited)
+        }
         _ => false,
     }
 }
@@ -347,11 +436,17 @@ fn might_observe_storage(expr: &RcExpr) -> bool {
 /// Collect all SLoad/TLoad slot keys anywhere in an expression tree (deep recursive).
 fn collect_sload_slots_deep(expr: &RcExpr) -> Vec<SlotKey> {
     let mut result = Vec::new();
-    collect_sload_slots_inner(expr, &mut result);
+    let mut visited = HashSet::new();
+    collect_sload_slots_inner(expr, &mut result, &mut visited);
     result
 }
 
-fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>) {
+fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>, visited: &mut HashSet<usize>) {
+    let ptr = Rc::as_ptr(expr) as usize;
+    if !visited.insert(ptr) {
+        return;
+    }
+
     match expr.as_ref() {
         EvmExpr::Bop(op @ (EvmBinaryOp::SLoad | EvmBinaryOp::TLoad), slot, _) => {
             let kind = if *op == EvmBinaryOp::SLoad {
@@ -365,57 +460,57 @@ fn collect_sload_slots_inner(expr: &RcExpr, out: &mut Vec<SlotKey>) {
                     slot_value: sv,
                 });
             }
-            collect_sload_slots_inner(slot, out);
+            collect_sload_slots_inner(slot, out, visited);
         }
         EvmExpr::Bop(_, a, b) | EvmExpr::Concat(a, b) => {
-            collect_sload_slots_inner(a, out);
-            collect_sload_slots_inner(b, out);
+            collect_sload_slots_inner(a, out, visited);
+            collect_sload_slots_inner(b, out, visited);
         }
-        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => collect_sload_slots_inner(a, out),
+        EvmExpr::Uop(_, a) | EvmExpr::Get(a, _) => collect_sload_slots_inner(a, out, visited),
         EvmExpr::Top(_, a, b, c) | EvmExpr::Revert(a, b, c) | EvmExpr::ReturnOp(a, b, c) => {
-            collect_sload_slots_inner(a, out);
-            collect_sload_slots_inner(b, out);
-            collect_sload_slots_inner(c, out);
+            collect_sload_slots_inner(a, out, visited);
+            collect_sload_slots_inner(b, out, visited);
+            collect_sload_slots_inner(c, out, visited);
         }
         EvmExpr::If(c, i, t, e) => {
-            collect_sload_slots_inner(c, out);
-            collect_sload_slots_inner(i, out);
-            collect_sload_slots_inner(t, out);
-            collect_sload_slots_inner(e, out);
+            collect_sload_slots_inner(c, out, visited);
+            collect_sload_slots_inner(i, out, visited);
+            collect_sload_slots_inner(t, out, visited);
+            collect_sload_slots_inner(e, out, visited);
         }
         EvmExpr::DoWhile(i, b) => {
-            collect_sload_slots_inner(i, out);
-            collect_sload_slots_inner(b, out);
+            collect_sload_slots_inner(i, out, visited);
+            collect_sload_slots_inner(b, out, visited);
         }
         EvmExpr::LetBind(_, init, body) => {
-            collect_sload_slots_inner(init, out);
-            collect_sload_slots_inner(body, out);
+            collect_sload_slots_inner(init, out, visited);
+            collect_sload_slots_inner(body, out, visited);
         }
-        EvmExpr::VarStore(_, val) => collect_sload_slots_inner(val, out),
+        EvmExpr::VarStore(_, val) => collect_sload_slots_inner(val, out, visited),
         EvmExpr::Log(_, topics, data_offset, data_size, state) => {
             for t in topics {
-                collect_sload_slots_inner(t, out);
+                collect_sload_slots_inner(t, out, visited);
             }
-            collect_sload_slots_inner(data_offset, out);
-            collect_sload_slots_inner(data_size, out);
-            collect_sload_slots_inner(state, out);
+            collect_sload_slots_inner(data_offset, out, visited);
+            collect_sload_slots_inner(data_size, out, visited);
+            collect_sload_slots_inner(state, out, visited);
         }
-        EvmExpr::EnvRead(_, s) => collect_sload_slots_inner(s, out),
+        EvmExpr::EnvRead(_, s) => collect_sload_slots_inner(s, out, visited),
         EvmExpr::EnvRead1(_, a, s) => {
-            collect_sload_slots_inner(a, out);
-            collect_sload_slots_inner(s, out);
+            collect_sload_slots_inner(a, out, visited);
+            collect_sload_slots_inner(s, out, visited);
         }
         EvmExpr::ExtCall(a, b, c, d, e, f, g) => {
             for x in [a, b, c, d, e, f, g] {
-                collect_sload_slots_inner(x, out);
+                collect_sload_slots_inner(x, out, visited);
             }
         }
         EvmExpr::Call(_, args) => {
             for arg in args {
-                collect_sload_slots_inner(arg, out);
+                collect_sload_slots_inner(arg, out, visited);
             }
         }
-        EvmExpr::Function(_, _, _, body) => collect_sload_slots_inner(body, out),
+        EvmExpr::Function(_, _, _, body) => collect_sload_slots_inner(body, out, visited),
         _ => {}
     }
 }
@@ -1056,6 +1151,23 @@ fn replace_storage(expr: &RcExpr, key: &SlotKey, var_name: &str, replace_stores:
                 out_ty.clone(),
                 nb,
             ))
+        }
+        EvmExpr::DynAlloc(size) => {
+            let ns = replace_storage(size, key, var_name, replace_stores);
+            Rc::new(EvmExpr::DynAlloc(ns))
+        }
+        EvmExpr::AllocRegion(id, num_fields, is_dynamic) => {
+            let nf = replace_storage(num_fields, key, var_name, replace_stores);
+            Rc::new(EvmExpr::AllocRegion(*id, nf, *is_dynamic))
+        }
+        EvmExpr::RegionStore(id, field_idx, val, state) => {
+            let nv = replace_storage(val, key, var_name, replace_stores);
+            let ns = replace_storage(state, key, var_name, replace_stores);
+            Rc::new(EvmExpr::RegionStore(*id, *field_idx, nv, ns))
+        }
+        EvmExpr::RegionLoad(id, field_idx, state) => {
+            let ns = replace_storage(state, key, var_name, replace_stores);
+            Rc::new(EvmExpr::RegionLoad(*id, *field_idx, ns))
         }
         // Leaf nodes — no children
         EvmExpr::Const(..)

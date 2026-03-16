@@ -46,6 +46,7 @@
     1. [Visibility](specs/semantics/visibility.md)
 1. [Inline Assembly](specs/inline.md)
 1. [Built-In](specs/builtins.md)
+1. [Standard Library](specs/stdlib.md)
 
 
 # The Compiler
